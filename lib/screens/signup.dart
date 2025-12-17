@@ -3,7 +3,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-import 'account_created_screen.dart';
+import 'email_verification_screen.dart';
 
 class SignupScreen extends StatefulWidget {
   const SignupScreen({Key? key}) : super(key: key);
@@ -37,7 +37,7 @@ class _SignupScreenState extends State<SignupScreen> {
     super.dispose();
   }
 
-  // ================= SIGN UP =================
+  // ================= SIGN UP WITH EMAIL VERIFICATION =================
   Future<void> _signUp() async {
     // ❌ stop if validation fails
     if (!_formKey.currentState!.validate()) return;
@@ -45,30 +45,50 @@ class _SignupScreenState extends State<SignupScreen> {
     setState(() => _isLoading = true);
 
     try {
+      // Create user account
       UserCredential userCredential =
           await _auth.createUserWithEmailAndPassword(
         email: _emailController.text.trim(),
         password: _passwordController.text,
       );
 
+      // Store user data in Firestore
       await _firestore.collection('users').doc(userCredential.user!.uid).set({
         'uid': userCredential.user!.uid,
         'email': _emailController.text.trim(),
         'username': _usernameController.text.trim(),
         'createdAt': Timestamp.now(),
-        'lastLogin': Timestamp.now(),
+        'emailVerified': false, // Track verification status
       });
 
+      // Send email verification
+      await userCredential.user!.sendEmailVerification();
+
       if (mounted) {
+        // Navigate to email verification screen
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(
-            builder: (_) => const AccountCreatedScreen(),
+            builder: (_) => EmailVerificationScreen(
+              email: _emailController.text.trim(),
+            ),
           ),
         );
       }
     } on FirebaseAuthException catch (e) {
-      _showMessage(e.message ?? 'Signup failed');
+      String errorMessage = 'Signup failed';
+      
+      if (e.code == 'email-already-in-use') {
+        errorMessage = 'This email is already registered';
+      } else if (e.code == 'weak-password') {
+        errorMessage = 'Password is too weak';
+      } else if (e.code == 'invalid-email') {
+        errorMessage = 'Invalid email address';
+      }
+      
+      _showMessage(errorMessage);
+    } catch (e) {
+      _showMessage('An error occurred. Please try again.');
     } finally {
       setState(() => _isLoading = false);
     }
