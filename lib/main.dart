@@ -7,6 +7,7 @@ import 'screens/signup.dart';
 import 'screens/account_created_screen.dart';
 import 'screens/homepage.dart';
 import 'screens/auth_gate.dart';
+import 'screens/forgot_password_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -34,6 +35,7 @@ class BrenBoxApp extends StatelessWidget {
         '/signup': (_) => const SignupScreen(),
         '/success': (_) => const AccountCreatedScreen(),
         '/home': (_) => const HomePage(),
+        '/forgot-password': (context) => const ForgotPasswordScreen()
       },
     );
   }

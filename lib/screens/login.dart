@@ -26,10 +26,9 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-  // ================= SIGN IN =================
+  // ================= SIGN IN WITH EMAIL VERIFICATION CHECK =================
   Future<void> _signIn() async {
-    if (_emailController.text.isEmpty ||
-        _passwordController.text.isEmpty) {
+    if (_emailController.text.isEmpty || _passwordController.text.isEmpty) {
       _showMessage('Please enter email and password');
       return;
     }
@@ -38,8 +37,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
     try {
       // 🔐 Firebase Auth
-      UserCredential userCredential =
-          await _auth.signInWithEmailAndPassword(
+      UserCredential userCredential = await _auth.signInWithEmailAndPassword(
         email: _emailController.text.trim(),
         password: _passwordController.text,
       );
@@ -51,9 +49,22 @@ class _LoginScreenState extends State<LoginScreen> {
         return;
       }
 
+      // ✅ CHECK EMAIL VERIFICATION
+      await user.reload(); // Refresh user data
+      final updatedUser = _auth.currentUser;
+
+      if (updatedUser != null && !updatedUser.emailVerified) {
+        // Email not verified
+        await _auth.signOut();
+        _showMessage(
+          'Email not verified!\n\nPlease check your email and verify your account before logging in.',
+        );
+        setState(() => _isLoading = false);
+        return;
+      }
+
       // 🔥 Firestore check
-      final doc =
-          await _firestore.collection('users').doc(user.uid).get();
+      final doc = await _firestore.collection('users').doc(user.uid).get();
 
       if (!doc.exists) {
         _showMessage('User record not found in database');
@@ -61,7 +72,13 @@ class _LoginScreenState extends State<LoginScreen> {
         return;
       }
 
-      // ✅ SUCCESS → HOME (FIXED THIS PART)
+      // Update last login and email verified status in Firestore
+      await _firestore.collection('users').doc(user.uid).update({
+        'lastLogin': Timestamp.now(),
+        'emailVerified': true,
+      });
+
+      // ✅ SUCCESS → HOME
       if (mounted) {
         Navigator.pushReplacementNamed(context, '/home');
       }
@@ -76,21 +93,9 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  // ================= RESET PASSWORD =================
-  Future<void> _resetPassword() async {
-    if (_emailController.text.isEmpty) {
-      _showMessage('Please enter your email');
-      return;
-    }
-
-    try {
-      await _auth.sendPasswordResetEmail(
-        email: _emailController.text.trim(),
-      );
-      _showMessage('Password reset email sent');
-    } on FirebaseAuthException catch (e) {
-      _showMessage(_firebaseErrorMessage(e.code));
-    }
+  // ================= RESET PASSWORD - NAVIGATE TO FORGOT PASSWORD =================
+  void _navigateToForgotPassword() {
+    Navigator.pushNamed(context, '/forgot-password');
   }
 
   // ================= ERROR HANDLER =================
@@ -104,6 +109,8 @@ class _LoginScreenState extends State<LoginScreen> {
         return 'Invalid email address';
       case 'user-disabled':
         return 'This account has been disabled';
+      case 'invalid-credential':
+        return 'Invalid email or password';
       default:
         return 'Authentication error';
     }
@@ -188,11 +195,11 @@ class _LoginScreenState extends State<LoginScreen> {
                 const SizedBox(height: 8),
                 _inputField(_passwordController, true, 'Min 6 characters'),
 
-                // FORGOT PASSWORD
+                // FORGOT PASSWORD - NAVIGATE TO RESET FLOW
                 Align(
                   alignment: Alignment.centerRight,
                   child: TextButton(
-                    onPressed: _isLoading ? null : _resetPassword,
+                    onPressed: _isLoading ? null : _navigateToForgotPassword,
                     child: Text(
                       'forgot password?',
                       style: GoogleFonts.dmMono(
@@ -249,8 +256,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         style: GoogleFonts.dmMono(
                           fontSize: 13,
                           fontWeight: FontWeight.bold,
-                          color:
-                              _isLoading ? Colors.grey : Colors.black,
+                          color: _isLoading ? Colors.grey : Colors.black,
                         ),
                       ),
                     ),
@@ -260,15 +266,15 @@ class _LoginScreenState extends State<LoginScreen> {
                 const SizedBox(height: 32),
 
                 // FIREBASE STATUS
-                Center(
-                  child: Text(
-                    'Firebase Status: Connected ✓',
-                    style: GoogleFonts.dmMono(
-                      fontSize: 11,
-                      color: Colors.green,
-                    ),
-                  ),
-                ),
+                //Center(
+                //  child: Text(
+                //    'Firebase Status: Connected ✓',
+                //   style: GoogleFonts.dmMono(
+                //      fontSize: 11,
+                //      color: Colors.green,
+                //    ),
+                //  ),
+               // ),
               ],
             ),
           ),
