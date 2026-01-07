@@ -9,6 +9,7 @@ import 'edit_class_screen.dart';
 import 'edit_task_screen.dart';
 import 'edit_exam_screen.dart';
 import 'calendar_screen.dart';
+import 'account_screen.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({Key? key}) : super(key: key);
@@ -206,8 +207,15 @@ class _HomePageState extends State<HomePage> {
     final List<Widget> _screens = [
       _buildHomeScreen(currentMonth, weekDates, today),
       const CalendarScreen(),
-      const Center(child: Text('Tasks Screen')), // Placeholder
-      const Center(child: Text('Profile Screen')), // Placeholder
+      const Center(child: Text('Grade Estimator')), // Placeholder for grade estimator
+      const Center(child: Text('Certification Repository')), // Placeholder for certification repository
+      AccountScreen(
+        onBackPressed: () {
+          setState(() {
+            _selectedNavIndex = 0; // Go back to home
+          });
+        },
+      ),
     ];
 
     return Scaffold(
@@ -220,7 +228,8 @@ class _HomePageState extends State<HomePage> {
               children: _screens,
             ),
           ),
-          _buildBottomNavigation(),
+          // Only show bottom navigation when NOT on account screen (index 4)
+          if (_selectedNavIndex != 4) _buildBottomNavigation(),
         ],
       ),
     );
@@ -265,17 +274,59 @@ class _HomePageState extends State<HomePage> {
           'HOME',
           style: GoogleFonts.dmMono(fontSize: 24, fontWeight: FontWeight.bold),
         ),
-        _AnimatedTapButton(
-          onTap: _logout,
-          child: Container(
-            width: 42,
-            height: 42,
-            decoration: const BoxDecoration(
-              color: Color(0xFF6B7280),
-              shape: BoxShape.circle,
+        Row(
+          children: [
+            _AnimatedTapButton(
+              onTap: () {
+                // TODO: Navigate to notifications screen
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      'Notifications feature coming soon',
+                      style: GoogleFonts.dmMono(),
+                    ),
+                    backgroundColor: const Color(0xFF6B7280),
+                    duration: const Duration(seconds: 2),
+                  ),
+                );
+              },
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  const Icon(
+                    Icons.notifications_outlined,
+                    color: Colors.black,
+                    size: 28,
+                  ),
+                  Positioned(
+                    right: 0,
+                    top: 0,
+                    child: Container(
+                      width: 8,
+                      height: 8,
+                      decoration: const BoxDecoration(
+                        color: Color.fromARGB(0, 185, 0, 0),
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
-            child: const Icon(Icons.logout, color: Colors.white, size: 20),
-          ),
+            const SizedBox(width: 16),
+            _AnimatedTapButton(
+              onTap: () {
+                setState(() {
+                  _selectedNavIndex = 4; // Navigate to profile/account screen
+                });
+              },
+              child: const Icon(
+                Icons.person_outline,
+                color: Colors.black,
+                size: 28,
+              ),
+            ),
+          ],
         ),
       ],
     );
@@ -1893,8 +1944,8 @@ class _HomePageState extends State<HomePage> {
               _buildNavIcon(Icons.home, 0),
               _buildNavIcon(Icons.calendar_today, 1),
               _buildAddButton(),
-              _buildNavIcon(Icons.access_time, 2),
-              _buildNavIcon(Icons.person, 3),
+              _buildNavIcon(Icons.percent, 2),
+              _buildNavIcon(Icons.file_copy_outlined, 3),
             ],
           ),
         ),

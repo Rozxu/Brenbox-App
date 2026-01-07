@@ -23,7 +23,7 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
-
+  flutter_launcher_icons: ^0.13.1
   flutter_lints: ^5.0.0
 
 flutter:
@@ -32,3 +32,12 @@ flutter:
   assets:
      - assets/images/BrenboxLogo.png
      - assets/images/Brenbox_Applogo.png
+     - assets/images/
+
+flutter_launcher_icons:
+  android: true
+  ios: true  
+  image_path: "assets/images/Brenbox_Applogo.png"
+  adaptive_icon_background: "#FFFFFF"
+  adaptive_icon_foreground: "assets/images/Brenbox_Applogo.png"
+  remove_alpha_ios: true

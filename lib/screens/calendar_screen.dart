@@ -17,11 +17,65 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
   DateTime _currentMonth = DateTime.now();
   DateTime? _selectedDate;
+  
+  // Subject filters
+  String _subjectStatus = 'On-Going'; // On-Going or Ended
+  String _selectedSemester = 'All'; // All, Semester 1, Semester 2, etc., Non Semester
+  List<String> _availableSemesters = ['All'];
 
   @override
   void initState() {
     super.initState();
     _selectedDate = DateTime.now();
+    _loadAvailableSemesters();
+  }
+
+  Future<void> _loadAvailableSemesters() async {
+    final user = _auth.currentUser;
+    if (user == null) return;
+
+    try {
+      final snapshot = await _firestore
+          .collection('timetable')
+          .where('userId', isEqualTo: user.uid)
+          .get();
+
+      Set<String> semesters = {'All'};
+      
+      for (var doc in snapshot.docs) {
+        final data = doc.data();
+        if (data['semester'] != null && data['academicYear'] != null) {
+          semesters.add('Semester ${data['semester']}');
+        }
+      }
+      
+      // Check if there are any subjects without semester
+      final hasNonSemester = snapshot.docs.any((doc) => 
+        doc.data()['semester'] == null || doc.data()['academicYear'] == null
+      );
+      
+      if (hasNonSemester) {
+        semesters.add('Non Semester');
+      }
+
+      if (mounted) {
+        setState(() {
+          _availableSemesters = semesters.toList()..sort((a, b) {
+            if (a == 'All') return -1;
+            if (b == 'All') return 1;
+            if (a == 'Non Semester') return 1;
+            if (b == 'Non Semester') return -1;
+            // Extract semester numbers for proper sorting
+            final aNum = int.tryParse(a.replaceAll('Semester ', ''));
+            final bNum = int.tryParse(b.replaceAll('Semester ', ''));
+            if (aNum != null && bNum != null) return aNum.compareTo(bNum);
+            return a.compareTo(b);
+          });
+        });
+      }
+    } catch (e) {
+      print('Error loading semesters: $e');
+    }
   }
 
   void _previousMonth() {
@@ -141,9 +195,9 @@ class _CalendarScreenState extends State<CalendarScreen> {
     
     List<DateTime> days = [];
     
-    // Add empty slots for days before the first day of the month
-    int firstWeekday = firstDay.weekday;
-    if (firstWeekday == 7) firstWeekday = 0; // Sunday = 0
+    // Get the weekday of the first day (1 = Monday, 7 = Sunday in Dart)
+    // Convert to 0 = Sunday, 1 = Monday, etc.
+    int firstWeekday = firstDay.weekday % 7; // This makes Sunday = 0
     
     // Fill with previous month's trailing days
     for (int i = firstWeekday - 1; i >= 0; i--) {
@@ -202,6 +256,8 @@ class _CalendarScreenState extends State<CalendarScreen> {
                 _buildCalendar(daysInMonth),
                 const SizedBox(height: 24),
                 _buildSelectedDateEvents(),
+                const SizedBox(height: 24),
+                _buildSubjectsSection(),
                 const SizedBox(height: 24),
               ],
             ),
@@ -300,13 +356,13 @@ class _CalendarScreenState extends State<CalendarScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
+              _weekdayLabel('SUN'),
               _weekdayLabel('MON'),
               _weekdayLabel('TUE'),
               _weekdayLabel('WED'),
               _weekdayLabel('THU'),
               _weekdayLabel('FRI'),
               _weekdayLabel('SAT'),
-              _weekdayLabel('SUN'),
             ],
           ),
           const SizedBox(height: 12),
@@ -389,24 +445,38 @@ class _CalendarScreenState extends State<CalendarScreen> {
           _selectedDate = date;
         });
       },
-      child: Container(
-        decoration: BoxDecoration(
-          color: backgroundColor,
-          shape: BoxShape.circle,
-          border: borderColor != null && borderWidth != null
-              ? Border.all(color: borderColor, width: borderWidth)
-              : null,
-        ),
-        child: Center(
-          child: Text(
-            '${date.day.toString().padLeft(2, '0')}',
-            style: GoogleFonts.dmMono(
-              fontSize: 14,
-              fontWeight: FontWeight.bold,
-              color: textColor,
+      child: Stack(
+        clipBehavior: Clip.none,
+        alignment: Alignment.topCenter,
+        children: [
+          Container(
+            decoration: BoxDecoration(
+              color: backgroundColor,
+              shape: BoxShape.circle,
+              border: borderColor != null && borderWidth != null
+                  ? Border.all(color: borderColor, width: borderWidth)
+                  : null,
+            ),
+            child: Center(
+              child: Text(
+                '${date.day.toString().padLeft(2, '0')}',
+                style: GoogleFonts.dmMono(
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                  color: textColor,
+                ),
+              ),
             ),
           ),
-        ),
+          if (isSelected)
+            Positioned(
+              bottom: -12,
+              child: CustomPaint(
+                size: const Size(10, 8),
+                painter: TrianglePainter(),
+              ),
+            ),
+        ],
       ),
     );
   }
@@ -905,6 +975,364 @@ class _CalendarScreenState extends State<CalendarScreen> {
     );
   }
 
+  // Subjects Section
+  Widget _buildSubjectsSection() {
+    final user = _auth.currentUser;
+    if (user == null) return const SizedBox();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Subjects',
+          style: GoogleFonts.dmMono(
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(height: 16),
+        // Semester Dropdown and Status Toggle
+        Row(
+          children: [
+            // Semester Dropdown
+            Expanded(
+              child: _AnimatedTapButton(
+                onTap: _showSemesterPicker,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(24),
+                    border: Border.all(color: Colors.black, width: 2),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Flexible(
+                        child: Text(
+                          _selectedSemester == 'All' 
+                              ? 'All' 
+                              : _selectedSemester == 'Non Semester'
+                                  ? 'Non Semester'
+                                  : '${_selectedSemester.toUpperCase()} , 25/26',
+                          style: GoogleFonts.dmMono(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      const Icon(Icons.arrow_forward_ios, size: 16),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            // Status Toggle
+            _AnimatedTapButton(
+              onTap: () {
+                setState(() {
+                  _subjectStatus = 'On-Going';
+                });
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                decoration: BoxDecoration(
+                  color: _subjectStatus == 'On-Going'
+                      ? const Color(0xFF75E1D1)
+                      : Colors.white,
+                  borderRadius: BorderRadius.circular(24),
+                  border: Border.all(
+                    color: _subjectStatus == 'On-Going'
+                        ? const Color(0xFF006E5E)
+                        : Colors.black,
+                    width: 2,
+                  ),
+                ),
+                child: Text(
+                  'On-Going',
+                  style: GoogleFonts.dmMono(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: _subjectStatus == 'On-Going'
+                        ? const Color(0xFF006E5E)
+                        : Colors.black,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            _AnimatedTapButton(
+              onTap: () {
+                setState(() {
+                  _subjectStatus = 'Ended';
+                });
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                decoration: BoxDecoration(
+                  color: _subjectStatus == 'Ended'
+                      ? const Color(0xFF75E1D1)
+                      : Colors.white,
+                  borderRadius: BorderRadius.circular(24),
+                  border: Border.all(
+                    color: _subjectStatus == 'Ended'
+                        ? const Color(0xFF006E5E)
+                        : Colors.black,
+                    width: 2,
+                  ),
+                ),
+                child: Text(
+                  'Ended',
+                  style: GoogleFonts.dmMono(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: _subjectStatus == 'Ended'
+                        ? const Color(0xFF006E5E)
+                        : Colors.black,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        // Subjects Grid
+        StreamBuilder<List<Map<String, dynamic>>>(
+          stream: _getSubjectsStream(user.uid),
+          builder: (context, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return const Center(
+                child: Padding(
+                  padding: EdgeInsets.all(24),
+                  child: CircularProgressIndicator(
+                    color: Color(0xFF6B7280),
+                  ),
+                ),
+              );
+            }
+
+            if (snapshot.hasError || !snapshot.hasData || snapshot.data!.isEmpty) {
+              return _buildEmptySubjectsState();
+            }
+
+            final subjects = snapshot.data!;
+
+            return GridView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 2,
+                childAspectRatio: 2.2,
+                crossAxisSpacing: 12,
+                mainAxisSpacing: 12,
+              ),
+              itemCount: subjects.length,
+              itemBuilder: (context, index) {
+                return _buildSubjectCard(subjects[index]);
+              },
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  void _showSemesterPicker() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return Container(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+            border: Border(
+              top: BorderSide(color: Colors.black, width: 2),
+              left: BorderSide(color: Colors.black, width: 2),
+              right: BorderSide(color: Colors.black, width: 2),
+            ),
+          ),
+          child: SafeArea(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const SizedBox(height: 16),
+                Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade300,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: Text(
+                    'Select Semester',
+                    style: GoogleFonts.dmMono(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: _availableSemesters.length,
+                  itemBuilder: (context, index) {
+                    final semester = _availableSemesters[index];
+                    final isSelected = semester == _selectedSemester;
+                    
+                    return ListTile(
+                      title: Text(
+                        semester,
+                        style: GoogleFonts.dmMono(
+                          fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                        ),
+                      ),
+                      trailing: isSelected
+                          ? const Icon(Icons.check, color: Color(0xFF34A853))
+                          : null,
+                      onTap: () {
+                        setState(() => _selectedSemester = semester);
+                        Navigator.pop(context);
+                      },
+                    );
+                  },
+                ),
+                const SizedBox(height: 16),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Stream<List<Map<String, dynamic>>> _getSubjectsStream(String userId) {
+    return _firestore
+        .collection('timetable')
+        .where('userId', isEqualTo: userId)
+        .snapshots()
+        .map((snapshot) {
+      final now = DateTime.now();
+      final today = DateTime(now.year, now.month, now.day);
+      
+      // Group by class name
+      Map<String, Map<String, dynamic>> subjectsMap = {};
+
+      for (var doc in snapshot.docs) {
+        final data = doc.data();
+        final className = data['className'] ?? 'Untitled';
+        final timestamp = data['date'] as Timestamp?;
+        
+        if (timestamp == null) continue;
+        
+        final eventDate = timestamp.toDate();
+        final eventDateOnly = DateTime(eventDate.year, eventDate.month, eventDate.day);
+        
+        // Filter by semester
+        if (_selectedSemester != 'All') {
+          if (_selectedSemester == 'Non Semester') {
+            if (data['semester'] != null || data['academicYear'] != null) {
+              continue;
+            }
+          } else {
+            final semesterNum = int.tryParse(_selectedSemester.replaceAll('Semester ', ''));
+            if (semesterNum == null || data['semester'] != semesterNum) {
+              continue;
+            }
+          }
+        }
+        
+        // Track the latest date for each subject
+        if (!subjectsMap.containsKey(className)) {
+          subjectsMap[className] = {
+            'className': className,
+            'semester': data['semester'],
+            'academicYear': data['academicYear'],
+            'latestDate': eventDateOnly,
+          };
+        } else {
+          final existingDate = subjectsMap[className]!['latestDate'] as DateTime;
+          if (eventDateOnly.isAfter(existingDate)) {
+            subjectsMap[className]!['latestDate'] = eventDateOnly;
+          }
+        }
+      }
+
+      // Filter by status (On-Going or Ended)
+      List<Map<String, dynamic>> filteredSubjects = subjectsMap.values.where((subject) {
+        final latestDate = subject['latestDate'] as DateTime;
+        final isEnded = latestDate.isBefore(today);
+        
+        return (_subjectStatus == 'On-Going' && !isEnded) ||
+               (_subjectStatus == 'Ended' && isEnded);
+      }).toList();
+
+      // Sort alphabetically
+      filteredSubjects.sort((a, b) => 
+        (a['className'] as String).compareTo(b['className'] as String)
+      );
+
+      return filteredSubjects;
+    });
+  }
+
+  Widget _buildSubjectCard(Map<String, dynamic> subject) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.black, width: 2),
+      ),
+      child: Center(
+        child: Text(
+          subject['className'],
+          style: GoogleFonts.dmMono(
+            fontSize: 13,
+            fontWeight: FontWeight.bold,
+          ),
+          textAlign: TextAlign.center,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEmptySubjectsState() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(32),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.black, width: 2),
+      ),
+      child: Column(
+        children: [
+          const Icon(
+            Icons.school_outlined,
+            size: 48,
+            color: Color(0xFF6B7280),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            _subjectStatus == 'On-Going' 
+                ? 'No ongoing subjects'
+                : 'No ended subjects',
+            style: GoogleFonts.dmMono(fontSize: 13, color: Colors.grey),
+          ),
+        ],
+      ),
+    );
+  }
+
   String _formatTime(String time) {
     try {
       final parts = time.split(':');
@@ -953,4 +1381,24 @@ class _AnimatedTapButtonState extends State<_AnimatedTapButton> {
       ),
     );
   }
+}
+
+class TrianglePainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = Colors.black
+      ..style = PaintingStyle.fill;
+
+    final path = Path()
+      ..moveTo(size.width / 2, 0)
+      ..lineTo(0, size.height)
+      ..lineTo(size.width, size.height)
+      ..close();
+
+    canvas.drawPath(path, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
