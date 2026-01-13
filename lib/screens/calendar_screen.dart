@@ -3,6 +3,10 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
+import 'edit_class_screen.dart';
+import 'edit_task_screen.dart';
+import 'edit_exam_screen.dart';
+import 'subject_detail_screen.dart';
 
 class CalendarScreen extends StatefulWidget {
   const CalendarScreen({Key? key}) : super(key: key);
@@ -21,25 +25,26 @@ class _CalendarScreenState extends State<CalendarScreen> {
   // Subject filters
   String _subjectStatus = 'On-Going'; // On-Going or Ended
   String _selectedSemester = 'All'; // All, Semester 1, Semester 2, etc., Non Semester
-  List<String> _availableSemesters = ['All'];
 
   @override
   void initState() {
     super.initState();
     _selectedDate = DateTime.now();
-    _loadAvailableSemesters();
+    // Don't call _loadAvailableSemesters here anymore
   }
 
-  Future<void> _loadAvailableSemesters() async {
+  // NEW: Stream-based approach for real-time semester updates
+  Stream<List<String>> _getAvailableSemestersStream() {
     final user = _auth.currentUser;
-    if (user == null) return;
+    if (user == null) {
+      return Stream.value(['All']);
+    }
 
-    try {
-      final snapshot = await _firestore
-          .collection('timetable')
-          .where('userId', isEqualTo: user.uid)
-          .get();
-
+    return _firestore
+        .collection('timetable')
+        .where('userId', isEqualTo: user.uid)
+        .snapshots()
+        .map((snapshot) {
       Set<String> semesters = {'All'};
       
       for (var doc in snapshot.docs) {
@@ -58,24 +63,20 @@ class _CalendarScreenState extends State<CalendarScreen> {
         semesters.add('Non Semester');
       }
 
-      if (mounted) {
-        setState(() {
-          _availableSemesters = semesters.toList()..sort((a, b) {
-            if (a == 'All') return -1;
-            if (b == 'All') return 1;
-            if (a == 'Non Semester') return 1;
-            if (b == 'Non Semester') return -1;
-            // Extract semester numbers for proper sorting
-            final aNum = int.tryParse(a.replaceAll('Semester ', ''));
-            final bNum = int.tryParse(b.replaceAll('Semester ', ''));
-            if (aNum != null && bNum != null) return aNum.compareTo(bNum);
-            return a.compareTo(b);
-          });
-        });
-      }
-    } catch (e) {
-      print('Error loading semesters: $e');
-    }
+      List<String> semesterList = semesters.toList()..sort((a, b) {
+        if (a == 'All') return -1;
+        if (b == 'All') return 1;
+        if (a == 'Non Semester') return 1;
+        if (b == 'Non Semester') return -1;
+        // Extract semester numbers for proper sorting
+        final aNum = int.tryParse(a.replaceAll('Semester ', ''));
+        final bNum = int.tryParse(b.replaceAll('Semester ', ''));
+        if (aNum != null && bNum != null) return aNum.compareTo(bNum);
+        return a.compareTo(b);
+      });
+
+      return semesterList;
+    });
   }
 
   void _previousMonth() {
@@ -373,9 +374,9 @@ class _CalendarScreenState extends State<CalendarScreen> {
             physics: const NeverScrollableScrollPhysics(),
             gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: 7,
-              childAspectRatio: 1,
+              childAspectRatio: 0.85, // Reduced from 1 to give more height for triangle
               crossAxisSpacing: 8,
-              mainAxisSpacing: 8,
+              mainAxisSpacing: 12, // Increased spacing between rows
             ),
             itemCount: days.length,
             itemBuilder: (context, index) {
@@ -445,11 +446,13 @@ class _CalendarScreenState extends State<CalendarScreen> {
           _selectedDate = date;
         });
       },
-      child: Stack(
-        clipBehavior: Clip.none,
-        alignment: Alignment.topCenter,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Container(
+            width: 32,
+            height: 32,
             decoration: BoxDecoration(
               color: backgroundColor,
               shape: BoxShape.circle,
@@ -468,14 +471,13 @@ class _CalendarScreenState extends State<CalendarScreen> {
               ),
             ),
           ),
-          if (isSelected)
-            Positioned(
-              bottom: -12,
-              child: CustomPaint(
-                size: const Size(10, 8),
-                painter: TrianglePainter(),
-              ),
+          if (isSelected) ...[
+            const SizedBox(height: 4),
+            CustomPaint(
+              size: const Size(10, 8),
+              painter: TrianglePainter(),
             ),
+          ],
         ],
       ),
     );
@@ -563,7 +565,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
               children: events.map((event) {
                 if (event['type'] == 'task') {
                   return _buildTaskCard(event);
-                } else if (event['type'] == 'exam') {
+                } else if (event['eventType'] == 'exam') {
                   return _buildExamCard(event);
                 } else {
                   return _buildClassCard(event);
@@ -671,20 +673,17 @@ class _CalendarScreenState extends State<CalendarScreen> {
                 if (examDate.year == date.year &&
                     examDate.month == date.month &&
                     examDate.day == date.day) {
-                  final startTime = (data['startTime'] as Timestamp).toDate();
-                  final endTime = (data['endTime'] as Timestamp).toDate();
-                  
                   allEvents.add({
                     'id': doc.id,
-                    'type': 'exam',
+                    'eventType': 'exam', // Use this to identify it's an exam
+                    'type': data['type'] ?? 'Exam', // Exam type (Midterm, Final, etc.)
                     'examName': data['examName'] ?? 'Untitled Exam',
                     'subject': data['subject'] ?? '',
-                    'examType': data['type'] ?? 'Exam',
                     'mode': data['mode'] ?? 'In Person',
                     'venue': data['venue'] ?? '',
                     'examDate': timestamp,
-                    'startTime': DateFormat('HH:mm').format(startTime),
-                    'endTime': DateFormat('HH:mm').format(endTime),
+                    'startTime': data['startTime'],
+                    'endTime': data['endTime'],
                   });
                 }
               }
@@ -701,250 +700,296 @@ class _CalendarScreenState extends State<CalendarScreen> {
   Widget _buildTaskCard(Map<String, dynamic> task) {
     final isCompleted = task['completed'] ?? false;
     
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: isCompleted ? const Color(0xFF34A853) : const Color(0xFF008BB9),
-          width: 2,
+    return _AnimatedTapButton(
+      onTap: () => _showTaskDetails(task),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isCompleted ? const Color(0xFF34A853) : const Color(0xFF008BB9),
+            width: 2,
+          ),
         ),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: isCompleted ? const Color(0xFF34A853) : const Color(0xFF008BB9),
-              borderRadius: BorderRadius.circular(8),
+        child: Row(
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: isCompleted ? const Color(0xFF34A853) : const Color(0xFF008BB9),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(
+                isCompleted ? Icons.check_circle : Icons.task_alt,
+                color: Colors.white,
+                size: 20,
+              ),
             ),
-            child: Icon(
-              isCompleted ? Icons.check_circle : Icons.task_alt,
-              color: Colors.white,
-              size: 20,
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 2,
-                      ),
-                      decoration: BoxDecoration(
-                        color: isCompleted ? const Color(0xFF34A853) : const Color(0xFF008BB9),
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: Text(
-                        task['taskType'].toString().toUpperCase(),
-                        style: GoogleFonts.dmMono(
-                          fontSize: 8,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: isCompleted ? const Color(0xFF34A853) : const Color(0xFF008BB9),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          task['taskType'].toString().toUpperCase(),
+                          style: GoogleFonts.dmMono(
+                            fontSize: 8,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                          ),
                         ),
                       ),
-                    ),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                        task['taskTitle'],
-                        style: GoogleFonts.dmMono(
-                          fontSize: 13,
-                          fontWeight: FontWeight.bold,
-                          decoration: isCompleted ? TextDecoration.lineThrough : null,
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          task['taskTitle'],
+                          style: GoogleFonts.dmMono(
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                            decoration: isCompleted ? TextDecoration.lineThrough : null,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
                       ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  '${_formatTime(task['dueTime'])}${task['subject'].isNotEmpty ? ' • ${task['subject']}' : ''}',
-                  style: GoogleFonts.dmMono(
-                    fontSize: 10,
-                    color: const Color(0xFF6B7280),
+                    ],
                   ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
+                  const SizedBox(height: 4),
+                  Text(
+                    '${_formatTime(task['dueTime'])}${task['subject'].isNotEmpty ? ' • ${task['subject']}' : ''}',
+                    style: GoogleFonts.dmMono(
+                      fontSize: 10,
+                      color: const Color(0xFF6B7280),
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 
   Widget _buildExamCard(Map<String, dynamic> exam) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFF9AB900), width: 2),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: const Color(0xFF9AB900),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: const Icon(
-              Icons.assignment_outlined,
-              color: Colors.white,
-              size: 20,
-            ),
+    try {
+      final startTime = (exam['startTime'] as Timestamp?)?.toDate();
+      final endTime = (exam['endTime'] as Timestamp?)?.toDate();
+      
+      if (startTime == null || endTime == null) {
+        // Fallback if timestamps are missing
+        return Container(
+          margin: const EdgeInsets.only(bottom: 12),
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: const Color(0xFF9AB900), width: 2),
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
+          child: Text(
+            exam['examName'] ?? 'Exam',
+            style: GoogleFonts.dmMono(fontSize: 13, fontWeight: FontWeight.bold),
+          ),
+        );
+      }
+      
+      return _AnimatedTapButton(
+        onTap: () => _showExamDetails(exam),
+        child: Container(
+          margin: const EdgeInsets.only(bottom: 12),
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: const Color(0xFF9AB900), width: 2),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF9AB900),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(
+                  Icons.assignment_outlined,
+                  color: Colors.white,
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 2,
-                      ),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF9AB900),
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: Text(
-                        exam['examType'].toString().toUpperCase(),
-                        style: GoogleFonts.dmMono(
-                          fontSize: 8,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF9AB900),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            (exam['type'] ?? 'EXAM').toString().toUpperCase(),
+                            style: GoogleFonts.dmMono(
+                              fontSize: 8,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                            ),
+                          ),
                         ),
-                      ),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            exam['examName'] ?? 'Untitled Exam',
+                            style: GoogleFonts.dmMono(
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                        exam['examName'],
-                        style: GoogleFonts.dmMono(
-                          fontSize: 13,
-                          fontWeight: FontWeight.bold,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                    const SizedBox(height: 4),
+                    Text(
+                      '${DateFormat('hh:mm a').format(startTime)} - ${DateFormat('hh:mm a').format(endTime)}${(exam['subject'] ?? '').isNotEmpty ? ' • ${exam['subject']}' : ''}',
+                      style: GoogleFonts.dmMono(
+                        fontSize: 10,
+                        color: const Color(0xFF6B7280),
                       ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ],
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  '${_formatTime(exam['startTime'])} - ${_formatTime(exam['endTime'])}${exam['subject'].isNotEmpty ? ' • ${exam['subject']}' : ''}',
-                  style: GoogleFonts.dmMono(
-                    fontSize: 10,
-                    color: const Color(0xFF6B7280),
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
-        ],
-      ),
-    );
+        ),
+      );
+    } catch (e) {
+      print('Error building exam card: $e');
+      return Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: const Color(0xFF9AB900), width: 2),
+        ),
+        child: Text(
+          exam['examName'] ?? 'Exam (Error loading details)',
+          style: GoogleFonts.dmMono(fontSize: 13),
+        ),
+      );
+    }
   }
 
   Widget _buildClassCard(Map<String, dynamic> event) {
     Color labelColor = const Color(0xFFB90000);
     
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFB90000), width: 2),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: labelColor,
-              borderRadius: BorderRadius.circular(8),
+    return _AnimatedTapButton(
+      onTap: () => _showClassDetails(event),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: const Color(0xFFB90000), width: 2),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: labelColor,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(
+                Icons.school_outlined,
+                color: Colors.white,
+                size: 20,
+              ),
             ),
-            child: const Icon(
-              Icons.school_outlined,
-              color: Colors.white,
-              size: 20,
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 2,
-                      ),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFB90000),
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: Text(
-                        'CLASS',
-                        style: GoogleFonts.dmMono(
-                          fontSize: 8,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFB90000),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          'CLASS',
+                          style: GoogleFonts.dmMono(
+                            fontSize: 8,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                          ),
                         ),
                       ),
-                    ),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                        event['className'],
-                        style: GoogleFonts.dmMono(
-                          fontSize: 13,
-                          fontWeight: FontWeight.bold,
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          event['className'],
+                          style: GoogleFonts.dmMono(
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
                       ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  '${_formatTime(event['startTime'])} - ${_formatTime(event['endTime'])}${event['room'].isNotEmpty || event['building'].isNotEmpty ? ' • ${event['room']}${event['room'].isNotEmpty && event['building'].isNotEmpty ? ', ' : ''}${event['building']}' : ''}',
-                  style: GoogleFonts.dmMono(
-                    fontSize: 10,
-                    color: const Color(0xFF6B7280),
+                    ],
                   ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
+                  const SizedBox(height: 4),
+                  Text(
+                    '${_formatTime(event['startTime'])} - ${_formatTime(event['endTime'])}${event['room'].isNotEmpty || event['building'].isNotEmpty ? ' • ${event['room']}${event['room'].isNotEmpty && event['building'].isNotEmpty ? ', ' : ''}${event['building']}' : ''}',
+                    style: GoogleFonts.dmMono(
+                      fontSize: 10,
+                      color: const Color(0xFF6B7280),
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -1179,26 +1224,43 @@ class _CalendarScreenState extends State<CalendarScreen> {
                   ),
                 ),
                 const SizedBox(height: 16),
-                ListView.builder(
-                  shrinkWrap: true,
-                  itemCount: _availableSemesters.length,
-                  itemBuilder: (context, index) {
-                    final semester = _availableSemesters[index];
-                    final isSelected = semester == _selectedSemester;
-                    
-                    return ListTile(
-                      title: Text(
-                        semester,
-                        style: GoogleFonts.dmMono(
-                          fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                // Use StreamBuilder for real-time updates
+                StreamBuilder<List<String>>(
+                  stream: _getAvailableSemestersStream(),
+                  builder: (context, snapshot) {
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return const Padding(
+                        padding: EdgeInsets.all(24),
+                        child: CircularProgressIndicator(
+                          color: Color(0xFF6B7280),
                         ),
-                      ),
-                      trailing: isSelected
-                          ? const Icon(Icons.check, color: Color(0xFF34A853))
-                          : null,
-                      onTap: () {
-                        setState(() => _selectedSemester = semester);
-                        Navigator.pop(context);
+                      );
+                    }
+
+                    final semesters = snapshot.data ?? ['All'];
+
+                    return ListView.builder(
+                      shrinkWrap: true,
+                      itemCount: semesters.length,
+                      itemBuilder: (context, index) {
+                        final semester = semesters[index];
+                        final isSelected = semester == _selectedSemester;
+                        
+                        return ListTile(
+                          title: Text(
+                            semester,
+                            style: GoogleFonts.dmMono(
+                              fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                            ),
+                          ),
+                          trailing: isSelected
+                              ? const Icon(Icons.check, color: Color(0xFF34A853))
+                              : null,
+                          onTap: () {
+                            setState(() => _selectedSemester = semester);
+                            Navigator.pop(context);
+                          },
+                        );
                       },
                     );
                   },
@@ -1282,8 +1344,21 @@ class _CalendarScreenState extends State<CalendarScreen> {
     });
   }
 
-  Widget _buildSubjectCard(Map<String, dynamic> subject) {
-    return Container(
+ Widget _buildSubjectCard(Map<String, dynamic> subject) {
+  return _AnimatedTapButton(
+    onTap: () {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => SubjectDetailScreen(
+            subjectName: subject['className'],
+            semester: subject['semester'],
+            academicYear: subject['academicYear'],
+          ),
+        ),
+      );
+    },
+    child: Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
@@ -1302,8 +1377,9 @@ class _CalendarScreenState extends State<CalendarScreen> {
           overflow: TextOverflow.ellipsis,
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 
   Widget _buildEmptySubjectsState() {
     return Container(
@@ -1346,6 +1422,539 @@ class _CalendarScreenState extends State<CalendarScreen> {
     } catch (e) {
       return time;
     }
+  }
+
+  // Detail row helper
+  Widget _buildDetailRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 100,
+            child: Text(
+              label,
+              style: GoogleFonts.dmMono(
+                fontSize: 12,
+                color: const Color(0xFF6B7280),
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: GoogleFonts.dmMono(
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Show task details modal
+  void _showTaskDetails(Map<String, dynamic> task) {
+    final dueDate = (task['dueDate'] as Timestamp).toDate();
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (BuildContext context, StateSetter setModalState) {
+            final isCompleted = task['completed'] ?? false;
+
+            return Container(
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+                border: Border(
+                  top: BorderSide(color: Colors.black, width: 2),
+                  left: BorderSide(color: Colors.black, width: 2),
+                  right: BorderSide(color: Colors.black, width: 2),
+                ),
+              ),
+              child: SafeArea(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const SizedBox(height: 16),
+                    Container(
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade300,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 24),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Task Details',
+                            style: GoogleFonts.dmMono(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          _buildDetailRow('Task Title', task['taskTitle']),
+                          if (task['taskDetails'] != null && task['taskDetails'].isNotEmpty)
+                            _buildDetailRow('Details', task['taskDetails']),
+                          if (task['subject'] != null && task['subject'].isNotEmpty)
+                            _buildDetailRow('Subject', task['subject']),
+                          _buildDetailRow('Type', task['taskType']),
+                          _buildDetailRow(
+                            'Due Date',
+                            DateFormat('EEE, dd MMM yyyy').format(dueDate),
+                          ),
+                          _buildDetailRow('Due Time', _formatTime(task['dueTime'])),
+                          const SizedBox(height: 8),
+                          _buildStatusToggleInModal(task, setModalState),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 24),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: () async {
+                                Navigator.pop(context);
+                                final result = await Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => EditTaskScreen(taskData: task),
+                                  ),
+                                );
+                                if (result == true && mounted) {
+                                  setState(() {});
+                                }
+                              },
+                              icon: const Icon(Icons.edit_outlined),
+                              label: Text('Edit', style: GoogleFonts.dmMono()),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: Colors.black,
+                                side: const BorderSide(color: Colors.black, width: 2),
+                                padding: const EdgeInsets.symmetric(vertical: 16),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: ElevatedButton.icon(
+                              onPressed: () async {
+                                final messenger = ScaffoldMessenger.of(context);
+                                Navigator.pop(context);
+                                await _firestore.collection('tasks').doc(task['id']).delete();
+                                messenger.showSnackBar(
+                                  SnackBar(
+                                    content: Text('Task deleted', style: GoogleFonts.dmMono()),
+                                    backgroundColor: const Color(0xFFB90000),
+                                  ),
+                                );
+                              },
+                              icon: const Icon(Icons.delete_outline),
+                              label: Text('Delete', style: GoogleFonts.dmMono()),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFFB90000),
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(vertical: 16),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  // Status toggle for task
+  Widget _buildStatusToggleInModal(Map<String, dynamic> task, StateSetter setModalState) {
+    final isCompleted = task['completed'] ?? false;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 100,
+            child: Text(
+              'Status',
+              style: GoogleFonts.dmMono(
+                fontSize: 12,
+                color: const Color(0xFF6B7280),
+              ),
+            ),
+          ),
+          Expanded(
+            child: Row(
+              children: [
+                Expanded(
+                  child: _AnimatedTapButton(
+                    onTap: () async {
+                      await _firestore.collection('tasks').doc(task['id']).update({'completed': false});
+                      setModalState(() {
+                        task['completed'] = false;
+                      });
+                      setState(() {});
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                      decoration: BoxDecoration(
+                        color: !isCompleted ? const Color(0xFF008BB9) : Colors.grey.shade200,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: !isCompleted ? const Color(0xFF008BB9) : Colors.grey.shade400,
+                          width: 2,
+                        ),
+                      ),
+                      child: Center(
+                        child: Text(
+                          'Pending',
+                          style: GoogleFonts.dmMono(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            color: !isCompleted ? Colors.white : Colors.grey.shade600,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _AnimatedTapButton(
+                    onTap: () async {
+                      await _firestore.collection('tasks').doc(task['id']).update({'completed': true});
+                      setModalState(() {
+                        task['completed'] = true;
+                      });
+                      setState(() {});
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                      decoration: BoxDecoration(
+                        color: isCompleted ? const Color(0xFF34A853) : Colors.grey.shade200,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: isCompleted ? const Color(0xFF34A853) : Colors.grey.shade400,
+                          width: 2,
+                        ),
+                      ),
+                      child: Center(
+                        child: Text(
+                          'Completed',
+                          style: GoogleFonts.dmMono(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            color: isCompleted ? Colors.white : Colors.grey.shade600,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Show exam details modal
+  void _showExamDetails(Map<String, dynamic> exam) {
+    final examDate = (exam['examDate'] as Timestamp).toDate();
+    final startTime = (exam['startTime'] as Timestamp).toDate();
+    final endTime = (exam['endTime'] as Timestamp).toDate();
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (context) {
+        return Container(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+            border: Border(
+              top: BorderSide(color: Colors.black, width: 2),
+              left: BorderSide(color: Colors.black, width: 2),
+              right: BorderSide(color: Colors.black, width: 2),
+            ),
+          ),
+          child: SafeArea(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const SizedBox(height: 16),
+                Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade300,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                const SizedBox(height: 24),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Exam Details',
+                        style: GoogleFonts.dmMono(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      _buildDetailRow('Exam Name', exam['examName']),
+                      if (exam['subject'].isNotEmpty)
+                        _buildDetailRow('Subject', exam['subject']),
+                      _buildDetailRow('Type', exam['type']),
+                      _buildDetailRow('Mode', exam['mode']),
+                      if (exam['mode'] == 'In Person' && exam['venue'].isNotEmpty)
+                        _buildDetailRow('Venue', exam['venue']),
+                      _buildDetailRow(
+                        'Date',
+                        DateFormat('EEE, dd MMM yyyy').format(examDate),
+                      ),
+                      _buildDetailRow(
+                        'Time',
+                        '${DateFormat('hh:mm a').format(startTime)} - ${DateFormat('hh:mm a').format(endTime)}',
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 24),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: () async {
+                            Navigator.pop(context);
+                            final result = await Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => EditExamScreen(examData: exam),
+                              ),
+                            );
+                            if (result == true && mounted) {
+                              setState(() {});
+                            }
+                          },
+                          icon: const Icon(Icons.edit_outlined),
+                          label: Text('Edit', style: GoogleFonts.dmMono()),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.black,
+                            side: const BorderSide(
+                              color: Colors.black,
+                              width: 2,
+                            ),
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: () async {
+                            final messenger = ScaffoldMessenger.of(context);
+                            Navigator.pop(context);
+                            await _firestore
+                                .collection('exams')
+                                .doc(exam['id'])
+                                .delete();
+                            messenger.showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  'Exam deleted',
+                                  style: GoogleFonts.dmMono(),
+                                ),
+                                backgroundColor: const Color(0xFFB90000),
+                              ),
+                            );
+                          },
+                          icon: const Icon(Icons.delete_outline),
+                          label: Text('Delete', style: GoogleFonts.dmMono()),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFFB90000),
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 24),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  // Show class details modal
+  void _showClassDetails(Map<String, dynamic> event) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (context) {
+        return Container(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+            border: Border(
+              top: BorderSide(color: Colors.black, width: 2),
+              left: BorderSide(color: Colors.black, width: 2),
+              right: BorderSide(color: Colors.black, width: 2),
+            ),
+          ),
+          child: SafeArea(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const SizedBox(height: 16),
+                Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade300,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                const SizedBox(height: 24),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Class Details',
+                        style: GoogleFonts.dmMono(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      _buildDetailRow('Class Name', event['className']),
+                      _buildDetailRow(
+                        'Time',
+                        '${_formatTime(event['startTime'])} - ${_formatTime(event['endTime'])}',
+                      ),
+                      if (event['room'] != null && event['room'].isNotEmpty)
+                        _buildDetailRow('Room', event['room']),
+                      if (event['building'] != null && event['building'].isNotEmpty)
+                        _buildDetailRow('Building', event['building']),
+                      if (event['lecturerName'] != null && event['lecturerName'].isNotEmpty)
+                        _buildDetailRow('Lecturer', event['lecturerName']),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 24),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: () async {
+                            Navigator.pop(context);
+                            final result = await Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => EditClassScreen(classData: event),
+                              ),
+                            );
+                            if (result == true && mounted) {
+                              setState(() {});
+                            }
+                          },
+                          icon: const Icon(Icons.edit_outlined),
+                          label: Text('Edit', style: GoogleFonts.dmMono()),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.black,
+                            side: const BorderSide(color: Colors.black, width: 2),
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: () async {
+                            final messenger = ScaffoldMessenger.of(context);
+                            Navigator.pop(context);
+                            await _firestore.collection('timetable').doc(event['id']).delete();
+                            messenger.showSnackBar(
+                              SnackBar(
+                                content: Text('Class deleted', style: GoogleFonts.dmMono()),
+                                backgroundColor: const Color(0xFFB90000),
+                              ),
+                            );
+                          },
+                          icon: const Icon(Icons.delete_outline),
+                          label: Text('Delete', style: GoogleFonts.dmMono()),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFFB90000),
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 24),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 }
 

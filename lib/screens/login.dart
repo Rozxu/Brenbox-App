@@ -18,6 +18,7 @@ class _LoginScreenState extends State<LoginScreen> {
   final _firestore = FirebaseFirestore.instance;
 
   bool _isLoading = false;
+  bool _obscurePassword = true; // Add this line
 
   @override
   void dispose() {
@@ -193,7 +194,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 // PASSWORD
                 Text('Password', style: GoogleFonts.dmMono()),
                 const SizedBox(height: 8),
-                _inputField(_passwordController, true, 'Min 6 characters'),
+                _passwordField(),
 
                 // FORGOT PASSWORD - NAVIGATE TO RESET FLOW
                 Align(
@@ -264,17 +265,6 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
 
                 const SizedBox(height: 32),
-
-                // FIREBASE STATUS
-                //Center(
-                //  child: Text(
-                //    'Firebase Status: Connected ✓',
-                //   style: GoogleFonts.dmMono(
-                //      fontSize: 11,
-                //      color: Colors.green,
-                //    ),
-                //  ),
-               // ),
               ],
             ),
           ),
@@ -299,6 +289,34 @@ class _LoginScreenState extends State<LoginScreen> {
         hintText: hint,
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
+        ),
+      ),
+    );
+  }
+
+  // PASSWORD FIELD WITH VISIBILITY TOGGLE
+  Widget _passwordField() {
+    return TextField(
+      controller: _passwordController,
+      obscureText: _obscurePassword,
+      style: GoogleFonts.dmMono(),
+      decoration: InputDecoration(
+        filled: true,
+        fillColor: Colors.white,
+        hintText: 'Min 6 characters',
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+        ),
+        suffixIcon: IconButton(
+          icon: Icon(
+            _obscurePassword ? Icons.visibility_off : Icons.visibility,
+            color: Colors.grey,
+          ),
+          onPressed: () {
+            setState(() {
+              _obscurePassword = !_obscurePassword;
+            });
+          },
         ),
       ),
     );
