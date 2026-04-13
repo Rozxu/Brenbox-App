@@ -7,14 +7,13 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../grade/set_grade_screen.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  GradeCalculatorScreen  –  v3
+//  GradeCalculatorScreen  –  v4
 //
 //  Changes in this version:
-//  • Semester display: "Sem 1, 26/27"  (academicYear from Firestore).
-//  • Fullmarks is mandatory – rows with % but no fullmarks block saving.
-//  • Partial % error: if some active rows have % and others don't → blocked.
-//  • Edit mode on saved cards exposes Marks, Fullmarks, AND % per row.
-//  • Edit validates % sum = 100 and marks ≤ fullmarks before allowing save.
+//  • Target Grade is now COMPULSORY – saving is blocked if not selected.
+//  • Edit mode on saved cards now exposes Target Grade dropdown so users
+//    can change the target per saved result.
+//  • All previous v3 behaviour is preserved.
 // ─────────────────────────────────────────────────────────────────────────────
 
 class GradeCalculatorScreen extends StatefulWidget {
@@ -224,11 +223,13 @@ class _GradeCalculatorScreenState extends State<GradeCalculatorScreen> {
 
   String? get _saveBlockReason {
     if (!_gradeSettingsLoaded) return 'Please set up your grade settings first (📐).';
-    if (_selectedSubject == null)  return 'Please select a subject.';
-    if (_selectedSemester == null) return 'Semester info is missing for this subject.';
-    if (_hasRowErrors)             return 'Fix the row errors before saving.';
-    if (_hasPartialPercentError)   return 'All active assessments must have a % value — some rows are missing %.';
-    if (!_percentSumValid)         return '% column must total exactly 100.';
+    if (_selectedSubject == null)     return 'Please select a subject.';
+    if (_selectedSemester == null)    return 'Semester info is missing for this subject.';
+    // ── TARGET GRADE IS NOW COMPULSORY ──
+    if (_selectedTargetGrade == null) return 'Please select a target grade.';
+    if (_hasRowErrors)                return 'Fix the row errors before saving.';
+    if (_hasPartialPercentError)      return 'All active assessments must have a % value — some rows are missing %.';
+    if (!_percentSumValid)            return '% column must total exactly 100.';
     for (int i = 0; i < _assessments.length; i++) {
       if (!_rowIsActive(i)) continue;
       final fm = double.tryParse(_assessments[i]['fullmarks']!.text.trim()) ?? 0;
@@ -460,7 +461,7 @@ class _GradeCalculatorScreenState extends State<GradeCalculatorScreen> {
         final fullmarks = (a['fullmarks'] ?? 0).toDouble();
         final percent   = (a['percent']   ?? 0).toDouble();
         if (marks <= 0 && fullmarks > 0 && percent > 0 && newTargetNeeded > 0) {
-          final share      = newTargetNeeded * (percent / 100);
+          final share       = newTargetNeeded * (percent / 100);
           final marksNeeded = (share / percent * fullmarks).clamp(0, fullmarks);
           updated['marksNeededForTarget'] = marksNeeded;
         } else {
@@ -473,6 +474,7 @@ class _GradeCalculatorScreenState extends State<GradeCalculatorScreen> {
         'assessments':     recomputed,
         'totalPercentage': newTotal,
         'grade':           newGrade,
+        'targetGrade':     targetGrade,        // persist the (possibly changed) target
         'targetNeeded':    newTargetNeeded,
         'updatedAt':       FieldValue.serverTimestamp(),
       });
@@ -1270,10 +1272,10 @@ class _GradeCalculatorScreenState extends State<GradeCalculatorScreen> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  _SavedCard  –  v3
+//  _SavedCard  –  v4
 //
-//  Edit mode now exposes Marks, Fullmarks AND % for every row.
-//  Validates: marks ≤ fullmarks, % sum = 100, fullmarks required.
+//  Edit mode now also includes a Target Grade dropdown so the user can
+//  change the target for the saved result. All other v3 logic preserved.
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _SavedCard extends StatefulWidget {
@@ -1319,6 +1321,12 @@ class _SavedCardState extends State<_SavedCard> {
   late List<TextEditingController> _editPercentCtrl;
   late List<Map<String, dynamic>>  _editAssessments;
 
+  // ── NEW: editable target grade ───────────────────────────────────
+  String? _editTargetGrade;
+
+  List<String> get _gradeOptions =>
+      widget.gradeRanges.map((r) => r['label'] as String).toList();
+
   @override
   void initState() {
     super.initState();
@@ -1342,6 +1350,10 @@ class _SavedCardState extends State<_SavedCard> {
       final v = (a['percent'] ?? 0).toDouble();
       return TextEditingController(text: v > 0 ? _fmt(v) : '');
     }).toList();
+
+    // Initialise editable target grade from saved data
+    final saved = (widget.data['targetGrade'] ?? '').toString();
+    _editTargetGrade = saved.isNotEmpty ? saved : null;
   }
 
   @override
@@ -1357,7 +1369,6 @@ class _SavedCardState extends State<_SavedCard> {
 
   // ── Edit validation ──────────────────────────────────────────────
 
-  /// Returns error string for row i, or null if ok.
   String? _editRowError(int i) {
     final marks     = double.tryParse(_editMarksCtrl[i].text.trim());
     final fullmarks = double.tryParse(_editFullmarksCtrl[i].text.trim()) ?? 0;
@@ -1380,10 +1391,17 @@ class _SavedCardState extends State<_SavedCard> {
 
   bool get _editSumIs100 => (_editPercentSum - 100).abs() < 0.01;
 
+  bool get _canSaveEdits =>
+      !_hasEditErrors && _editSumIs100 && _editTargetGrade != null;
+
   Future<void> _saveEdits() async {
     if (_hasEditErrors) { _showSnack('Fix row errors before saving.'); return; }
     if (!_editSumIs100) {
       _showSnack('% must total 100 (currently ${_editPercentSum.toStringAsFixed(0)}).');
+      return;
+    }
+    if (_editTargetGrade == null) {
+      _showSnack('Please select a target grade.');
       return;
     }
 
@@ -1400,7 +1418,6 @@ class _SavedCardState extends State<_SavedCard> {
       a['fullmarks']    = fullmarks;
       a['percent']      = percent;
       a['contribution'] = fullmarks > 0 ? (marks / fullmarks) * percent : 0.0;
-      // onUpdate will recompute marksNeededForTarget
       updated.add(a);
     }
 
@@ -1408,7 +1425,7 @@ class _SavedCardState extends State<_SavedCard> {
       widget.docId,
       updated,
       gradeRanges: widget.gradeRanges,
-      targetGrade: (widget.data['targetGrade'] ?? '').toString(),
+      targetGrade: _editTargetGrade!,
     );
 
     if (mounted) setState(() { _isSaving = false; _isEditing = false; });
@@ -1440,7 +1457,6 @@ class _SavedCardState extends State<_SavedCard> {
     final gradeLabel = widget.gradeLabelFor(total);
     final gradeClr   = widget.gradeColorFn(total);
 
-    // Format: "Sem 1, 26/27"
     final shortYear = academicYear.isNotEmpty
         ? _GradeCalculatorScreenState.shortenAcademicYear(academicYear)
         : '';
@@ -1554,6 +1570,64 @@ class _SavedCardState extends State<_SavedCard> {
               ),
             ),
           ),
+
+          // ── NEW: Target Grade editor (edit mode only) ────────────
+          if (_isEditing) ...[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+              child: Row(
+                children: [
+                  Text('Target Grade:',
+                      style: GoogleFonts.dmMono(color: Colors.white54, fontSize: 11)),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Container(
+                      height: 34,
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      decoration: BoxDecoration(
+                        color: Colors.white12,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: _editTargetGrade == null
+                              ? _gradeRed.withOpacity(0.6)
+                              : Colors.white24,
+                          width: 1.2,
+                        ),
+                      ),
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButton<String>(
+                          value: _editTargetGrade,
+                          isExpanded: true,
+                          hint: Text(
+                            'Select target *',
+                            style: GoogleFonts.dmMono(
+                                fontSize: 11,
+                                color: _gradeRed.withOpacity(0.7)),
+                          ),
+                          style: GoogleFonts.dmMono(
+                              fontSize: 12, color: Colors.white),
+                          dropdownColor: const Color(0xFF2A2A2A),
+                          icon: const Icon(Icons.arrow_drop_down,
+                              size: 18, color: Colors.white54),
+                          items: _gradeOptions
+                              .map((g) => DropdownMenuItem(
+                                    value: g,
+                                    child: Text(g,
+                                        style: GoogleFonts.dmMono(
+                                            fontSize: 12,
+                                            color: Colors.white)),
+                                  ))
+                              .toList(),
+                          onChanged: (v) =>
+                              setState(() => _editTargetGrade = v),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
 
           // Column headers
           Padding(
@@ -1729,9 +1803,7 @@ class _SavedCardState extends State<_SavedCard> {
               child: SizedBox(
                 width: double.infinity,
                 child: ElevatedButton(
-                  onPressed: _isSaving || _hasEditErrors || !_editSumIs100
-                      ? null
-                      : _saveEdits,
+                  onPressed: _isSaving || !_canSaveEdits ? null : _saveEdits,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: _tan,
                     disabledBackgroundColor: Colors.white24,

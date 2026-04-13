@@ -4,16 +4,6 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  SetGradeScreen
-//
-//  Lets the user define their institution's grade ranges, e.g.
-//    A+  : 90 – 100
-//    A   : 80 – 89
-//    …
-//  Saved to Firestore under  grade_settings/{uid}
-// ─────────────────────────────────────────────────────────────────────────────
-
 class SetGradeScreen extends StatefulWidget {
   const SetGradeScreen({Key? key}) : super(key: key);
 
@@ -56,8 +46,6 @@ class _SetGradeScreenState extends State<SetGradeScreen> {
     super.dispose();
   }
 
-  // ── Load existing grade settings from Firestore ──────────────────
-
   Future<void> _loadGrades() async {
     final uid = _auth.currentUser?.uid;
     if (uid == null) { setState(() => _isLoading = false); return; }
@@ -71,12 +59,11 @@ class _SetGradeScreenState extends State<SetGradeScreen> {
           if (idx != -1) {
             final min = (r['min'] ?? 0).toDouble();
             final max = (r['max'] ?? 0).toDouble();
-            _minCtrl[idx].text = min > 0 ? min.toStringAsFixed(0) : '';
-            _maxCtrl[idx].text = max > 0 ? max.toStringAsFixed(0) : '';
+            _minCtrl[idx].text = min.toStringAsFixed(0);
+            _maxCtrl[idx].text = max.toStringAsFixed(0);
           }
         }
       } else {
-        // Sensible defaults so the first row is pre-filled
         _minCtrl[0].text = '90';
         _maxCtrl[0].text = '100';
       }
@@ -85,36 +72,110 @@ class _SetGradeScreenState extends State<SetGradeScreen> {
     if (mounted) setState(() => _isLoading = false);
   }
 
-  // ── Save grade settings to Firestore ────────────────────────────
-
   Future<void> _saveGrades() async {
     final uid = _auth.currentUser?.uid;
     if (uid == null) return;
 
-    final List<Map<String, dynamic>> ranges = [];
+    // ── Step 1: Determine which rows are filled vs empty ────────────
+    final List<int> filledIndices = [];
+    final List<int> emptyIndices  = [];
+
     for (int i = 0; i < _gradeLabels.length; i++) {
       final minTxt = _minCtrl[i].text.trim();
       final maxTxt = _maxCtrl[i].text.trim();
-      if (minTxt.isEmpty && maxTxt.isEmpty) continue;
 
-      final min = double.tryParse(minTxt);
-      final max = double.tryParse(maxTxt);
+      if (minTxt.isEmpty && maxTxt.isEmpty) {
+        emptyIndices.add(i);
+        continue;
+      }
+      if (minTxt.isEmpty || maxTxt.isEmpty) {
+        _snack('Fill both Min and Max for ${_gradeLabels[i]}, or leave both empty.', _red);
+        return;
+      }
+      filledIndices.add(i);
+    }
+
+    if (filledIndices.isEmpty) {
+      _snack('Please fill in at least one grade range.', _red);
+      return;
+    }
+
+    // ── Step 2: No skipping — filled rows must be consecutive ───────
+    final firstFilled = filledIndices.first;
+    final lastFilled  = filledIndices.last;
+
+    for (int i = firstFilled; i <= lastFilled; i++) {
+      if (emptyIndices.contains(i)) {
+        final skipped = _gradeLabels[i];
+        final prev    = _gradeLabels[i - 1];
+        final next    = (i + 1 <= lastFilled) ? _gradeLabels[i + 1] : '';
+        _snack(
+          'Cannot skip "$skipped" between "$prev"'
+          '${next.isNotEmpty ? ' and "$next"' : ''}. Fill it or remove grades after it.',
+          _red,
+        );
+        return;
+      }
+    }
+
+    // ── Step 3: Parse and validate filled rows ───────────────────────
+    final List<Map<String, dynamic>> ranges = [];
+
+    for (final i in filledIndices) {
+      final min = double.tryParse(_minCtrl[i].text.trim());
+      final max = double.tryParse(_maxCtrl[i].text.trim());
+
       if (min == null || max == null) {
-        _snack('Invalid value for grade ${_gradeLabels[i]}', _red);
+        _snack('Invalid number for grade ${_gradeLabels[i]}.', _red);
         return;
       }
       if (min >= max) {
-        _snack('Min must be less than Max for ${_gradeLabels[i]}', _red);
+        _snack('Min must be less than Max for ${_gradeLabels[i]}.', _red);
         return;
       }
       ranges.add({'label': _gradeLabels[i], 'min': min, 'max': max});
     }
 
-    if (ranges.isEmpty) {
-      _snack('Please fill in at least one grade range.', _red);
+    // ── Step 4: Sort by min ascending ───────────────────────────────
+    final sorted = List<Map<String, dynamic>>.from(ranges)
+      ..sort((a, b) => (a['min'] as double).compareTo(b['min'] as double));
+
+    // ── Step 5: Must start at 0 and end at 100 ──────────────────────
+    if ((sorted.first['min'] as double) != 0) {
+      _snack(
+        'The lowest grade must start at 0. '
+        '"${sorted.first['label']}" currently starts at ${(sorted.first['min'] as double).toInt()}.',
+        _red,
+      );
+      return;
+    }
+    if ((sorted.last['max'] as double) != 100) {
+      _snack(
+        'The highest grade must end at 100. '
+        '"${sorted.last['label']}" currently ends at ${(sorted.last['max'] as double).toInt()}.',
+        _red,
+      );
       return;
     }
 
+    // ── Step 6: No gaps or overlaps between consecutive ranges ──────
+    for (int i = 1; i < sorted.length; i++) {
+      final prevMax   = (sorted[i - 1]['max'] as double);
+      final currMin   = (sorted[i]['min'] as double);
+      final prevLabel = sorted[i - 1]['label'];
+      final currLabel = sorted[i]['label'];
+
+      if (currMin != prevMax + 1) {
+        _snack(
+          '"$prevLabel" ends at ${prevMax.toInt()}, '
+          'so "$currLabel" must start at ${(prevMax + 1).toInt()} — not ${currMin.toInt()}.',
+          _red,
+        );
+        return;
+      }
+    }
+
+    // ── Step 7: Save ─────────────────────────────────────────────────
     setState(() => _isSaving = true);
     try {
       await _firestore.collection('grade_settings').doc(uid).set({
@@ -124,7 +185,7 @@ class _SetGradeScreenState extends State<SetGradeScreen> {
       });
       if (mounted) {
         _snack('Grade settings saved!', _dark);
-        Navigator.pop(context, true); // signal that grades were set
+        Navigator.pop(context, true);
       }
     } catch (e) {
       if (mounted) _snack('Failed to save: $e', _red);
@@ -141,8 +202,6 @@ class _SetGradeScreenState extends State<SetGradeScreen> {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
     ));
   }
-
-  // ── Build ────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
@@ -184,7 +243,7 @@ class _SetGradeScreenState extends State<SetGradeScreen> {
               ),
             ),
 
-            const SizedBox(height: 20),
+            const SizedBox(height: 12),
 
             // Column headers
             Padding(
@@ -199,7 +258,7 @@ class _SetGradeScreenState extends State<SetGradeScreen> {
                         style: GoogleFonts.dmMono(
                             fontSize: 12, color: Colors.black54)),
                   ),
-                  const SizedBox(width: 32), // dash spacer
+                  const SizedBox(width: 32),
                   Expanded(
                     child: Text('Max',
                         textAlign: TextAlign.center,
@@ -214,8 +273,7 @@ class _SetGradeScreenState extends State<SetGradeScreen> {
             // Grade rows
             Expanded(
               child: _isLoading
-                  ? const Center(
-                      child: CircularProgressIndicator(color: _dark))
+                  ? const Center(child: CircularProgressIndicator(color: _dark))
                   : ListView.builder(
                       padding: const EdgeInsets.symmetric(horizontal: 24),
                       itemCount: _gradeLabels.length,
@@ -231,8 +289,7 @@ class _SetGradeScreenState extends State<SetGradeScreen> {
                               decoration: BoxDecoration(
                                 color: _tan,
                                 borderRadius: BorderRadius.circular(10),
-                                border: Border.all(
-                                    color: Colors.black26, width: 1),
+                                border: Border.all(color: Colors.black26, width: 1),
                               ),
                               child: Text(
                                 _gradeLabels[i],
@@ -245,7 +302,7 @@ class _SetGradeScreenState extends State<SetGradeScreen> {
                               ),
                             ),
                             const SizedBox(width: 12),
-                            // Min
+                            // Min field
                             Expanded(child: _numBox(_minCtrl[i])),
                             const SizedBox(width: 8),
                             Text('-',
@@ -254,7 +311,7 @@ class _SetGradeScreenState extends State<SetGradeScreen> {
                                     fontWeight: FontWeight.bold,
                                     color: _dark)),
                             const SizedBox(width: 8),
-                            // Max
+                            // Max field
                             Expanded(child: _numBox(_maxCtrl[i])),
                           ],
                         ),
@@ -316,10 +373,9 @@ class _SetGradeScreenState extends State<SetGradeScreen> {
   }
 
   Widget _numBox(TextEditingController ctrl) => TextField(
-        controller: ctrl,
+        controller:  ctrl,
         style:       GoogleFonts.dmMono(fontSize: 13),
-        keyboardType:
-            const TextInputType.numberWithOptions(decimal: true),
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
         inputFormatters: [
           FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*')),
         ],
