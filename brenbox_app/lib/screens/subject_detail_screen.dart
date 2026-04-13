@@ -3,9 +3,9 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
-import 'edit_class_screen.dart';
-import 'edit_task_screen.dart';
-import 'edit_exam_screen.dart';
+import '../tasks/edit_class_screen.dart';
+import '../tasks/edit_task_screen.dart';
+import '../tasks/edit_exam_screen.dart';
 
 // Save this file as: subject_detail_screen.dart
 

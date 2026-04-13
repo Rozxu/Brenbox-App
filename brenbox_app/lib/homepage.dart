@@ -4,13 +4,13 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import 'dart:async';
-import 'add_new_screen.dart';
-import 'edit_class_screen.dart';
-import 'edit_task_screen.dart';
-import 'edit_exam_screen.dart';
-import 'calendar_screen.dart';
-import 'account_screen.dart';
-import 'grade_calculator_screen.dart';
+import 'tasks/add_new_screen.dart';
+import 'tasks/edit_class_screen.dart';
+import 'tasks/edit_task_screen.dart';
+import 'tasks/edit_exam_screen.dart';
+import 'screens/calendar_screen.dart';
+import 'authenticate/account_screen.dart';
+import 'screens/grade_calculator_screen.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({Key? key}) : super(key: key);

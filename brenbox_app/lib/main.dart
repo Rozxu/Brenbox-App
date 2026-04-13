@@ -4,12 +4,12 @@ import 'package:firebase_core/firebase_core.dart';
 
 import 'firebase_options.dart';
 
-import 'screens/login.dart';
-import 'screens/signup.dart';
-import 'screens/account_created_screen.dart';
-import 'screens/homepage.dart';
-import 'screens/auth_gate.dart';
-import 'screens/forgot_password_screen.dart';
+import 'authenticate/login.dart';
+import 'authenticate/signup.dart';
+import 'authenticate/account_created_screen.dart';
+import 'homepage.dart';
+import 'authenticate/auth_gate.dart';
+import 'authenticate/forgot_password_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
