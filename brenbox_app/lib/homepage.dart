@@ -11,6 +11,7 @@ import 'tasks/edit_exam_screen.dart';
 import 'screens/calendar_screen.dart';
 import 'authenticate/account_screen.dart';
 import 'screens/grade_calculator_screen.dart';
+import 'screens/certificate_repository_screen.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({Key? key}) : super(key: key);
@@ -214,7 +215,7 @@ class _HomePageState extends State<HomePage> {
       _buildHomeScreen(currentMonth, weekDates, today),
       const CalendarScreen(),
       const GradeCalculatorScreen(),
-      const Center(child: Text('Certification Repository')), // Placeholder for certification repository
+      const CertificateRepositoryScreen(), // Placeholder for certification repository
       AccountScreen(
         onBackPressed: () {
           setState(() {

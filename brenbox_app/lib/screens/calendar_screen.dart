@@ -21,10 +21,11 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
   DateTime _currentMonth = DateTime.now();
   DateTime? _selectedDate;
-  
+
   // Subject filters
   String _subjectStatus = 'On-Going'; // On-Going or Ended
-  String _selectedSemester = 'All'; // All, Semester 1, Semester 2, etc., Non Semester
+  String _selectedSemester =
+      'All'; // All, Semester 1, Semester 2, etc., Non Semester
 
   @override
   void initState() {
@@ -45,57 +46,52 @@ class _CalendarScreenState extends State<CalendarScreen> {
         .where('userId', isEqualTo: user.uid)
         .snapshots()
         .map((snapshot) {
-      Set<String> semesters = {'All'};
-      
-      for (var doc in snapshot.docs) {
-        final data = doc.data();
-        if (data['semester'] != null && data['academicYear'] != null) {
-          semesters.add('Semester ${data['semester']}');
-        }
-      }
-      
-      // Check if there are any subjects without semester
-      final hasNonSemester = snapshot.docs.any((doc) => 
-        doc.data()['semester'] == null || doc.data()['academicYear'] == null
-      );
-      
-      if (hasNonSemester) {
-        semesters.add('Non Semester');
-      }
+          Set<String> semesters = {'All'};
 
-      List<String> semesterList = semesters.toList()..sort((a, b) {
-        if (a == 'All') return -1;
-        if (b == 'All') return 1;
-        if (a == 'Non Semester') return 1;
-        if (b == 'Non Semester') return -1;
-        // Extract semester numbers for proper sorting
-        final aNum = int.tryParse(a.replaceAll('Semester ', ''));
-        final bNum = int.tryParse(b.replaceAll('Semester ', ''));
-        if (aNum != null && bNum != null) return aNum.compareTo(bNum);
-        return a.compareTo(b);
-      });
+          for (var doc in snapshot.docs) {
+            final data = doc.data();
+            if (data['semester'] != null && data['academicYear'] != null) {
+              semesters.add('Semester ${data['semester']}');
+            }
+          }
 
-      return semesterList;
-    });
+          // Check if there are any subjects without semester
+          final hasNonSemester = snapshot.docs.any(
+            (doc) =>
+                doc.data()['semester'] == null ||
+                doc.data()['academicYear'] == null,
+          );
+
+          if (hasNonSemester) {
+            semesters.add('Non Semester');
+          }
+
+          List<String> semesterList = semesters.toList()
+            ..sort((a, b) {
+              if (a == 'All') return -1;
+              if (b == 'All') return 1;
+              if (a == 'Non Semester') return 1;
+              if (b == 'Non Semester') return -1;
+              // Extract semester numbers for proper sorting
+              final aNum = int.tryParse(a.replaceAll('Semester ', ''));
+              final bNum = int.tryParse(b.replaceAll('Semester ', ''));
+              if (aNum != null && bNum != null) return aNum.compareTo(bNum);
+              return a.compareTo(b);
+            });
+
+          return semesterList;
+        });
   }
 
   void _previousMonth() {
     setState(() {
-      _currentMonth = DateTime(
-        _currentMonth.year,
-        _currentMonth.month - 1,
-        1,
-      );
+      _currentMonth = DateTime(_currentMonth.year, _currentMonth.month - 1, 1);
     });
   }
 
   void _nextMonth() {
     setState(() {
-      _currentMonth = DateTime(
-        _currentMonth.year,
-        _currentMonth.month + 1,
-        1,
-      );
+      _currentMonth = DateTime(_currentMonth.year, _currentMonth.month + 1, 1);
     });
   }
 
@@ -193,55 +189,54 @@ class _CalendarScreenState extends State<CalendarScreen> {
   List<DateTime> _getDaysInMonth(DateTime month) {
     final firstDay = DateTime(month.year, month.month, 1);
     final lastDay = DateTime(month.year, month.month + 1, 0);
-    
+
     List<DateTime> days = [];
-    
+
     // Get the weekday of the first day (1 = Monday, 7 = Sunday in Dart)
     // Convert to 0 = Sunday, 1 = Monday, etc.
     int firstWeekday = firstDay.weekday % 7; // This makes Sunday = 0
-    
+
     // Fill with previous month's trailing days
     for (int i = firstWeekday - 1; i >= 0; i--) {
       days.add(firstDay.subtract(Duration(days: i + 1)));
     }
-    
+
     // Add all days of the current month
     for (int day = 1; day <= lastDay.day; day++) {
       days.add(DateTime(month.year, month.month, day));
     }
-    
+
     // Add next month's leading days to complete the grid
     int remainingDays = 42 - days.length; // 6 rows × 7 days
     for (int i = 1; i <= remainingDays; i++) {
       days.add(lastDay.add(Duration(days: i)));
     }
-    
+
     return days;
   }
 
   bool _isCurrentMonth(DateTime date) {
-    return date.month == _currentMonth.month && 
-           date.year == _currentMonth.year;
+    return date.month == _currentMonth.month && date.year == _currentMonth.year;
   }
 
   bool _isToday(DateTime date) {
     final now = DateTime.now();
-    return date.year == now.year && 
-           date.month == now.month && 
-           date.day == now.day;
+    return date.year == now.year &&
+        date.month == now.month &&
+        date.day == now.day;
   }
 
   bool _isSelected(DateTime date) {
     if (_selectedDate == null) return false;
     return date.year == _selectedDate!.year &&
-           date.month == _selectedDate!.month &&
-           date.day == _selectedDate!.day;
+        date.month == _selectedDate!.month &&
+        date.day == _selectedDate!.day;
   }
 
   @override
   Widget build(BuildContext context) {
     final daysInMonth = _getDaysInMonth(_currentMonth);
-    
+
     return Scaffold(
       backgroundColor: const Color(0xFFE5E7EB),
       body: SafeArea(
@@ -271,10 +266,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
   Widget _buildHeader() {
     return Text(
       'CALENDAR',
-      style: GoogleFonts.dmMono(
-        fontSize: 24,
-        fontWeight: FontWeight.bold,
-      ),
+      style: GoogleFonts.dmMono(fontSize: 24, fontWeight: FontWeight.bold),
     );
   }
 
@@ -352,7 +344,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
             ],
           ),
           const SizedBox(height: 16),
-          
+
           // Weekday labels
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
@@ -367,14 +359,15 @@ class _CalendarScreenState extends State<CalendarScreen> {
             ],
           ),
           const SizedBox(height: 12),
-          
+
           // Calendar grid
           GridView.builder(
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
             gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: 7,
-              childAspectRatio: 0.85, // Reduced from 1 to give more height for triangle
+              childAspectRatio:
+                  0.85, // Reduced from 1 to give more height for triangle
               crossAxisSpacing: 8,
               mainAxisSpacing: 12, // Increased spacing between rows
             ),
@@ -384,13 +377,13 @@ class _CalendarScreenState extends State<CalendarScreen> {
               final isCurrentMonth = _isCurrentMonth(date);
               final isToday = _isToday(date);
               final isSelected = _isSelected(date);
-              
+
               return StreamBuilder<Map<String, bool>>(
                 stream: _checkEventsOnDateStream(date),
                 builder: (context, snapshot) {
                   bool hasEvents = snapshot.data?['hasEvents'] ?? false;
                   bool isUpcoming = snapshot.data?['isUpcoming'] ?? false;
-                  
+
                   return _buildDateCell(
                     date,
                     isCurrentMonth,
@@ -426,7 +419,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
       textColor = Colors.white;
     } else {
       backgroundColor = Colors.transparent;
-      
+
       if (isUpcoming) {
         borderColor = const Color(0xFFB90000);
         borderWidth = 2;
@@ -473,10 +466,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
           ),
           if (isSelected) ...[
             const SizedBox(height: 4),
-            CustomPaint(
-              size: const Size(10, 8),
-              painter: TrianglePainter(),
-            ),
+            CustomPaint(size: const Size(10, 8), painter: TrianglePainter()),
           ],
         ],
       ),
@@ -509,10 +499,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
       children: [
         Text(
           'Events - ${DateFormat('EEE, dd MMM').format(_selectedDate!)}',
-          style: GoogleFonts.dmMono(
-            fontSize: 16,
-            fontWeight: FontWeight.bold,
-          ),
+          style: GoogleFonts.dmMono(fontSize: 16, fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 16),
         StreamBuilder<List<Map<String, dynamic>>>(
@@ -522,9 +509,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
               return const Center(
                 child: Padding(
                   padding: EdgeInsets.all(24),
-                  child: CircularProgressIndicator(
-                    color: Color(0xFF6B7280),
-                  ),
+                  child: CircularProgressIndicator(color: Color(0xFF6B7280)),
                 ),
               );
             }
@@ -541,23 +526,31 @@ class _CalendarScreenState extends State<CalendarScreen> {
             events.sort((a, b) {
               String timeA;
               String timeB;
-              
+
               if (a['type'] == 'task') {
                 timeA = a['dueTime'] as String;
-              } else if (a['type'] == 'exam') {
-                timeA = a['startTime'] as String;
+              } else if (a['eventType'] == 'exam') {
+                // startTime is a Timestamp for exams
+                final ts = a['startTime'] as Timestamp;
+                final dt = ts.toDate();
+                timeA =
+                    '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
               } else {
                 timeA = a['startTime'] as String;
               }
-              
+
               if (b['type'] == 'task') {
                 timeB = b['dueTime'] as String;
-              } else if (b['type'] == 'exam') {
-                timeB = b['startTime'] as String;
+              } else if (b['eventType'] == 'exam') {
+                // startTime is a Timestamp for exams
+                final ts = b['startTime'] as Timestamp;
+                final dt = ts.toDate();
+                timeB =
+                    '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
               } else {
                 timeB = b['startTime'] as String;
               }
-              
+
               return timeA.compareTo(timeB);
             });
 
@@ -676,7 +669,9 @@ class _CalendarScreenState extends State<CalendarScreen> {
                   allEvents.add({
                     'id': doc.id,
                     'eventType': 'exam', // Use this to identify it's an exam
-                    'type': data['type'] ?? 'Exam', // Exam type (Midterm, Final, etc.)
+                    'type':
+                        data['type'] ??
+                        'Exam', // Exam type (Midterm, Final, etc.)
                     'examName': data['examName'] ?? 'Untitled Exam',
                     'subject': data['subject'] ?? '',
                     'mode': data['mode'] ?? 'In Person',
@@ -699,7 +694,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
   Widget _buildTaskCard(Map<String, dynamic> task) {
     final isCompleted = task['completed'] ?? false;
-    
+
     return _AnimatedTapButton(
       onTap: () => _showTaskDetails(task),
       child: Container(
@@ -709,7 +704,9 @@ class _CalendarScreenState extends State<CalendarScreen> {
           color: Colors.white,
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
-            color: isCompleted ? const Color(0xFF34A853) : const Color(0xFF008BB9),
+            color: isCompleted
+                ? const Color(0xFF34A853)
+                : const Color(0xFF008BB9),
             width: 2,
           ),
         ),
@@ -719,7 +716,9 @@ class _CalendarScreenState extends State<CalendarScreen> {
               width: 40,
               height: 40,
               decoration: BoxDecoration(
-                color: isCompleted ? const Color(0xFF34A853) : const Color(0xFF008BB9),
+                color: isCompleted
+                    ? const Color(0xFF34A853)
+                    : const Color(0xFF008BB9),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Icon(
@@ -741,7 +740,9 @@ class _CalendarScreenState extends State<CalendarScreen> {
                           vertical: 2,
                         ),
                         decoration: BoxDecoration(
-                          color: isCompleted ? const Color(0xFF34A853) : const Color(0xFF008BB9),
+                          color: isCompleted
+                              ? const Color(0xFF34A853)
+                              : const Color(0xFF008BB9),
                           borderRadius: BorderRadius.circular(4),
                         ),
                         child: Text(
@@ -760,7 +761,9 @@ class _CalendarScreenState extends State<CalendarScreen> {
                           style: GoogleFonts.dmMono(
                             fontSize: 13,
                             fontWeight: FontWeight.bold,
-                            decoration: isCompleted ? TextDecoration.lineThrough : null,
+                            decoration: isCompleted
+                                ? TextDecoration.lineThrough
+                                : null,
                           ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
@@ -791,7 +794,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
     try {
       final startTime = (exam['startTime'] as Timestamp?)?.toDate();
       final endTime = (exam['endTime'] as Timestamp?)?.toDate();
-      
+
       if (startTime == null || endTime == null) {
         // Fallback if timestamps are missing
         return Container(
@@ -804,11 +807,14 @@ class _CalendarScreenState extends State<CalendarScreen> {
           ),
           child: Text(
             exam['examName'] ?? 'Exam',
-            style: GoogleFonts.dmMono(fontSize: 13, fontWeight: FontWeight.bold),
+            style: GoogleFonts.dmMono(
+              fontSize: 13,
+              fontWeight: FontWeight.bold,
+            ),
           ),
         );
       }
-      
+
       return _AnimatedTapButton(
         onTap: () => _showExamDetails(exam),
         child: Container(
@@ -910,7 +916,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
   Widget _buildClassCard(Map<String, dynamic> event) {
     Color labelColor = const Color(0xFFB90000);
-    
+
     return _AnimatedTapButton(
       onTap: () => _showClassDetails(event),
       child: Container(
@@ -1030,10 +1036,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
       children: [
         Text(
           'Subjects',
-          style: GoogleFonts.dmMono(
-            fontSize: 20,
-            fontWeight: FontWeight.bold,
-          ),
+          style: GoogleFonts.dmMono(fontSize: 20, fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 16),
         // Semester Dropdown and Status Toggle
@@ -1044,7 +1047,10 @@ class _CalendarScreenState extends State<CalendarScreen> {
               child: _AnimatedTapButton(
                 onTap: _showSemesterPicker,
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.white,
                     borderRadius: BorderRadius.circular(24),
@@ -1055,11 +1061,11 @@ class _CalendarScreenState extends State<CalendarScreen> {
                     children: [
                       Flexible(
                         child: Text(
-                          _selectedSemester == 'All' 
-                              ? 'All' 
+                          _selectedSemester == 'All'
+                              ? 'All'
                               : _selectedSemester == 'Non Semester'
-                                  ? 'Non Semester'
-                                  : '${_selectedSemester.toUpperCase()} , 25/26',
+                              ? 'Non Semester'
+                              : '${_selectedSemester.toUpperCase()} , 25/26',
                           style: GoogleFonts.dmMono(
                             fontSize: 12,
                             fontWeight: FontWeight.bold,
@@ -1082,7 +1088,10 @@ class _CalendarScreenState extends State<CalendarScreen> {
                 });
               },
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 12,
+                ),
                 decoration: BoxDecoration(
                   color: _subjectStatus == 'On-Going'
                       ? const Color(0xFF75E1D1)
@@ -1115,7 +1124,10 @@ class _CalendarScreenState extends State<CalendarScreen> {
                 });
               },
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 12,
+                ),
                 decoration: BoxDecoration(
                   color: _subjectStatus == 'Ended'
                       ? const Color(0xFF75E1D1)
@@ -1151,14 +1163,14 @@ class _CalendarScreenState extends State<CalendarScreen> {
               return const Center(
                 child: Padding(
                   padding: EdgeInsets.all(24),
-                  child: CircularProgressIndicator(
-                    color: Color(0xFF6B7280),
-                  ),
+                  child: CircularProgressIndicator(color: Color(0xFF6B7280)),
                 ),
               );
             }
 
-            if (snapshot.hasError || !snapshot.hasData || snapshot.data!.isEmpty) {
+            if (snapshot.hasError ||
+                !snapshot.hasData ||
+                snapshot.data!.isEmpty) {
               return _buildEmptySubjectsState();
             }
 
@@ -1245,16 +1257,21 @@ class _CalendarScreenState extends State<CalendarScreen> {
                       itemBuilder: (context, index) {
                         final semester = semesters[index];
                         final isSelected = semester == _selectedSemester;
-                        
+
                         return ListTile(
                           title: Text(
                             semester,
                             style: GoogleFonts.dmMono(
-                              fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                              fontWeight: isSelected
+                                  ? FontWeight.bold
+                                  : FontWeight.normal,
                             ),
                           ),
                           trailing: isSelected
-                              ? const Icon(Icons.check, color: Color(0xFF34A853))
+                              ? const Icon(
+                                  Icons.check,
+                                  color: Color(0xFF34A853),
+                                )
                               : null,
                           onTap: () {
                             setState(() => _selectedSemester = semester);
@@ -1280,106 +1297,116 @@ class _CalendarScreenState extends State<CalendarScreen> {
         .where('userId', isEqualTo: userId)
         .snapshots()
         .map((snapshot) {
-      final now = DateTime.now();
-      final today = DateTime(now.year, now.month, now.day);
-      
-      // Group by class name
-      Map<String, Map<String, dynamic>> subjectsMap = {};
+          final now = DateTime.now();
+          final today = DateTime(now.year, now.month, now.day);
 
-      for (var doc in snapshot.docs) {
-        final data = doc.data();
-        final className = data['className'] ?? 'Untitled';
-        final timestamp = data['date'] as Timestamp?;
-        
-        if (timestamp == null) continue;
-        
-        final eventDate = timestamp.toDate();
-        final eventDateOnly = DateTime(eventDate.year, eventDate.month, eventDate.day);
-        
-        // Filter by semester
-        if (_selectedSemester != 'All') {
-          if (_selectedSemester == 'Non Semester') {
-            if (data['semester'] != null || data['academicYear'] != null) {
-              continue;
+          // Group by class name
+          Map<String, Map<String, dynamic>> subjectsMap = {};
+
+          for (var doc in snapshot.docs) {
+            final data = doc.data();
+            final className = data['className'] ?? 'Untitled';
+            final timestamp = data['date'] as Timestamp?;
+
+            if (timestamp == null) continue;
+
+            final eventDate = timestamp.toDate();
+            final eventDateOnly = DateTime(
+              eventDate.year,
+              eventDate.month,
+              eventDate.day,
+            );
+
+            // Filter by semester
+            if (_selectedSemester != 'All') {
+              if (_selectedSemester == 'Non Semester') {
+                if (data['semester'] != null || data['academicYear'] != null) {
+                  continue;
+                }
+              } else {
+                final semesterNum = int.tryParse(
+                  _selectedSemester.replaceAll('Semester ', ''),
+                );
+                if (semesterNum == null || data['semester'] != semesterNum) {
+                  continue;
+                }
+              }
             }
-          } else {
-            final semesterNum = int.tryParse(_selectedSemester.replaceAll('Semester ', ''));
-            if (semesterNum == null || data['semester'] != semesterNum) {
-              continue;
+
+            // Track the latest date for each subject
+            if (!subjectsMap.containsKey(className)) {
+              subjectsMap[className] = {
+                'className': className,
+                'semester': data['semester'],
+                'academicYear': data['academicYear'],
+                'latestDate': eventDateOnly,
+              };
+            } else {
+              final existingDate =
+                  subjectsMap[className]!['latestDate'] as DateTime;
+              if (eventDateOnly.isAfter(existingDate)) {
+                subjectsMap[className]!['latestDate'] = eventDateOnly;
+              }
             }
           }
-        }
-        
-        // Track the latest date for each subject
-        if (!subjectsMap.containsKey(className)) {
-          subjectsMap[className] = {
-            'className': className,
-            'semester': data['semester'],
-            'academicYear': data['academicYear'],
-            'latestDate': eventDateOnly,
-          };
-        } else {
-          final existingDate = subjectsMap[className]!['latestDate'] as DateTime;
-          if (eventDateOnly.isAfter(existingDate)) {
-            subjectsMap[className]!['latestDate'] = eventDateOnly;
-          }
-        }
-      }
 
-      // Filter by status (On-Going or Ended)
-      List<Map<String, dynamic>> filteredSubjects = subjectsMap.values.where((subject) {
-        final latestDate = subject['latestDate'] as DateTime;
-        final isEnded = latestDate.isBefore(today);
-        
-        return (_subjectStatus == 'On-Going' && !isEnded) ||
-               (_subjectStatus == 'Ended' && isEnded);
-      }).toList();
+          // Filter by status (On-Going or Ended)
+          List<Map<String, dynamic>> filteredSubjects = subjectsMap.values
+              .where((subject) {
+                final latestDate = subject['latestDate'] as DateTime;
+                final isEnded = latestDate.isBefore(today);
 
-      // Sort alphabetically
-      filteredSubjects.sort((a, b) => 
-        (a['className'] as String).compareTo(b['className'] as String)
-      );
+                return (_subjectStatus == 'On-Going' && !isEnded) ||
+                    (_subjectStatus == 'Ended' && isEnded);
+              })
+              .toList();
 
-      return filteredSubjects;
-    });
+          // Sort alphabetically
+          filteredSubjects.sort(
+            (a, b) =>
+                (a['className'] as String).compareTo(b['className'] as String),
+          );
+
+          return filteredSubjects;
+        });
   }
 
- Widget _buildSubjectCard(Map<String, dynamic> subject) {
-  return _AnimatedTapButton(
-    onTap: () {
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => SubjectDetailScreen(
-            subjectName: subject['className'],
-            semester: subject['semester'],
-            academicYear: subject['academicYear'],
+  Widget _buildSubjectCard(Map<String, dynamic> subject) {
+    return _AnimatedTapButton(
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => SubjectDetailScreen(
+              subjectName: subject['className'],
+              semester: subject['semester'],
+              academicYear: subject['academicYear'],
+            ),
+          ),
+        );
+      },
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.black, width: 2),
+        ),
+        child: Center(
+          child: Text(
+            subject['className'],
+            style: GoogleFonts.dmMono(
+              fontSize: 13,
+              fontWeight: FontWeight.bold,
+            ),
+            textAlign: TextAlign.center,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
           ),
         ),
-      );
-    },
-    child: Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.black, width: 2),
       ),
-      child: Center(
-        child: Text(
-          subject['className'],
-          style: GoogleFonts.dmMono(
-            fontSize: 13,
-            fontWeight: FontWeight.bold,
-          ),
-          textAlign: TextAlign.center,
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-        ),
-      ),
-    ),
-  );
-}
+    );
+  }
 
   Widget _buildEmptySubjectsState() {
     return Container(
@@ -1392,14 +1419,10 @@ class _CalendarScreenState extends State<CalendarScreen> {
       ),
       child: Column(
         children: [
-          const Icon(
-            Icons.school_outlined,
-            size: 48,
-            color: Color(0xFF6B7280),
-          ),
+          const Icon(Icons.school_outlined, size: 48, color: Color(0xFF6B7280)),
           const SizedBox(height: 12),
           Text(
-            _subjectStatus == 'On-Going' 
+            _subjectStatus == 'On-Going'
                 ? 'No ongoing subjects'
                 : 'No ended subjects',
             style: GoogleFonts.dmMono(fontSize: 13, color: Colors.grey),
@@ -1506,16 +1529,21 @@ class _CalendarScreenState extends State<CalendarScreen> {
                           ),
                           const SizedBox(height: 16),
                           _buildDetailRow('Task Title', task['taskTitle']),
-                          if (task['taskDetails'] != null && task['taskDetails'].isNotEmpty)
+                          if (task['taskDetails'] != null &&
+                              task['taskDetails'].isNotEmpty)
                             _buildDetailRow('Details', task['taskDetails']),
-                          if (task['subject'] != null && task['subject'].isNotEmpty)
+                          if (task['subject'] != null &&
+                              task['subject'].isNotEmpty)
                             _buildDetailRow('Subject', task['subject']),
                           _buildDetailRow('Type', task['taskType']),
                           _buildDetailRow(
                             'Due Date',
                             DateFormat('EEE, dd MMM yyyy').format(dueDate),
                           ),
-                          _buildDetailRow('Due Time', _formatTime(task['dueTime'])),
+                          _buildDetailRow(
+                            'Due Time',
+                            _formatTime(task['dueTime']),
+                          ),
                           const SizedBox(height: 8),
                           _buildStatusToggleInModal(task, setModalState),
                         ],
@@ -1533,7 +1561,8 @@ class _CalendarScreenState extends State<CalendarScreen> {
                                 final result = await Navigator.push(
                                   context,
                                   MaterialPageRoute(
-                                    builder: (_) => EditTaskScreen(taskData: task),
+                                    builder: (_) =>
+                                        EditTaskScreen(taskData: task),
                                   ),
                                 );
                                 if (result == true && mounted) {
@@ -1544,8 +1573,13 @@ class _CalendarScreenState extends State<CalendarScreen> {
                               label: Text('Edit', style: GoogleFonts.dmMono()),
                               style: OutlinedButton.styleFrom(
                                 foregroundColor: Colors.black,
-                                side: const BorderSide(color: Colors.black, width: 2),
-                                padding: const EdgeInsets.symmetric(vertical: 16),
+                                side: const BorderSide(
+                                  color: Colors.black,
+                                  width: 2,
+                                ),
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 16,
+                                ),
                                 shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(12),
                                 ),
@@ -1558,20 +1592,31 @@ class _CalendarScreenState extends State<CalendarScreen> {
                               onPressed: () async {
                                 final messenger = ScaffoldMessenger.of(context);
                                 Navigator.pop(context);
-                                await _firestore.collection('tasks').doc(task['id']).delete();
+                                await _firestore
+                                    .collection('tasks')
+                                    .doc(task['id'])
+                                    .delete();
                                 messenger.showSnackBar(
                                   SnackBar(
-                                    content: Text('Task deleted', style: GoogleFonts.dmMono()),
+                                    content: Text(
+                                      'Task deleted',
+                                      style: GoogleFonts.dmMono(),
+                                    ),
                                     backgroundColor: const Color(0xFFB90000),
                                   ),
                                 );
                               },
                               icon: const Icon(Icons.delete_outline),
-                              label: Text('Delete', style: GoogleFonts.dmMono()),
+                              label: Text(
+                                'Delete',
+                                style: GoogleFonts.dmMono(),
+                              ),
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: const Color(0xFFB90000),
                                 foregroundColor: Colors.white,
-                                padding: const EdgeInsets.symmetric(vertical: 16),
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 16,
+                                ),
                                 shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(12),
                                 ),
@@ -1593,7 +1638,10 @@ class _CalendarScreenState extends State<CalendarScreen> {
   }
 
   // Status toggle for task
-  Widget _buildStatusToggleInModal(Map<String, dynamic> task, StateSetter setModalState) {
+  Widget _buildStatusToggleInModal(
+    Map<String, dynamic> task,
+    StateSetter setModalState,
+  ) {
     final isCompleted = task['completed'] ?? false;
 
     return Container(
@@ -1616,19 +1664,29 @@ class _CalendarScreenState extends State<CalendarScreen> {
                 Expanded(
                   child: _AnimatedTapButton(
                     onTap: () async {
-                      await _firestore.collection('tasks').doc(task['id']).update({'completed': false});
+                      await _firestore
+                          .collection('tasks')
+                          .doc(task['id'])
+                          .update({'completed': false});
                       setModalState(() {
                         task['completed'] = false;
                       });
                       setState(() {});
                     },
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 10,
+                      ),
                       decoration: BoxDecoration(
-                        color: !isCompleted ? const Color(0xFF008BB9) : Colors.grey.shade200,
+                        color: !isCompleted
+                            ? const Color(0xFF008BB9)
+                            : Colors.grey.shade200,
                         borderRadius: BorderRadius.circular(8),
                         border: Border.all(
-                          color: !isCompleted ? const Color(0xFF008BB9) : Colors.grey.shade400,
+                          color: !isCompleted
+                              ? const Color(0xFF008BB9)
+                              : Colors.grey.shade400,
                           width: 2,
                         ),
                       ),
@@ -1638,7 +1696,9 @@ class _CalendarScreenState extends State<CalendarScreen> {
                           style: GoogleFonts.dmMono(
                             fontSize: 11,
                             fontWeight: FontWeight.bold,
-                            color: !isCompleted ? Colors.white : Colors.grey.shade600,
+                            color: !isCompleted
+                                ? Colors.white
+                                : Colors.grey.shade600,
                           ),
                         ),
                       ),
@@ -1649,19 +1709,29 @@ class _CalendarScreenState extends State<CalendarScreen> {
                 Expanded(
                   child: _AnimatedTapButton(
                     onTap: () async {
-                      await _firestore.collection('tasks').doc(task['id']).update({'completed': true});
+                      await _firestore
+                          .collection('tasks')
+                          .doc(task['id'])
+                          .update({'completed': true});
                       setModalState(() {
                         task['completed'] = true;
                       });
                       setState(() {});
                     },
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 10,
+                      ),
                       decoration: BoxDecoration(
-                        color: isCompleted ? const Color(0xFF34A853) : Colors.grey.shade200,
+                        color: isCompleted
+                            ? const Color(0xFF34A853)
+                            : Colors.grey.shade200,
                         borderRadius: BorderRadius.circular(8),
                         border: Border.all(
-                          color: isCompleted ? const Color(0xFF34A853) : Colors.grey.shade400,
+                          color: isCompleted
+                              ? const Color(0xFF34A853)
+                              : Colors.grey.shade400,
                           width: 2,
                         ),
                       ),
@@ -1671,7 +1741,9 @@ class _CalendarScreenState extends State<CalendarScreen> {
                           style: GoogleFonts.dmMono(
                             fontSize: 11,
                             fontWeight: FontWeight.bold,
-                            color: isCompleted ? Colors.white : Colors.grey.shade600,
+                            color: isCompleted
+                                ? Colors.white
+                                : Colors.grey.shade600,
                           ),
                         ),
                       ),
@@ -1739,7 +1811,8 @@ class _CalendarScreenState extends State<CalendarScreen> {
                         _buildDetailRow('Subject', exam['subject']),
                       _buildDetailRow('Type', exam['type']),
                       _buildDetailRow('Mode', exam['mode']),
-                      if (exam['mode'] == 'In Person' && exam['venue'].isNotEmpty)
+                      if (exam['mode'] == 'In Person' &&
+                          exam['venue'].isNotEmpty)
                         _buildDetailRow('Venue', exam['venue']),
                       _buildDetailRow(
                         'Date',
@@ -1881,9 +1954,11 @@ class _CalendarScreenState extends State<CalendarScreen> {
                       ),
                       if (event['room'] != null && event['room'].isNotEmpty)
                         _buildDetailRow('Room', event['room']),
-                      if (event['building'] != null && event['building'].isNotEmpty)
+                      if (event['building'] != null &&
+                          event['building'].isNotEmpty)
                         _buildDetailRow('Building', event['building']),
-                      if (event['lecturerName'] != null && event['lecturerName'].isNotEmpty)
+                      if (event['lecturerName'] != null &&
+                          event['lecturerName'].isNotEmpty)
                         _buildDetailRow('Lecturer', event['lecturerName']),
                     ],
                   ),
@@ -1900,7 +1975,8 @@ class _CalendarScreenState extends State<CalendarScreen> {
                             final result = await Navigator.push(
                               context,
                               MaterialPageRoute(
-                                builder: (_) => EditClassScreen(classData: event),
+                                builder: (_) =>
+                                    EditClassScreen(classData: event),
                               ),
                             );
                             if (result == true && mounted) {
@@ -1911,7 +1987,10 @@ class _CalendarScreenState extends State<CalendarScreen> {
                           label: Text('Edit', style: GoogleFonts.dmMono()),
                           style: OutlinedButton.styleFrom(
                             foregroundColor: Colors.black,
-                            side: const BorderSide(color: Colors.black, width: 2),
+                            side: const BorderSide(
+                              color: Colors.black,
+                              width: 2,
+                            ),
                             padding: const EdgeInsets.symmetric(vertical: 16),
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(12),
@@ -1925,10 +2004,16 @@ class _CalendarScreenState extends State<CalendarScreen> {
                           onPressed: () async {
                             final messenger = ScaffoldMessenger.of(context);
                             Navigator.pop(context);
-                            await _firestore.collection('timetable').doc(event['id']).delete();
+                            await _firestore
+                                .collection('timetable')
+                                .doc(event['id'])
+                                .delete();
                             messenger.showSnackBar(
                               SnackBar(
-                                content: Text('Class deleted', style: GoogleFonts.dmMono()),
+                                content: Text(
+                                  'Class deleted',
+                                  style: GoogleFonts.dmMono(),
+                                ),
                                 backgroundColor: const Color(0xFFB90000),
                               ),
                             );

@@ -6,7 +6,7 @@ import 'firebase_options.dart';
 
 import 'authenticate/login.dart';
 import 'authenticate/signup.dart';
-import 'authenticate/account_created_screen.dart';
+import 'authenticate/account_created_screen.dart';                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           
 import 'homepage.dart';
 import 'authenticate/auth_gate.dart';
 import 'authenticate/forgot_password_screen.dart';
