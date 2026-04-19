@@ -320,11 +320,23 @@ class _EditTaskScreenState extends State<EditTaskScreen> {
         backgroundColor: Colors.transparent,
         elevation: 0,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.black),
           onPressed: () => Navigator.pop(context),
+          icon: Container(
+            width: 42,
+            height: 42,
+            decoration: const BoxDecoration(
+              color: Color.fromARGB(255, 43, 43, 43),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(
+              Icons.arrow_back,
+              color: Colors.white,
+              size: 20,
+            ),
+          ),
         ),
         title: Text(
-          'Edit Task',
+          'EDIT TASK',
           style: GoogleFonts.dmMono(
             fontSize: 20,
             fontWeight: FontWeight.bold,

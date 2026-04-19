@@ -159,7 +159,7 @@ class _AccountScreenState extends State<AccountScreen> {
               width: 42,
               height: 42,
               decoration: const BoxDecoration(
-                color: Color(0xFF6B7280),
+                color: Color.fromARGB(255, 40, 40, 40),
                 shape: BoxShape.circle,
               ),
               child: const Icon(

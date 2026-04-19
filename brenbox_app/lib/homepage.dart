@@ -389,7 +389,7 @@ class _HomePageState extends State<HomePage> {
                       vertical: 8,
                     ),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF6B7280),
+                      color: const Color.fromARGB(255, 27, 27, 27),
                       borderRadius: BorderRadius.circular(16),
                     ),
                     child: Text(

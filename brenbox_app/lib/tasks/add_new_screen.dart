@@ -33,7 +33,7 @@ class _AddNewScreenState extends State<AddNewScreen> {
                       width: 42,
                       height: 42,
                       decoration: const BoxDecoration(
-                        color: Color(0xFF6B7280),
+                        color: Color.fromARGB(255, 43, 43, 43),
                         shape: BoxShape.circle,
                       ),
                       child: const Icon(
