@@ -33,10 +33,9 @@ class _EditExamScreenState extends State<EditExamScreen> {
   @override
   void initState() {
     super.initState();
-    
+
     print('📝 Edit exam screen received data: ${widget.examData}');
-    
-    // Initialize controllers with existing data
+
     _examNameController = TextEditingController(
       text: widget.examData['examName'] ?? '',
     );
@@ -44,14 +43,12 @@ class _EditExamScreenState extends State<EditExamScreen> {
       text: widget.examData['venue'] ?? '',
     );
 
-    // Initialize subject, type, and mode
-    _selectedSubject = widget.examData['subject']?.isNotEmpty == true 
-        ? widget.examData['subject'] 
+    _selectedSubject = widget.examData['subject']?.isNotEmpty == true
+        ? widget.examData['subject']
         : null;
     _selectedType = widget.examData['type'];
     _selectedMode = widget.examData['mode'];
 
-    // Parse date and times from Firestore (handle both Timestamp and DateTime)
     final examDateValue = widget.examData['examDate'];
     if (examDateValue is Timestamp) {
       _examDate = examDateValue.toDate();
@@ -70,7 +67,8 @@ class _EditExamScreenState extends State<EditExamScreen> {
     } else {
       startDateTime = DateTime.now();
     }
-    _startTime = TimeOfDay(hour: startDateTime.hour, minute: startDateTime.minute);
+    _startTime =
+        TimeOfDay(hour: startDateTime.hour, minute: startDateTime.minute);
 
     final endTimeValue = widget.examData['endTime'];
     DateTime endDateTime;
@@ -118,9 +116,7 @@ class _EditExamScreenState extends State<EditExamScreen> {
       });
     } catch (e) {
       print('Error loading subjects: $e');
-      setState(() {
-        _isLoadingSubjects = false;
-      });
+      setState(() => _isLoadingSubjects = false);
     }
   }
 
@@ -140,96 +136,59 @@ class _EditExamScreenState extends State<EditExamScreen> {
       },
     );
 
-    if (picked != null) {
-      setState(() {
-        _examDate = picked;
-      });
-    }
+    if (picked != null) setState(() => _examDate = picked);
   }
 
+  // ── Updated _selectTime: opens the custom dialog ──────────────────────────
   Future<void> _selectTime(BuildContext context, bool isStartTime) async {
-    final TimeOfDay? picked = await showTimePicker(
+    final initial = isStartTime ? _startTime : _endTime;
+
+    final TimeOfDay? picked = await showDialog<TimeOfDay>(
       context: context,
-      initialTime: isStartTime ? _startTime : _endTime,
-      initialEntryMode: TimePickerEntryMode.dialOnly,
-      builder: (context, child) {
-        return Theme(
-          data: Theme.of(context).copyWith(
-            colorScheme: const ColorScheme.light(
-              primary: Color(0xFF9AB900),
-              onPrimary: Colors.white,
-              surface: Colors.white,
-              onSurface: Colors.black,
-            ),
-            timePickerTheme: TimePickerThemeData(
-              backgroundColor: Colors.white,
-              dialHandColor: const Color(0xFF9AB900),
-              dialBackgroundColor: Colors.grey.shade100,
-              hourMinuteTextColor: Colors.black,
-              hourMinuteColor: Colors.grey.shade200,
-              dayPeriodTextColor: Colors.black,
-              dayPeriodColor: Colors.grey.shade200,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-                side: const BorderSide(color: Colors.black, width: 2),
-              ),
-            ),
-          ),
-          child: child!,
-        );
-      },
+      builder: (_) => _CustomTimePickerDialog(initialTime: initial),
     );
 
-    if (picked != null && mounted) {
-      setState(() {
-        if (isStartTime) {
-          _startTime = picked;
-          // Check if end time is now invalid
-          final startMinutes = picked.hour * 60 + picked.minute;
-          final endMinutes = _endTime.hour * 60 + _endTime.minute;
-          if (endMinutes <= startMinutes) {
-            // Reset end time
-            final newEndMinutes = startMinutes + 60;
-            _endTime = TimeOfDay(
-              hour: newEndMinutes ~/ 60,
-              minute: newEndMinutes % 60,
-            );
-            Future.delayed(const Duration(milliseconds: 100), () {
-              if (mounted) {
-                final hour = picked.hourOfPeriod == 0
-                    ? 12
-                    : picked.hourOfPeriod;
-                final minute = picked.minute.toString().padLeft(2, '0');
-                final period = picked.period == DayPeriod.am ? 'AM' : 'PM';
-                _showError(
-                  'Time Validation',
-                  'End time has been adjusted to be after $hour:$minute $period',
-                );
-              }
-            });
-          }
-        } else {
-          // Validate end time is after start time
-          final startMinutes = _startTime.hour * 60 + _startTime.minute;
-          final endMinutes = picked.hour * 60 + picked.minute;
-          if (endMinutes <= startMinutes) {
-            Future.delayed(const Duration(milliseconds: 100), () {
-              if (mounted) {
-                _showError(
-                  'Invalid Time',
-                  'End time must be after start time',
-                );
-              }
-            });
-            return;
-          }
-          _endTime = picked;
+    if (picked == null || !mounted) return;
+
+    setState(() {
+      if (isStartTime) {
+        _startTime = picked;
+        final startMins = picked.hour * 60 + picked.minute;
+        final endMins = _endTime.hour * 60 + _endTime.minute;
+        if (endMins <= startMins) {
+          final newEndMins = startMins + 60;
+          _endTime = TimeOfDay(
+            hour: newEndMins ~/ 60,
+            minute: newEndMins % 60,
+          );
+          Future.delayed(const Duration(milliseconds: 100), () {
+            if (mounted) {
+              final h = picked.hourOfPeriod == 0 ? 12 : picked.hourOfPeriod;
+              final m = picked.minute.toString().padLeft(2, '0');
+              final p = picked.period == DayPeriod.am ? 'AM' : 'PM';
+              _showError(
+                'Time Validation',
+                'End time has been adjusted to be after $h:$m $p',
+              );
+            }
+          });
         }
-      });
-    }
+      } else {
+        final startMins = _startTime.hour * 60 + _startTime.minute;
+        final endMins = picked.hour * 60 + picked.minute;
+        if (endMins <= startMins) {
+          Future.delayed(const Duration(milliseconds: 100), () {
+            if (mounted) {
+              _showError('Invalid Time', 'End time must be after start time');
+            }
+          });
+          return;
+        }
+        _endTime = picked;
+      }
+    });
   }
 
-  // Check for exam time clash (excluding current exam)
   Future<Map<String, dynamic>?> _checkExamClash(
     DateTime date,
     String startTime,
@@ -243,13 +202,9 @@ class _EditExamScreenState extends State<EditExamScreen> {
         .where('userId', isEqualTo: user.uid)
         .get();
 
-    // Filter by exact date and check time overlap
     for (var doc in existingExams.docs) {
       try {
-        // Skip checking against the current exam being edited
-        if (doc.id == widget.examData['id']) {
-          continue;
-        }
+        if (doc.id == widget.examData['id']) continue;
 
         final data = doc.data();
         final timestamp = data['examDate'] as Timestamp?;
@@ -257,27 +212,25 @@ class _EditExamScreenState extends State<EditExamScreen> {
         if (timestamp != null) {
           final examDate = timestamp.toDate();
 
-          // Check if EXACT same date (year, month, day)
           if (examDate.year == date.year &&
               examDate.month == date.month &&
               examDate.day == date.day) {
-            // Get start and end times from timestamps
             final existingStartTimestamp = data['startTime'] as Timestamp;
             final existingEndTimestamp = data['endTime'] as Timestamp;
-            
+
             final existingStart = existingStartTimestamp.toDate();
             final existingEnd = existingEndTimestamp.toDate();
-            
-            final existingStartStr = '${existingStart.hour.toString().padLeft(2, '0')}:${existingStart.minute.toString().padLeft(2, '0')}';
-            final existingEndStr = '${existingEnd.hour.toString().padLeft(2, '0')}:${existingEnd.minute.toString().padLeft(2, '0')}';
 
-            // Convert times to minutes for comparison
+            final existingStartStr =
+                '${existingStart.hour.toString().padLeft(2, '0')}:${existingStart.minute.toString().padLeft(2, '0')}';
+            final existingEndStr =
+                '${existingEnd.hour.toString().padLeft(2, '0')}:${existingEnd.minute.toString().padLeft(2, '0')}';
+
             final newStartMinutes = _timeToMinutes(startTime);
             final newEndMinutes = _timeToMinutes(endTime);
             final existingStartMinutes = _timeToMinutes(existingStartStr);
             final existingEndMinutes = _timeToMinutes(existingEndStr);
 
-            // Check for overlap: (StartA < EndB) AND (EndA > StartB)
             if (newStartMinutes < existingEndMinutes &&
                 newEndMinutes > existingStartMinutes) {
               return {
@@ -286,7 +239,7 @@ class _EditExamScreenState extends State<EditExamScreen> {
                 'startTime': existingStartStr,
                 'endTime': existingEndStr,
                 'date': examDate,
-              }; // Clash detected
+              };
             }
           }
         }
@@ -296,7 +249,7 @@ class _EditExamScreenState extends State<EditExamScreen> {
       }
     }
 
-    return null; // No clash
+    return null;
   }
 
   int _timeToMinutes(String time) {
@@ -308,35 +261,25 @@ class _EditExamScreenState extends State<EditExamScreen> {
     final parts = time.split(':');
     final hour = int.parse(parts[0]);
     final minute = parts[1];
-
-    if (hour == 0) {
-      return '12:$minute AM';
-    } else if (hour < 12) {
-      return '$hour:$minute AM';
-    } else if (hour == 12) {
-      return '12:$minute PM';
-    } else {
-      return '${hour - 12}:$minute PM';
-    }
+    if (hour == 0) return '12:$minute AM';
+    if (hour < 12) return '$hour:$minute AM';
+    if (hour == 12) return '12:$minute PM';
+    return '${hour - 12}:$minute PM';
   }
 
   Future<void> _updateExam() async {
-    // Validation
     if (_examNameController.text.trim().isEmpty) {
       _showError('Validation Error', 'Please enter exam name');
       return;
     }
-
     if (_selectedType == null) {
       _showError('Validation Error', 'Please select exam type');
       return;
     }
-
     if (_selectedMode == null) {
       _showError('Validation Error', 'Please select exam mode');
       return;
     }
-
     if (_selectedMode == 'In Person' && _venueController.text.trim().isEmpty) {
       _showError('Validation Error', 'Please enter venue for in-person exam');
       return;
@@ -349,7 +292,6 @@ class _EditExamScreenState extends State<EditExamScreen> {
     }
 
     try {
-      // Validate time range
       final startMinutes = _startTime.hour * 60 + _startTime.minute;
       final endMinutes = _endTime.hour * 60 + _endTime.minute;
       if (endMinutes <= startMinutes) {
@@ -357,26 +299,16 @@ class _EditExamScreenState extends State<EditExamScreen> {
         return;
       }
 
-      // Prepare time strings for clash check
       final startTimeStr =
           '${_startTime.hour.toString().padLeft(2, '0')}:${_startTime.minute.toString().padLeft(2, '0')}';
       final endTimeStr =
           '${_endTime.hour.toString().padLeft(2, '0')}:${_endTime.minute.toString().padLeft(2, '0')}';
 
-      // Normalize the exam date
-      final normalizedDate = DateTime(
-        _examDate.year,
-        _examDate.month,
-        _examDate.day,
-      );
+      final normalizedDate =
+          DateTime(_examDate.year, _examDate.month, _examDate.day);
 
-      // Check for clash with existing exams (excluding current exam)
-      final clash = await _checkExamClash(
-        normalizedDate,
-        startTimeStr,
-        endTimeStr,
-      );
-
+      final clash =
+          await _checkExamClash(normalizedDate, startTimeStr, endTimeStr);
       if (clash != null) {
         _showError(
           'Time Clash',
@@ -388,7 +320,6 @@ class _EditExamScreenState extends State<EditExamScreen> {
         return;
       }
 
-      // Combine date and time for start
       final startDateTime = DateTime(
         _examDate.year,
         _examDate.month,
@@ -396,8 +327,6 @@ class _EditExamScreenState extends State<EditExamScreen> {
         _startTime.hour,
         _startTime.minute,
       );
-
-      // Combine date and time for end
       final endDateTime = DateTime(
         _examDate.year,
         _examDate.month,
@@ -406,7 +335,6 @@ class _EditExamScreenState extends State<EditExamScreen> {
         _endTime.minute,
       );
 
-      // Update Firestore
       await FirebaseFirestore.instance
           .collection('exams')
           .doc(widget.examData['id'])
@@ -415,7 +343,8 @@ class _EditExamScreenState extends State<EditExamScreen> {
         'subject': _selectedSubject ?? '',
         'type': _selectedType,
         'mode': _selectedMode,
-        'venue': _selectedMode == 'In Person' ? _venueController.text.trim() : '',
+        'venue':
+            _selectedMode == 'In Person' ? _venueController.text.trim() : '',
         'examDate': Timestamp.fromDate(_examDate),
         'startTime': Timestamp.fromDate(startDateTime),
         'endTime': Timestamp.fromDate(endDateTime),
@@ -424,7 +353,6 @@ class _EditExamScreenState extends State<EditExamScreen> {
 
       if (!mounted) return;
 
-      // Show success dialog
       await showDialog(
         context: context,
         barrierDismissible: false,
@@ -440,38 +368,26 @@ class _EditExamScreenState extends State<EditExamScreen> {
                 const Icon(Icons.check_circle, color: Colors.green, size: 28),
                 const SizedBox(width: 12),
                 Expanded(
-                  child: Text(
-                    'Updated!',
-                    style: GoogleFonts.dmMono(fontWeight: FontWeight.bold),
-                  ),
+                  child: Text('Updated!',
+                      style: GoogleFonts.dmMono(fontWeight: FontWeight.bold)),
                 ),
               ],
             ),
-            content: Text(
-              'Exam has been successfully updated',
-              style: GoogleFonts.dmMono(fontSize: 13),
-            ),
+            content: Text('Exam has been successfully updated',
+                style: GoogleFonts.dmMono(fontSize: 13)),
             actions: [
               TextButton(
-                onPressed: () {
-                  Navigator.of(dialogContext).pop();
-                },
-                child: Text(
-                  'OK',
-                  style: GoogleFonts.dmMono(
-                    fontWeight: FontWeight.bold,
-                    color: Colors.black,
-                  ),
-                ),
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: Text('OK',
+                    style: GoogleFonts.dmMono(
+                        fontWeight: FontWeight.bold, color: Colors.black)),
               ),
             ],
           );
         },
       );
 
-      if (mounted) {
-        Navigator.of(context).pop(true); // Return true to indicate success
-      }
+      if (mounted) Navigator.of(context).pop(true);
     } catch (e) {
       print('Error updating exam: $e');
       if (mounted) {
@@ -494,13 +410,9 @@ class _EditExamScreenState extends State<EditExamScreen> {
             const Icon(Icons.error_outline, color: Color(0xFFB90000), size: 24),
             const SizedBox(width: 12),
             Expanded(
-              child: Text(
-                title,
-                style: GoogleFonts.dmMono(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 14,
-                ),
-              ),
+              child: Text(title,
+                  style: GoogleFonts.dmMono(
+                      fontWeight: FontWeight.bold, fontSize: 14)),
             ),
           ],
         ),
@@ -508,13 +420,9 @@ class _EditExamScreenState extends State<EditExamScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: Text(
-              'OK',
-              style: GoogleFonts.dmMono(
-                fontWeight: FontWeight.bold,
-                color: Colors.black,
-              ),
-            ),
+            child: Text('OK',
+                style: GoogleFonts.dmMono(
+                    fontWeight: FontWeight.bold, color: Colors.black)),
           ),
         ],
       ),
@@ -544,11 +452,7 @@ class _EditExamScreenState extends State<EditExamScreen> {
               color: Color.fromARGB(255, 43, 43, 43),
               shape: BoxShape.circle,
             ),
-            child: const Icon(
-              Icons.arrow_back,
-              color: Colors.white,
-              size: 20,
-            ),
+            child: const Icon(Icons.arrow_back, color: Colors.white, size: 20),
           ),
         ),
         title: Text(
@@ -567,31 +471,26 @@ class _EditExamScreenState extends State<EditExamScreen> {
           children: [
             const SizedBox(height: 16),
 
-            // Exam Name
             _buildLabel('Exam'),
             const SizedBox(height: 8),
             _buildTextField(_examNameController, 'Exam Name'),
             const SizedBox(height: 16),
 
-            // Subject (Optional)
             _buildLabel('Subject (Optional)'),
             const SizedBox(height: 8),
             _buildSubjectSelector(),
             const SizedBox(height: 16),
 
-            // Type
             _buildLabel('Type'),
             const SizedBox(height: 8),
             _buildTypeSelector(),
             const SizedBox(height: 16),
 
-            // Mode
             _buildLabel('Mode'),
             const SizedBox(height: 8),
             _buildModeSelector(),
             const SizedBox(height: 16),
 
-            // Venue (Only show if In Person)
             if (_selectedMode == 'In Person') ...[
               _buildLabel('Venue'),
               const SizedBox(height: 8),
@@ -599,7 +498,6 @@ class _EditExamScreenState extends State<EditExamScreen> {
               const SizedBox(height: 16),
             ],
 
-            // Date
             _buildLabel('Date'),
             const SizedBox(height: 8),
             GestureDetector(
@@ -626,7 +524,6 @@ class _EditExamScreenState extends State<EditExamScreen> {
             ),
             const SizedBox(height: 16),
 
-            // Start Time and End Time
             Row(
               children: [
                 Expanded(
@@ -647,10 +544,8 @@ class _EditExamScreenState extends State<EditExamScreen> {
                           child: Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              Text(
-                                _formatTimeOfDay(_startTime),
-                                style: GoogleFonts.dmMono(fontSize: 14),
-                              ),
+                              Text(_formatTimeOfDay(_startTime),
+                                  style: GoogleFonts.dmMono(fontSize: 14)),
                               const Icon(Icons.access_time, size: 18),
                             ],
                           ),
@@ -678,10 +573,8 @@ class _EditExamScreenState extends State<EditExamScreen> {
                           child: Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              Text(
-                                _formatTimeOfDay(_endTime),
-                                style: GoogleFonts.dmMono(fontSize: 14),
-                              ),
+                              Text(_formatTimeOfDay(_endTime),
+                                  style: GoogleFonts.dmMono(fontSize: 14)),
                               const Icon(Icons.access_time, size: 18),
                             ],
                           ),
@@ -695,7 +588,6 @@ class _EditExamScreenState extends State<EditExamScreen> {
 
             const SizedBox(height: 32),
 
-            // Action Buttons
             Row(
               children: [
                 Expanded(
@@ -705,16 +597,11 @@ class _EditExamScreenState extends State<EditExamScreen> {
                       padding: const EdgeInsets.symmetric(vertical: 16),
                       side: const BorderSide(color: Colors.black, width: 2),
                       shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
+                          borderRadius: BorderRadius.circular(12)),
                     ),
-                    child: Text(
-                      'Cancel',
-                      style: GoogleFonts.dmMono(
-                        color: Colors.black,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
+                    child: Text('Cancel',
+                        style: GoogleFonts.dmMono(
+                            color: Colors.black, fontWeight: FontWeight.bold)),
                   ),
                 ),
                 const SizedBox(width: 16),
@@ -725,16 +612,11 @@ class _EditExamScreenState extends State<EditExamScreen> {
                       backgroundColor: const Color(0xFF9AB900),
                       padding: const EdgeInsets.symmetric(vertical: 16),
                       shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
+                          borderRadius: BorderRadius.circular(12)),
                     ),
-                    child: Text(
-                      'Update Exam',
-                      style: GoogleFonts.dmMono(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
+                    child: Text('Update Exam',
+                        style: GoogleFonts.dmMono(
+                            color: Colors.white, fontWeight: FontWeight.bold)),
                   ),
                 ),
               ],
@@ -747,10 +629,8 @@ class _EditExamScreenState extends State<EditExamScreen> {
   }
 
   Widget _buildLabel(String text) {
-    return Text(
-      text,
-      style: GoogleFonts.dmMono(fontSize: 13, fontWeight: FontWeight.bold),
-    );
+    return Text(text,
+        style: GoogleFonts.dmMono(fontSize: 13, fontWeight: FontWeight.bold));
   }
 
   Widget _buildTextField(TextEditingController controller, String hint) {
@@ -794,15 +674,11 @@ class _EditExamScreenState extends State<EditExamScreen> {
               width: 16,
               height: 16,
               child: CircularProgressIndicator(
-                strokeWidth: 2,
-                color: Color(0xFF6B7280),
-              ),
+                  strokeWidth: 2, color: Color(0xFF6B7280)),
             ),
             const SizedBox(width: 12),
-            Text(
-              'Loading subjects...',
-              style: GoogleFonts.dmMono(fontSize: 14, color: Colors.grey),
-            ),
+            Text('Loading subjects...',
+                style: GoogleFonts.dmMono(fontSize: 14, color: Colors.grey)),
           ],
         ),
       );
@@ -811,13 +687,10 @@ class _EditExamScreenState extends State<EditExamScreen> {
     return GestureDetector(
       onTap: () {
         if (_availableSubjects.isEmpty) {
-          _showError(
-            'No Subjects',
-            'No classes found. Add classes first to link them to exams.',
-          );
+          _showError('No Subjects',
+              'No classes found. Add classes first to link them to exams.');
           return;
         }
-
         showModalBottomSheet(
           context: context,
           backgroundColor: Colors.transparent,
@@ -848,13 +721,9 @@ class _EditExamScreenState extends State<EditExamScreen> {
                     const SizedBox(height: 16),
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 24),
-                      child: Text(
-                        'Select Subject',
-                        style: GoogleFonts.dmMono(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
+                      child: Text('Select Subject',
+                          style: GoogleFonts.dmMono(
+                              fontSize: 18, fontWeight: FontWeight.bold)),
                     ),
                     const SizedBox(height: 16),
                     ListView.builder(
@@ -863,10 +732,8 @@ class _EditExamScreenState extends State<EditExamScreen> {
                       itemBuilder: (context, index) {
                         if (index == 0) {
                           return ListTile(
-                            title: Text(
-                              'None',
-                              style: GoogleFonts.dmMono(fontSize: 14),
-                            ),
+                            title: Text('None',
+                                style: GoogleFonts.dmMono(fontSize: 14)),
                             onTap: () {
                               setState(() => _selectedSubject = null);
                               Navigator.pop(context);
@@ -875,12 +742,11 @@ class _EditExamScreenState extends State<EditExamScreen> {
                         }
                         final subject = _availableSubjects[index - 1];
                         return ListTile(
-                          title: Text(
-                            subject,
-                            style: GoogleFonts.dmMono(fontSize: 14),
-                          ),
+                          title: Text(subject,
+                              style: GoogleFonts.dmMono(fontSize: 14)),
                           trailing: _selectedSubject == subject
-                              ? const Icon(Icons.check, color: Color(0xFF9AB900))
+                              ? const Icon(Icons.check,
+                                  color: Color(0xFF9AB900))
                               : null,
                           onTap: () {
                             setState(() => _selectedSubject = subject);
@@ -929,9 +795,7 @@ class _EditExamScreenState extends State<EditExamScreen> {
         final isSelected = _selectedType == type;
         return Expanded(
           child: Padding(
-            padding: EdgeInsets.only(
-              right: type != _examTypes.last ? 8 : 0,
-            ),
+            padding: EdgeInsets.only(right: type != _examTypes.last ? 8 : 0),
             child: GestureDetector(
               onTap: () => setState(() => _selectedType = type),
               child: Container(
@@ -940,7 +804,8 @@ class _EditExamScreenState extends State<EditExamScreen> {
                   color: isSelected ? const Color(0xFFFEFFE6) : Colors.white,
                   borderRadius: BorderRadius.circular(12),
                   border: Border.all(
-                    color: isSelected ? const Color(0xFF9AB900) : Colors.black,
+                    color:
+                        isSelected ? const Color(0xFF9AB900) : Colors.black,
                     width: 2,
                   ),
                 ),
@@ -948,10 +813,9 @@ class _EditExamScreenState extends State<EditExamScreen> {
                   type,
                   textAlign: TextAlign.center,
                   style: GoogleFonts.dmMono(
-                    fontSize: 13,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.black,
-                  ),
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black),
                 ),
               ),
             ),
@@ -967,9 +831,7 @@ class _EditExamScreenState extends State<EditExamScreen> {
         final isSelected = _selectedMode == mode;
         return Expanded(
           child: Padding(
-            padding: EdgeInsets.only(
-              right: mode != _examModes.last ? 8 : 0,
-            ),
+            padding: EdgeInsets.only(right: mode != _examModes.last ? 8 : 0),
             child: GestureDetector(
               onTap: () => setState(() => _selectedMode = mode),
               child: Container(
@@ -978,7 +840,8 @@ class _EditExamScreenState extends State<EditExamScreen> {
                   color: isSelected ? const Color(0xFFFEFFE6) : Colors.white,
                   borderRadius: BorderRadius.circular(12),
                   border: Border.all(
-                    color: isSelected ? const Color(0xFF9AB900) : Colors.black,
+                    color:
+                        isSelected ? const Color(0xFF9AB900) : Colors.black,
                     width: 2,
                   ),
                 ),
@@ -986,16 +849,484 @@ class _EditExamScreenState extends State<EditExamScreen> {
                   mode,
                   textAlign: TextAlign.center,
                   style: GoogleFonts.dmMono(
-                    fontSize: 13,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.black,
-                  ),
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black),
                 ),
               ),
             ),
           ),
         );
       }).toList(),
+    );
+  }
+}
+
+// =============================================================================
+// Custom Time Picker Dialog
+// =============================================================================
+
+class _CustomTimePickerDialog extends StatefulWidget {
+  final TimeOfDay? initialTime;
+  const _CustomTimePickerDialog({this.initialTime});
+
+  @override
+  State<_CustomTimePickerDialog> createState() =>
+      _CustomTimePickerDialogState();
+}
+
+class _CustomTimePickerDialogState extends State<_CustomTimePickerDialog> {
+  late int _hour;
+  late int _minute;
+  late bool _isAm;
+
+  bool _editingHour = false;
+  bool _editingMinute = false;
+
+  late TextEditingController _hourCtrl;
+  late TextEditingController _minuteCtrl;
+  late FocusNode _hourFocus;
+  late FocusNode _minuteFocus;
+
+  @override
+  void initState() {
+    super.initState();
+    final t = widget.initialTime ?? TimeOfDay.now();
+    _isAm = t.period == DayPeriod.am;
+    _hour = t.hourOfPeriod == 0 ? 12 : t.hourOfPeriod;
+    _minute = t.minute;
+
+    _hourCtrl = TextEditingController(text: _hour.toString().padLeft(2, '0'));
+    _minuteCtrl =
+        TextEditingController(text: _minute.toString().padLeft(2, '0'));
+
+    _hourFocus = FocusNode()
+      ..addListener(() {
+        if (_hourFocus.hasFocus) {
+          _hourCtrl.selection = TextSelection(
+              baseOffset: 0, extentOffset: _hourCtrl.text.length);
+          setState(() => _editingHour = true);
+        } else {
+          _commitHour();
+          setState(() => _editingHour = false);
+        }
+      });
+
+    _minuteFocus = FocusNode()
+      ..addListener(() {
+        if (_minuteFocus.hasFocus) {
+          _minuteCtrl.selection = TextSelection(
+              baseOffset: 0, extentOffset: _minuteCtrl.text.length);
+          setState(() => _editingMinute = true);
+        } else {
+          _commitMinute();
+          setState(() => _editingMinute = false);
+        }
+      });
+  }
+
+  @override
+  void dispose() {
+    _hourCtrl.dispose();
+    _minuteCtrl.dispose();
+    _hourFocus.dispose();
+    _minuteFocus.dispose();
+    super.dispose();
+  }
+
+  void _commitHour() {
+    final v = int.tryParse(_hourCtrl.text);
+    if (v != null && v >= 1 && v <= 12) setState(() => _hour = v);
+    _hourCtrl.text = _hour.toString().padLeft(2, '0');
+  }
+
+  void _commitMinute() {
+    final v = int.tryParse(_minuteCtrl.text);
+    if (v != null && v >= 0 && v <= 59) setState(() => _minute = v);
+    _minuteCtrl.text = _minute.toString().padLeft(2, '0');
+  }
+
+  TimeOfDay _toTimeOfDay() {
+    int h = _hour % 12;
+    if (!_isAm) h += 12;
+    return TimeOfDay(hour: h, minute: _minute);
+  }
+
+  void _incrementHour(int delta) {
+    setState(() {
+      _hour = ((_hour - 1 + delta) % 12 + 12) % 12 + 1;
+      _hourCtrl.text = _hour.toString().padLeft(2, '0');
+    });
+  }
+
+  void _incrementMinute(int delta) {
+    setState(() {
+      _minute = (_minute + delta + 60) % 60;
+      _minuteCtrl.text = _minute.toString().padLeft(2, '0');
+    });
+  }
+
+  Future<void> _openDial() async {
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: _toTimeOfDay(),
+      initialEntryMode: TimePickerEntryMode.dialOnly,
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: const ColorScheme.light(
+              primary: Color(0xFF9AB900),
+              onPrimary: Colors.white,
+              surface: Colors.white,
+              onSurface: Colors.black,
+            ),
+            timePickerTheme: TimePickerThemeData(
+              backgroundColor: Colors.white,
+              dialHandColor: const Color(0xFF9AB900),
+              dialBackgroundColor: Colors.grey.shade100,
+              hourMinuteTextColor: Colors.black,
+              hourMinuteColor: Colors.grey.shade200,
+              dayPeriodTextColor: Colors.black,
+              dayPeriodColor: Colors.grey.shade200,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+                side: const BorderSide(color: Colors.black, width: 2),
+              ),
+            ),
+          ),
+          child: child!,
+        );
+      },
+    );
+
+    if (picked != null && mounted) {
+      setState(() {
+        _isAm = picked.period == DayPeriod.am;
+        _hour = picked.hourOfPeriod == 0 ? 12 : picked.hourOfPeriod;
+        _minute = picked.minute;
+        _hourCtrl.text = _hour.toString().padLeft(2, '0');
+        _minuteCtrl.text = _minute.toString().padLeft(2, '0');
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final h = _hour.toString().padLeft(2, '0');
+    final m = _minute.toString().padLeft(2, '0');
+    final period = _isAm ? 'AM' : 'PM';
+
+    return Dialog(
+      backgroundColor: Colors.white,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: const BorderSide(color: Colors.black, width: 2),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('Select Time',
+                style: GoogleFonts.dmMono(
+                    fontSize: 15, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 20),
+
+            GestureDetector(
+              onTap: _openDial,
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(
+                    vertical: 14, horizontal: 16),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade50,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.black26, width: 1.5),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(Icons.access_time,
+                        size: 20, color: Color(0xFF9AB900)),
+                    const SizedBox(width: 10),
+                    Text('$h:$m $period',
+                        style: GoogleFonts.dmMono(
+                            fontSize: 26,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 2)),
+                    const SizedBox(width: 10),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF9AB900).withOpacity(0.12),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.touch_app,
+                              size: 12, color: Color(0xFF9AB900)),
+                          const SizedBox(width: 4),
+                          Text('Use dial',
+                              style: GoogleFonts.dmMono(
+                                  fontSize: 10,
+                                  color: const Color(0xFF9AB900))),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 16),
+
+            Row(
+              children: [
+                const Expanded(child: Divider(color: Colors.black12)),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  child: Text('or type manually',
+                      style: GoogleFonts.dmMono(
+                          fontSize: 10, color: Colors.grey)),
+                ),
+                const Expanded(child: Divider(color: Colors.black12)),
+              ],
+            ),
+            const SizedBox(height: 16),
+
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                _SpinnerField(
+                  controller: _hourCtrl,
+                  focusNode: _hourFocus,
+                  label: 'HH',
+                  onUp: () => _incrementHour(1),
+                  onDown: () => _incrementHour(-1),
+                  onSubmitted: (_) {
+                    _commitHour();
+                    _minuteFocus.requestFocus();
+                  },
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: Text(':',
+                      style: GoogleFonts.dmMono(
+                          fontSize: 28, fontWeight: FontWeight.bold)),
+                ),
+                _SpinnerField(
+                  controller: _minuteCtrl,
+                  focusNode: _minuteFocus,
+                  label: 'MM',
+                  onUp: () => _incrementMinute(1),
+                  onDown: () => _incrementMinute(-1),
+                  onSubmitted: (_) => _commitMinute(),
+                ),
+                const SizedBox(width: 14),
+                _AmPmToggle(
+                  isAm: _isAm,
+                  onChanged: (v) => setState(() => _isAm = v),
+                ),
+              ],
+            ),
+
+            const SizedBox(height: 20),
+
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.pop(context),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      side: const BorderSide(color: Colors.black, width: 2),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10)),
+                    ),
+                    child: Text('Cancel',
+                        style: GoogleFonts.dmMono(
+                            color: Colors.black, fontWeight: FontWeight.bold)),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: () {
+                      if (_editingHour) _commitHour();
+                      if (_editingMinute) _commitMinute();
+                      Navigator.pop(context, _toTimeOfDay());
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF9AB900),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10)),
+                    ),
+                    child: Text('Confirm',
+                        style: GoogleFonts.dmMono(
+                            color: Colors.white, fontWeight: FontWeight.bold)),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// =============================================================================
+// Spinner field
+// =============================================================================
+
+class _SpinnerField extends StatelessWidget {
+  final TextEditingController controller;
+  final FocusNode focusNode;
+  final String label;
+  final VoidCallback onUp;
+  final VoidCallback onDown;
+  final ValueChanged<String> onSubmitted;
+
+  const _SpinnerField({
+    required this.controller,
+    required this.focusNode,
+    required this.label,
+    required this.onUp,
+    required this.onDown,
+    required this.onSubmitted,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        _ArrowBtn(icon: Icons.keyboard_arrow_up, onTap: onUp),
+        const SizedBox(height: 4),
+        SizedBox(
+          width: 68,
+          child: TextField(
+            controller: controller,
+            focusNode: focusNode,
+            keyboardType: TextInputType.number,
+            textAlign: TextAlign.center,
+            maxLength: 2,
+            onSubmitted: onSubmitted,
+            style:
+                GoogleFonts.dmMono(fontSize: 26, fontWeight: FontWeight.bold),
+            decoration: InputDecoration(
+              counterText: '',
+              hintText: label,
+              hintStyle: GoogleFonts.dmMono(
+                  fontSize: 18, color: Colors.grey.shade400),
+              filled: true,
+              fillColor: Colors.grey.shade100,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: const BorderSide(color: Colors.black, width: 2),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: const BorderSide(color: Colors.black, width: 2),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: const BorderSide(
+                    color: Color(0xFF9AB900), width: 2.5),
+              ),
+              contentPadding:
+                  const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+            ),
+          ),
+        ),
+        const SizedBox(height: 4),
+        _ArrowBtn(icon: Icons.keyboard_arrow_down, onTap: onDown),
+      ],
+    );
+  }
+}
+
+class _ArrowBtn extends StatelessWidget {
+  final IconData icon;
+  final VoidCallback onTap;
+  const _ArrowBtn({required this.icon, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(6),
+      child: Container(
+        width: 68,
+        height: 32,
+        decoration: BoxDecoration(
+          color: Colors.grey.shade100,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: Colors.black12),
+        ),
+        child: Icon(icon, size: 22, color: Colors.black54),
+      ),
+    );
+  }
+}
+
+// =============================================================================
+// AM / PM toggle
+// =============================================================================
+
+class _AmPmToggle extends StatelessWidget {
+  final bool isAm;
+  final ValueChanged<bool> onChanged;
+  const _AmPmToggle({required this.isAm, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        _PeriodBtn(label: 'AM', selected: isAm, onTap: () => onChanged(true)),
+        const SizedBox(height: 6),
+        _PeriodBtn(
+            label: 'PM', selected: !isAm, onTap: () => onChanged(false)),
+      ],
+    );
+  }
+}
+
+class _PeriodBtn extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+  const _PeriodBtn(
+      {required this.label, required this.selected, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        width: 52,
+        height: 40,
+        decoration: BoxDecoration(
+          color: selected ? const Color(0xFF9AB900) : Colors.grey.shade100,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: selected ? const Color(0xFF9AB900) : Colors.black26,
+            width: 2,
+          ),
+        ),
+        alignment: Alignment.center,
+        child: Text(
+          label,
+          style: GoogleFonts.dmMono(
+            fontSize: 13,
+            fontWeight: FontWeight.bold,
+            color: selected ? Colors.white : Colors.black54,
+          ),
+        ),
+      ),
     );
   }
 }

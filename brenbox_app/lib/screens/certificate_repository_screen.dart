@@ -211,7 +211,7 @@ class _CertificateRepositoryScreenState
                           size: 18, color: Colors.black45),
                       border: InputBorder.none,
                       contentPadding:
-                          const EdgeInsets.symmetric(vertical: 14),
+                          const EdgeInsets.symmetric(vertical: 18),
                     ),
                     onChanged: (v) =>
                         setState(() => _searchQuery = v.toLowerCase()),
