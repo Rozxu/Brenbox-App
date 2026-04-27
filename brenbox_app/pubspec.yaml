@@ -24,6 +24,10 @@ dependencies:
   flutter_pdfview: ^1.3.2
   path_provider: ^2.1.2
 
+  google_sign_in: ^6.2.1
+
+
+
 
 
 dev_dependencies:
@@ -38,6 +42,7 @@ flutter:
   assets:
      - assets/images/BrenboxLogo.png
      - assets/images/Brenbox_Applogo.png
+     - assets/images/google_icon.png
      - assets/images/
 
 flutter_launcher_icons:

@@ -1,10 +1,11 @@
-// ==========================================
-// 1. FORGOT PASSWORD SCREEN (Enter Email)
-// ==========================================
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+
+// ==========================================
+// FORGOT PASSWORD SCREEN (Enter Email)
+// ==========================================
 
 class ForgotPasswordScreen extends StatefulWidget {
   const ForgotPasswordScreen({Key? key}) : super(key: key);
@@ -26,32 +27,41 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
   }
 
   Future<void> _sendPasswordResetEmail() async {
-    if (_emailController.text.isEmpty) {
+    final email = _emailController.text.trim();
+
+    if (email.isEmpty) {
       _showMessage('Please enter your email');
+      return;
+    }
+
+    final emailRegex = RegExp(r'^[\w\-.]+@([\w\-]+\.)+[\w\-]{2,}$');
+    if (!emailRegex.hasMatch(email)) {
+      _showMessage('Please enter a valid email address');
       return;
     }
 
     setState(() => _isLoading = true);
 
     try {
-      final email = _emailController.text.trim();
-      
-      // Check if user exists in Firestore
-      final users = await _firestore
+      // Query Firestore users collection for this email.
+      // The Firestore rule allows unauthenticated list queries with limit <= 1,
+      // so this works on the forgot-password screen without the user being logged in.
+      final query = await _firestore
           .collection('users')
           .where('email', isEqualTo: email)
+          .limit(1)
           .get();
 
-      if (users.docs.isEmpty) {
-        _showMessage('No account found with this email');
+      if (query.docs.isEmpty) {
+        // Email not found in our system — show error and stop
+        _showMessage('No account found with this email.');
         setState(() => _isLoading = false);
         return;
       }
 
-      // Send password reset email via Firebase
+      // Email exists in Firestore — safe to send reset link
       await _auth.sendPasswordResetEmail(email: email);
 
-      // Navigate to email sent screen
       if (mounted) {
         Navigator.pushReplacement(
           context,
@@ -63,22 +73,17 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
     } on FirebaseAuthException catch (e) {
       String message;
       switch (e.code) {
-        case 'user-not-found':
-          message = 'No account found with this email';
-          break;
         case 'invalid-email':
-          message = 'Invalid email address';
+          message = 'Invalid email address.';
           break;
         default:
           message = 'Error sending reset email. Please try again.';
       }
       _showMessage(message);
     } catch (e) {
-      _showMessage('Error: ${e.toString()}');
+      _showMessage('An error occurred. Please try again.');
     } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -88,12 +93,24 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
       context: context,
       builder: (_) => AlertDialog(
         backgroundColor: Colors.white,
-        title: Text('BrenBox', style: GoogleFonts.dmMono(fontWeight: FontWeight.bold)),
-        content: Text(message, style: GoogleFonts.dmMono(fontSize: 12)),
+        title: Text(
+          'BrenBox',
+          style: GoogleFonts.dmMono(fontWeight: FontWeight.bold),
+        ),
+        content: Text(
+          message,
+          style: GoogleFonts.dmMono(fontSize: 12),
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: Text('OK', style: GoogleFonts.dmMono(fontWeight: FontWeight.bold, color: Colors.black)),
+            child: Text(
+              'OK',
+              style: GoogleFonts.dmMono(
+                fontWeight: FontWeight.bold,
+                color: Colors.black,
+              ),
+            ),
           ),
         ],
       ),
@@ -108,7 +125,9 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
         child: SingleChildScrollView(
           child: ConstrainedBox(
             constraints: BoxConstraints(
-              minHeight: MediaQuery.of(context).size.height - MediaQuery.of(context).padding.top - MediaQuery.of(context).padding.bottom,
+              minHeight: MediaQuery.of(context).size.height -
+                  MediaQuery.of(context).padding.top -
+                  MediaQuery.of(context).padding.bottom,
             ),
             child: IntrinsicHeight(
               child: Padding(
@@ -127,10 +146,9 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                         onPressed: () => Navigator.pop(context),
                       ),
                     ),
-                    
+
                     const SizedBox(height: 48),
-                    
-                    // Title
+
                     Text(
                       'Forgot password',
                       style: GoogleFonts.dmMono(
@@ -138,22 +156,20 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                         fontWeight: FontWeight.bold,
                       ),
                     ),
-                    
+
                     const SizedBox(height: 8),
-                    
+
                     Text(
                       'Please enter your email to reset\npassword',
                       style: GoogleFonts.dmMono(fontSize: 13),
                     ),
-                    
+
                     const SizedBox(height: 48),
-                    
-                    // Email Label
+
                     Text('Email', style: GoogleFonts.dmMono(fontSize: 13)),
-                    
+
                     const SizedBox(height: 12),
-                    
-                    // Email Input
+
                     TextField(
                       controller: _emailController,
                       style: GoogleFonts.dmMono(),
@@ -163,23 +179,25 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                         fillColor: Colors.white,
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(12),
-                          borderSide: const BorderSide(color: Colors.black, width: 2),
+                          borderSide:
+                              const BorderSide(color: Colors.black, width: 2),
                         ),
                         enabledBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(12),
-                          borderSide: const BorderSide(color: Colors.black, width: 2),
+                          borderSide:
+                              const BorderSide(color: Colors.black, width: 2),
                         ),
                         focusedBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(12),
-                          borderSide: const BorderSide(color: Colors.black, width: 2),
+                          borderSide:
+                              const BorderSide(color: Colors.black, width: 2),
                         ),
                         contentPadding: const EdgeInsets.all(16),
                       ),
                     ),
-                    
+
                     const Spacer(),
-                    
-                    // Reset Password Button
+
                     SizedBox(
                       width: double.infinity,
                       child: ElevatedButton(
@@ -209,7 +227,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                               ),
                       ),
                     ),
-                    
+
                     const SizedBox(height: 32),
                   ],
                 ),
@@ -223,7 +241,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
 }
 
 // ==========================================
-// 2. PASSWORD RESET EMAIL SENT SCREEN
+// PASSWORD RESET EMAIL SENT SCREEN
 // ==========================================
 class PasswordResetEmailSentScreen extends StatelessWidget {
   final String email;
@@ -247,8 +265,7 @@ class PasswordResetEmailSentScreen extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 const Spacer(),
-                
-                // Email Icon
+
                 Container(
                   width: 120,
                   height: 120,
@@ -263,10 +280,9 @@ class PasswordResetEmailSentScreen extends StatelessWidget {
                     color: Colors.black,
                   ),
                 ),
-                
+
                 const SizedBox(height: 40),
-                
-                // Title
+
                 Text(
                   'Check Your Email',
                   textAlign: TextAlign.center,
@@ -275,18 +291,17 @@ class PasswordResetEmailSentScreen extends StatelessWidget {
                     fontWeight: FontWeight.bold,
                   ),
                 ),
-                
+
                 const SizedBox(height: 16),
-                
-                // Message
+
                 Text(
                   'We sent a password reset link to:',
                   textAlign: TextAlign.center,
                   style: GoogleFonts.dmMono(fontSize: 13),
                 ),
-                
+
                 const SizedBox(height: 8),
-                
+
                 Text(
                   email,
                   textAlign: TextAlign.center,
@@ -295,22 +310,22 @@ class PasswordResetEmailSentScreen extends StatelessWidget {
                     fontWeight: FontWeight.bold,
                   ),
                 ),
-                
+
                 const SizedBox(height: 24),
-                
+
                 Text(
                   'Click the link in the email to reset your\npassword. Check your spam folder if you\ndon\'t see it.',
                   textAlign: TextAlign.center,
                   style: GoogleFonts.dmMono(fontSize: 12, height: 1.5),
                 ),
-                
+
                 const SizedBox(height: 40),
-                
-                // Resend Email Button
+
                 TextButton(
                   onPressed: () async {
                     try {
-                      await FirebaseAuth.instance.sendPasswordResetEmail(email: email);
+                      await FirebaseAuth.instance
+                          .sendPasswordResetEmail(email: email);
                       if (context.mounted) {
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(
@@ -347,10 +362,9 @@ class PasswordResetEmailSentScreen extends StatelessWidget {
                     ),
                   ),
                 ),
-                
+
                 const SizedBox(height: 16),
-                
-                // Back to Login Button
+
                 TextButton(
                   onPressed: () {
                     Navigator.pushNamedAndRemoveUntil(
@@ -368,7 +382,7 @@ class PasswordResetEmailSentScreen extends StatelessWidget {
                     ),
                   ),
                 ),
-                
+
                 const Spacer(),
               ],
             ),
