@@ -4,6 +4,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
 
+import '../services/notification_scheduler.dart';
+
 class AddExamScreen extends StatefulWidget {
   const AddExamScreen({Key? key}) : super(key: key);
 
@@ -340,6 +342,8 @@ class _AddExamScreenState extends State<AddExamScreen> {
         'endTime': Timestamp.fromDate(endDateTime),
         'createdAt': Timestamp.now(),
       });
+
+      await NotificationScheduler().rescheduleAllNotifications();
 
       if (!mounted) return;
 

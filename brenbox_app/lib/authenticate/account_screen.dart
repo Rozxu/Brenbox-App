@@ -3,6 +3,10 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import '../screens/notification_settings_screen.dart';
+import '../services/notification_service.dart';
+import '../services/notification_scheduler.dart';
+
 class AccountScreen extends StatefulWidget {
   final VoidCallback? onBackPressed;
   
@@ -300,37 +304,67 @@ class _AccountScreenState extends State<AccountScreen> {
     );
   }
 
-  Widget _buildNotificationMenuItem() {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.black, width: 2),
-      ),
-      child: Row(
-        children: [
-          const Icon(Icons.notifications_outlined, size: 24, color: Colors.black),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Text(
-              'Notification',
-              style: GoogleFonts.dmMono(
-                fontSize: 14,
-                fontWeight: FontWeight.bold,
+Widget _buildNotificationMenuItem() {
+  return Container(
+    padding: const EdgeInsets.all(16),
+    decoration: BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(12),
+      border: Border.all(color: Colors.black, width: 2),
+    ),
+    child: Row(
+      children: [
+        const Icon(Icons.notifications_outlined,
+            size: 24, color: Colors.black),
+        const SizedBox(width: 16),
+        Expanded(
+          child: Text(
+            'Notification',
+            style: GoogleFonts.dmMono(
+              fontSize: 14,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ),
+        // Master on/off toggle
+        Switch(
+          value: _notificationsEnabled,
+          onChanged: (v) async {
+            await _toggleNotifications(v);
+            // Reschedule or cancel all
+            if (v) {
+              await NotificationScheduler().rescheduleAllNotifications();
+            } else {
+              await NotificationService().cancelAllNotifications();
+            }
+          },
+          activeColor: const Color(0xFF34A853),
+          activeTrackColor: const Color(0xFF34A853).withOpacity(0.5),
+        ),
+        // Arrow to open detailed settings
+        if (_notificationsEnabled)
+          _AnimatedTapButton(
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const NotificationSettingsScreen(),
+                ),
+              );
+            },
+            child: const Padding(
+              padding: EdgeInsets.only(left: 8),
+              child: Icon(
+                Icons.tune,
+                size: 20,
+                color: Color(0xFF6B7280),
               ),
             ),
           ),
-          Switch(
-            value: _notificationsEnabled,
-            onChanged: _toggleNotifications,
-            activeColor: const Color(0xFF34A853),
-            activeTrackColor: const Color(0xFF34A853).withOpacity(0.5),
-          ),
-        ],
-      ),
-    );
-  }
+      ],
+    ),
+  );
+}
 
   Widget _buildLogoutButton() {
     return _AnimatedTapButton(

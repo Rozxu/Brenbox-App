@@ -4,6 +4,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
 
+import '../services/notification_scheduler.dart';
+
 class AddClassScreen extends StatefulWidget {
   const AddClassScreen({Key? key}) : super(key: key);
 
@@ -473,6 +475,8 @@ class _AddClassScreenState extends State<AddClassScreen> {
       }
 
       await batch.commit();
+
+      await NotificationScheduler().rescheduleAllNotifications();
 
       if (!mounted) return;
 

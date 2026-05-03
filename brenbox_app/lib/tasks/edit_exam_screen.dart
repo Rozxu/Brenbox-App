@@ -4,6 +4,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
 
+import '../services/notification_scheduler.dart';
+
 class EditExamScreen extends StatefulWidget {
   final Map<String, dynamic> examData;
 
@@ -350,6 +352,8 @@ class _EditExamScreenState extends State<EditExamScreen> {
         'endTime': Timestamp.fromDate(endDateTime),
         'updatedAt': Timestamp.now(),
       });
+
+      await NotificationScheduler().rescheduleAllNotifications();
 
       if (!mounted) return;
 

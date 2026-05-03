@@ -12,6 +12,9 @@ import 'screens/calendar_screen.dart';
 import 'authenticate/account_screen.dart';
 import 'screens/grade_calculator_screen.dart';
 import 'screens/certificate_repository_screen.dart';
+import 'screens/notification_history_screen.dart';
+import 'services/notification_service.dart';
+import 'services/notification_scheduler.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({Key? key}) : super(key: key);
@@ -41,16 +44,22 @@ class _HomePageState extends State<HomePage> {
       Navigator.pushReplacementNamed(context, '/login');
       return;
     }
-    
+
     final doc = await _firestore.collection('users').doc(user.uid).get();
-    
-    // ✅ ADD THIS LINE: Check if the widget is still on screen
-    if (!mounted) return; 
+
+    if (!mounted) return;
 
     setState(() {
       _username = doc.data()?['username'] ?? 'User';
       _isLoading = false;
     });
+
+    // ── FIXED: use onAppOpen() instead of rescheduleAllNotifications().
+    // onAppOpen() is lightweight — it only schedules genuinely NEW events
+    // (dedupe prevents re-scheduling anything already queued) and purges
+    // old Firestore records. It does NOT cancel + re-fire everything,
+    // which was the cause of the notification spam on every app open.
+    NotificationScheduler().onAppOpen();
   }
 
   Future<void> _logout() async {
@@ -87,120 +96,105 @@ class _HomePageState extends State<HomePage> {
         .where('userId', isEqualTo: user.uid)
         .snapshots()
         .asyncMap((timetableSnapshot) async {
-          final tasksSnapshot = await _firestore
-              .collection('tasks')
-              .where('userId', isEqualTo: user.uid)
-              .get();
+      final tasksSnapshot = await _firestore
+          .collection('tasks')
+          .where('userId', isEqualTo: user.uid)
+          .get();
 
-          List<QueryDocumentSnapshot> matchingDocs = [];
+      // Also check exams so past exam dates show a black circle border
+      final examsSnapshot = await _firestore
+          .collection('exams')
+          .where('userId', isEqualTo: user.uid)
+          .get();
 
-          for (var doc in timetableSnapshot.docs) {
-            final data = doc.data() as Map<String, dynamic>;
-            final timestamp = data['date'] as Timestamp?;
-            if (timestamp != null) {
-              final docDate = timestamp.toDate();
-              final docDateOnly = DateTime(
-                docDate.year,
-                docDate.month,
-                docDate.day,
-              );
-              if (docDateOnly.year == checkDate.year &&
-                  docDateOnly.month == checkDate.month &&
-                  docDateOnly.day == checkDate.day) {
-                matchingDocs.add(doc);
-              }
-            }
-          }
+      bool _matchesDate(DateTime docDate) {
+        final d = DateTime(docDate.year, docDate.month, docDate.day);
+        return d.year == checkDate.year &&
+            d.month == checkDate.month &&
+            d.day == checkDate.day;
+      }
 
-          for (var doc in tasksSnapshot.docs) {
-            final data = doc.data() as Map<String, dynamic>;
-            final timestamp = data['dueDate'] as Timestamp?;
-            if (timestamp != null) {
-              final docDate = timestamp.toDate();
-              final docDateOnly = DateTime(
-                docDate.year,
-                docDate.month,
-                docDate.day,
-              );
-              if (docDateOnly.year == checkDate.year &&
-                  docDateOnly.month == checkDate.month &&
-                  docDateOnly.day == checkDate.day) {
-                matchingDocs.add(doc);
-              }
-            }
-          }
+      bool hasEvents = false;
 
-          bool hasEvents = matchingDocs.isNotEmpty;
-          bool isUpcoming = hasEvents && checkDate.isAfter(today);
+      for (var doc in timetableSnapshot.docs) {
+        final ts = (doc.data() as Map<String, dynamic>)['date'] as Timestamp?;
+        if (ts != null && _matchesDate(ts.toDate())) { hasEvents = true; break; }
+      }
 
-          return {'hasEvents': hasEvents, 'isUpcoming': isUpcoming};
-        });
+      if (!hasEvents) {
+        for (var doc in tasksSnapshot.docs) {
+          final ts = (doc.data() as Map<String, dynamic>)['dueDate'] as Timestamp?;
+          if (ts != null && _matchesDate(ts.toDate())) { hasEvents = true; break; }
+        }
+      }
+
+      if (!hasEvents) {
+        for (var doc in examsSnapshot.docs) {
+          final ts = (doc.data() as Map<String, dynamic>)['examDate'] as Timestamp?;
+          if (ts != null && _matchesDate(ts.toDate())) { hasEvents = true; break; }
+        }
+      }
+
+      // isUpcoming = event exists on a FUTURE date (shows red border)
+      // past dates with events get a black border (handled in _dateCircle)
+      final bool isUpcoming = hasEvents && checkDate.isAfter(today);
+
+      return {'hasEvents': hasEvents, 'isUpcoming': isUpcoming};
+    });
   }
 
   Stream<List<Map<String, dynamic>>> _getUpcomingExamsStream() {
     final user = _auth.currentUser;
-    if (user == null) {
-      return Stream.value([]);
-    }
-
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
+    if (user == null) return Stream.value([]);
 
     return _firestore
         .collection('exams')
         .where('userId', isEqualTo: user.uid)
         .snapshots()
         .map((snapshot) {
-      List<Map<String, dynamic>> exams = [];
+      final now = DateTime.now();
+      final List<Map<String, dynamic>> upcoming = [];
 
       for (var doc in snapshot.docs) {
         try {
-          final data = doc.data();
+          final data              = doc.data();
           final examDateTimestamp = data['examDate'] as Timestamp?;
+          if (examDateTimestamp == null) continue;
 
-          if (examDateTimestamp != null) {
-            final examDate = examDateTimestamp.toDate();
-            final examDateOnly = DateTime(
-              examDate.year,
-              examDate.month,
-              examDate.day,
-            );
+          final startTime = (data['startTime'] as Timestamp).toDate();
+          final endTime   = (data['endTime']   as Timestamp).toDate();
 
-            // Only include upcoming exams (today or future)
-            if (examDateOnly.isAfter(today) ||
-                (examDateOnly.year == today.year &&
-                    examDateOnly.month == today.month &&
-                    examDateOnly.day == today.day)) {
-              final startTime = (data['startTime'] as Timestamp).toDate();
-              final endTime = (data['endTime'] as Timestamp).toDate();
+          // Keep the exam visible all day on its date so the card can
+          // show DONE after endTime passes. Remove only after midnight.
+          final examDate = examDateTimestamp.toDate();
+          final endOfExamDay = DateTime(
+            examDate.year, examDate.month, examDate.day, 23, 59, 59,
+          );
+          if (endOfExamDay.isBefore(now)) continue;
 
-              exams.add({
-                'id': doc.id,
-                'examName': data['examName'] ?? 'Untitled Exam',
-                'subject': data['subject'] ?? '',
-                'type': data['type'] ?? 'Exam',
-                'mode': data['mode'] ?? 'In Person',
-                'venue': data['venue'] ?? '',
-                'examDate': examDateTimestamp,
-                'startTime': startTime,
-                'endTime': endTime,
-              });
-            }
-          }
+          upcoming.add({
+            'id':        doc.id,
+            'examName':  data['examName']  ?? 'Untitled Exam',
+            'subject':   data['subject']   ?? '',
+            'type':      data['type']      ?? 'Exam',
+            'mode':      data['mode']      ?? 'In Person',
+            'venue':     data['venue']     ?? '',
+            'examDate':  examDateTimestamp,
+            'startTime': startTime,
+            'endTime':   endTime,
+          });
         } catch (e) {
-          print('Error processing exam document ${doc.id}: $e');
+          print('Error processing exam document: $e');
           continue;
         }
       }
 
-      // Sort by exam date (earliest first)
-      exams.sort((a, b) {
-        final aDate = (a['examDate'] as Timestamp).toDate();
-        final bDate = (b['examDate'] as Timestamp).toDate();
-        return aDate.compareTo(bDate);
-      });
+      // Sort earliest first
+      upcoming.sort((a, b) =>
+          (a['examDate'] as Timestamp).toDate()
+              .compareTo((b['examDate'] as Timestamp).toDate()));
 
-      return exams;
+      return upcoming;
     });
   }
 
@@ -210,16 +204,15 @@ class _HomePageState extends State<HomePage> {
     List<DateTime> weekDates = _getWeekDates();
     String currentMonth = DateFormat('MMMM').format(today);
 
-    // Define the screens
     final List<Widget> _screens = [
       _buildHomeScreen(currentMonth, weekDates, today),
       const CalendarScreen(),
       const GradeCalculatorScreen(),
-      const CertificateRepositoryScreen(), // Placeholder for certification repository
+      const CertificateRepositoryScreen(),
       AccountScreen(
         onBackPressed: () {
           setState(() {
-            _selectedNavIndex = 0; // Go back to home
+            _selectedNavIndex = 0;
           });
         },
       ),
@@ -235,7 +228,6 @@ class _HomePageState extends State<HomePage> {
               children: _screens,
             ),
           ),
-          // Only show bottom navigation when NOT on account screen (index 4)
           if (_selectedNavIndex != 4) _buildBottomNavigation(),
         ],
       ),
@@ -259,6 +251,8 @@ class _HomePageState extends State<HomePage> {
               _buildHeader(),
               const SizedBox(height: 24),
               _buildGreeting(),
+              const SizedBox(height: 16),
+
               const SizedBox(height: 24),
               _buildScheduleSection(currentMonth, weekDates, today),
               const SizedBox(height: 24),
@@ -273,58 +267,45 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // HEADER with real-time unread notification dot
+  // ════════════════════════════════════════════════════════════════════════════
+
   Widget _buildHeader() {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
         Text(
           'HOME',
-          style: GoogleFonts.dmMono(fontSize: 24, fontWeight: FontWeight.bold),
+          style:
+              GoogleFonts.dmMono(fontSize: 24, fontWeight: FontWeight.bold),
         ),
         Row(
           children: [
-            _AnimatedTapButton(
+            // Bell icon — uses _BellDot which holds its own 30-second timer
+            // so DateTime.now() is re-evaluated even when Firestore has no
+            // new writes, ensuring the dot appears as soon as a scheduled
+            // notification's time arrives.
+            _BellDot(
+              userId: _auth.currentUser?.uid ?? '',
+              firestore: _firestore,
               onTap: () {
-                // TODO: Navigate to notifications screen
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(
-                      'Notifications feature coming soon',
-                      style: GoogleFonts.dmMono(),
-                    ),
-                    backgroundColor: const Color(0xFF6B7280),
-                    duration: const Duration(seconds: 2),
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const NotificationHistoryScreen(),
                   ),
                 );
               },
-              child: Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  const Icon(
-                    Icons.notifications_outlined,
-                    color: Colors.black,
-                    size: 28,
-                  ),
-                  Positioned(
-                    right: 0,
-                    top: 0,
-                    child: Container(
-                      width: 8,
-                      height: 8,
-                      decoration: const BoxDecoration(
-                        color: Color.fromARGB(0, 185, 0, 0),
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
             ),
+
             const SizedBox(width: 16),
             _AnimatedTapButton(
               onTap: () {
                 setState(() {
-                  _selectedNavIndex = 4; // Navigate to profile/account screen
+                  _selectedNavIndex = 4;
                 });
               },
               child: const Icon(
@@ -361,7 +342,8 @@ class _HomePageState extends State<HomePage> {
       children: [
         Text(
           'Schedule',
-          style: GoogleFonts.dmMono(fontSize: 20, fontWeight: FontWeight.bold),
+          style: GoogleFonts.dmMono(
+              fontSize: 20, fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 16),
         Container(
@@ -385,9 +367,7 @@ class _HomePageState extends State<HomePage> {
                   ),
                   Container(
                     padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 8,
-                    ),
+                        horizontal: 16, vertical: 8),
                     decoration: BoxDecoration(
                       color: const Color.fromARGB(255, 27, 27, 27),
                       borderRadius: BorderRadius.circular(16),
@@ -421,21 +401,20 @@ class _HomePageState extends State<HomePage> {
                 mainAxisAlignment: MainAxisAlignment.spaceAround,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: weekDates.map((date) {
-                  bool isToday =
-                      date.day == today.day &&
+                  bool isToday = date.day == today.day &&
                       date.month == today.month &&
                       date.year == today.year;
-
-                  bool isSelected =
-                      date.day == _selectedDate.day &&
+                  bool isSelected = date.day == _selectedDate.day &&
                       date.month == _selectedDate.month &&
                       date.year == _selectedDate.year;
 
                   return StreamBuilder<Map<String, bool>>(
                     stream: _checkEventsOnDateStream(date),
                     builder: (context, snapshot) {
-                      bool hasEvents = snapshot.data?['hasEvents'] ?? false;
-                      bool isUpcoming = snapshot.data?['isUpcoming'] ?? false;
+                      bool hasEvents =
+                          snapshot.data?['hasEvents'] ?? false;
+                      bool isUpcoming =
+                          snapshot.data?['isUpcoming'] ?? false;
                       return _dateCircle(
                         date.day.toString().padLeft(2, '0'),
                         isToday,
@@ -456,11 +435,12 @@ class _HomePageState extends State<HomePage> {
           child: _AnimatedTapButton(
             onTap: () {
               setState(() {
-                _selectedNavIndex = 1; // Switch to calendar tab
+                _selectedNavIndex = 1;
               });
             },
             child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 12),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 40, vertical: 12),
               decoration: BoxDecoration(
                 color: const Color(0xFF292929),
                 borderRadius: BorderRadius.circular(24),
@@ -486,7 +466,8 @@ class _HomePageState extends State<HomePage> {
       children: [
         Text(
           'Assessments Dates',
-          style: GoogleFonts.dmMono(fontSize: 20, fontWeight: FontWeight.bold),
+          style: GoogleFonts.dmMono(
+              fontSize: 20, fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 16),
         StreamBuilder<List<Map<String, dynamic>>>(
@@ -497,8 +478,7 @@ class _HomePageState extends State<HomePage> {
                 height: 140,
                 alignment: Alignment.center,
                 child: const CircularProgressIndicator(
-                  color: Color(0xFF9AB900),
-                ),
+                    color: Color(0xFF9AB900)),
               );
             }
 
@@ -514,18 +494,13 @@ class _HomePageState extends State<HomePage> {
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    const Icon(
-                      Icons.assignment_outlined,
-                      size: 40,
-                      color: Color(0xFF6B7280),
-                    ),
+                    const Icon(Icons.assignment_outlined,
+                        size: 40, color: Color(0xFF6B7280)),
                     const SizedBox(height: 8),
                     Text(
                       'No upcoming assessments',
                       style: GoogleFonts.dmMono(
-                        fontSize: 12,
-                        color: Colors.grey,
-                      ),
+                          fontSize: 12, color: Colors.grey),
                     ),
                   ],
                 ),
@@ -550,24 +525,43 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildExamCard(Map<String, dynamic> exam) {
-    final examDate = (exam['examDate'] as Timestamp).toDate();
+    final examDate  = (exam['examDate'] as Timestamp).toDate();
     final startTime = exam['startTime'] as DateTime;
-    final endTime = exam['endTime'] as DateTime;
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final examDateOnly = DateTime(examDate.year, examDate.month, examDate.day);
-    
-    final daysUntil = examDateOnly.difference(today).inDays;
-    
+    final endTime   = exam['endTime']   as DateTime;
+    final now       = DateTime.now();
+    // Compute isPast live so the card shows DONE on the day the exam ends
+    final isPast    = endTime.isBefore(now);
+    final today     = DateTime(now.year, now.month, now.day);
+    final examDay   = DateTime(examDate.year, examDate.month, examDate.day);
+    final daysUntil = examDay.difference(today).inDays;
+
+    final bool isToday = daysUntil == 0;
+
     String durationLabel;
-    bool isToday = daysUntil == 0;
-    
-    if (isToday) {
-      durationLabel = 'TODAY';
+    Color  labelBg;
+    Color  labelFg;
+    Color  cardBorderColor;
+
+    if (isPast) {
+      durationLabel   = 'DONE';
+      labelBg         = Colors.grey.shade200;
+      labelFg         = Colors.grey.shade600;
+      cardBorderColor = Colors.black;        // plain black border for past
+    } else if (isToday) {
+      durationLabel   = 'TODAY';
+      labelBg         = const Color(0xFF9AB900);
+      labelFg         = Colors.white;
+      cardBorderColor = Colors.black;
     } else if (daysUntil == 1) {
-      durationLabel = '1 DAY';
+      durationLabel   = '1 DAY';
+      labelBg         = const Color(0xFFFEFFE6);
+      labelFg         = const Color(0xFF9AB900);
+      cardBorderColor = Colors.black;
     } else {
-      durationLabel = '$daysUntil DAYS';
+      durationLabel   = '$daysUntil DAYS';
+      labelBg         = const Color(0xFFFEFFE6);
+      labelFg         = const Color(0xFF9AB900);
+      cardBorderColor = Colors.black;
     }
 
     return _AnimatedTapButton(
@@ -576,45 +570,41 @@ class _HomePageState extends State<HomePage> {
         width: 280,
         margin: const EdgeInsets.only(right: 16),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: isPast ? Colors.grey.shade50 : Colors.white,
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.black, width: 2),
+          border: Border.all(color: cardBorderColor, width: 2),
         ),
         child: Row(
           children: [
-            // Left side - Date
             Container(
               width: 90,
-              padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 8),
+              padding:
+                  const EdgeInsets.symmetric(vertical: 16, horizontal: 8),
               decoration: const BoxDecoration(
                 border: Border(
-                  right: BorderSide(color: Colors.black, width: 2),
-                ),
+                    right: BorderSide(color: Colors.black, width: 2)),
               ),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Container(
                     padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 5,
-                    ),
+                        horizontal: 10, vertical: 5),
                     decoration: BoxDecoration(
-                      color: isToday
-                          ? const Color(0xFF9AB900)
-                          : const Color(0xFFFEFFE6),
+                      color: labelBg,
                       borderRadius: BorderRadius.circular(10),
                       border: Border.all(
-                        color: const Color(0xFF9AB900),
-                        width: 2,
-                      ),
+                          color: isPast
+                              ? Colors.grey.shade400
+                              : const Color(0xFF9AB900),
+                          width: 2),
                     ),
                     child: Text(
                       durationLabel,
                       style: GoogleFonts.dmMono(
                         fontSize: 10,
                         fontWeight: FontWeight.bold,
-                        color: isToday ? Colors.white : const Color(0xFF9AB900),
+                        color: labelFg,
                       ),
                     ),
                   ),
@@ -622,22 +612,17 @@ class _HomePageState extends State<HomePage> {
                   Text(
                     DateFormat('MMM').format(examDate).toUpperCase(),
                     style: GoogleFonts.dmMono(
-                      fontSize: 14,
-                      fontWeight: FontWeight.bold,
-                    ),
+                        fontSize: 14, fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 2),
                   Text(
                     DateFormat('dd').format(examDate),
                     style: GoogleFonts.dmMono(
-                      fontSize: 28,
-                      fontWeight: FontWeight.bold,
-                    ),
+                        fontSize: 28, fontWeight: FontWeight.bold),
                   ),
                 ],
               ),
             ),
-            // Right side - Details
             Expanded(
               child: Padding(
                 padding: const EdgeInsets.all(12),
@@ -657,9 +642,7 @@ class _HomePageState extends State<HomePage> {
                     Text(
                       exam['examName'],
                       style: GoogleFonts.dmMono(
-                        fontSize: 13,
-                        fontWeight: FontWeight.bold,
-                      ),
+                          fontSize: 13, fontWeight: FontWeight.bold),
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -668,9 +651,8 @@ class _HomePageState extends State<HomePage> {
                       Text(
                         exam['subject'],
                         style: GoogleFonts.dmMono(
-                          fontSize: 10,
-                          color: const Color(0xFF6B7280),
-                        ),
+                            fontSize: 10,
+                            color: const Color(0xFF6B7280)),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -678,19 +660,15 @@ class _HomePageState extends State<HomePage> {
                     const SizedBox(height: 8),
                     Row(
                       children: [
-                        const Icon(
-                          Icons.access_time,
-                          size: 12,
-                          color: Color(0xFF6B7280),
-                        ),
+                        const Icon(Icons.access_time,
+                            size: 12, color: Color(0xFF6B7280)),
                         const SizedBox(width: 4),
                         Expanded(
                           child: Text(
                             '${DateFormat('hh:mm a').format(startTime)} - ${DateFormat('hh:mm a').format(endTime)}',
                             style: GoogleFonts.dmMono(
-                              fontSize: 10,
-                              color: const Color(0xFF6B7280),
-                            ),
+                                fontSize: 10,
+                                color: const Color(0xFF6B7280)),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
@@ -712,11 +690,12 @@ class _HomePageState extends State<HomePage> {
                           child: Text(
                             exam['mode'] == 'Online'
                                 ? 'Online'
-                                : (exam['venue'].isEmpty ? 'F2 Attend' : exam['venue']),
+                                : (exam['venue'].isEmpty
+                                    ? 'F2 Attend'
+                                    : exam['venue']),
                             style: GoogleFonts.dmMono(
-                              fontSize: 10,
-                              color: const Color(0xFF6B7280),
-                            ),
+                                fontSize: 10,
+                                color: const Color(0xFF6B7280)),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
@@ -775,9 +754,7 @@ class _HomePageState extends State<HomePage> {
                       Text(
                         'Exam Details',
                         style: GoogleFonts.dmMono(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
+                            fontSize: 18, fontWeight: FontWeight.bold),
                       ),
                       const SizedBox(height: 16),
                       _buildDetailRow('Exam Name', exam['examName']),
@@ -785,12 +762,11 @@ class _HomePageState extends State<HomePage> {
                         _buildDetailRow('Subject', exam['subject']),
                       _buildDetailRow('Type', exam['type']),
                       _buildDetailRow('Mode', exam['mode']),
-                      if (exam['mode'] == 'In Person' && exam['venue'].isNotEmpty)
+                      if (exam['mode'] == 'In Person' &&
+                          exam['venue'].isNotEmpty)
                         _buildDetailRow('Venue', exam['venue']),
-                      _buildDetailRow(
-                        'Date',
-                        DateFormat('EEE, dd MMM yyyy').format(examDate),
-                      ),
+                      _buildDetailRow('Date',
+                          DateFormat('EEE, dd MMM yyyy').format(examDate)),
                       _buildDetailRow(
                         'Time',
                         '${DateFormat('hh:mm a').format(startTime)} - ${DateFormat('hh:mm a').format(endTime)}',
@@ -810,25 +786,22 @@ class _HomePageState extends State<HomePage> {
                             final result = await Navigator.push(
                               context,
                               MaterialPageRoute(
-                                builder: (_) => EditExamScreen(examData: exam),
+                                builder: (_) =>
+                                    EditExamScreen(examData: exam),
                               ),
                             );
-                            if (result == true && mounted) {
-                              setState(() {});
-                            }
+                            if (result == true && mounted) setState(() {});
                           },
                           icon: const Icon(Icons.edit_outlined),
                           label: Text('Edit', style: GoogleFonts.dmMono()),
                           style: OutlinedButton.styleFrom(
                             foregroundColor: Colors.black,
                             side: const BorderSide(
-                              color: Colors.black,
-                              width: 2,
-                            ),
-                            padding: const EdgeInsets.symmetric(vertical: 16),
+                                color: Colors.black, width: 2),
+                            padding:
+                                const EdgeInsets.symmetric(vertical: 16),
                             shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
+                                borderRadius: BorderRadius.circular(12)),
                           ),
                         ),
                       ),
@@ -836,31 +809,32 @@ class _HomePageState extends State<HomePage> {
                       Expanded(
                         child: ElevatedButton.icon(
                           onPressed: () async {
-                            final messenger = ScaffoldMessenger.of(context);
+                            final messenger =
+                                ScaffoldMessenger.of(context);
                             Navigator.pop(context);
+                            // Cancel notifications and clean up Firestore
+                            await NotificationService()
+                                .cancelNotificationsForEvent(exam['id']);
                             await _firestore
                                 .collection('exams')
                                 .doc(exam['id'])
                                 .delete();
-                            messenger.showSnackBar(
-                              SnackBar(
-                                content: Text(
-                                  'Exam deleted',
-                                  style: GoogleFonts.dmMono(),
-                                ),
-                                backgroundColor: const Color(0xFFB90000),
-                              ),
-                            );
+                            messenger.showSnackBar(SnackBar(
+                              content: Text('Exam deleted',
+                                  style: GoogleFonts.dmMono()),
+                              backgroundColor: const Color(0xFFB90000),
+                            ));
                           },
                           icon: const Icon(Icons.delete_outline),
-                          label: Text('Delete', style: GoogleFonts.dmMono()),
+                          label:
+                              Text('Delete', style: GoogleFonts.dmMono()),
                           style: ElevatedButton.styleFrom(
                             backgroundColor: const Color(0xFFB90000),
                             foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(vertical: 16),
+                            padding:
+                                const EdgeInsets.symmetric(vertical: 16),
                             shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
+                                borderRadius: BorderRadius.circular(12)),
                           ),
                         ),
                       ),
@@ -899,9 +873,8 @@ class _HomePageState extends State<HomePage> {
     bool isUpcoming,
     DateTime dateTime,
   ) {
-    Color backgroundColor = isToday
-        ? const Color(0xFFB90000)
-        : Colors.transparent;
+    Color backgroundColor =
+        isToday ? const Color(0xFFB90000) : Colors.transparent;
 
     Color? borderColor;
     double? borderWidth;
@@ -976,7 +949,8 @@ class _HomePageState extends State<HomePage> {
                   DateFormat('dd MMM yyyy').format(DateTime.now())
               ? 'Today Timetable'
               : 'Timetable - ${DateFormat('EEE, dd MMM').format(_selectedDate)}',
-          style: GoogleFonts.dmMono(fontSize: 16, fontWeight: FontWeight.bold),
+          style: GoogleFonts.dmMono(
+              fontSize: 16, fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 16),
         StreamBuilder<List<Map<String, dynamic>>>(
@@ -986,7 +960,8 @@ class _HomePageState extends State<HomePage> {
               return const Center(
                 child: Padding(
                   padding: EdgeInsets.all(24),
-                  child: CircularProgressIndicator(color: Color(0xFF6B7280)),
+                  child: CircularProgressIndicator(
+                      color: Color(0xFF6B7280)),
                 ),
               );
             }
@@ -1001,34 +976,28 @@ class _HomePageState extends State<HomePage> {
 
             events.sort((a, b) {
               if (a['type'] == 'task' && b['type'] == 'task') {
-                return (a['dueTime'] as String).compareTo(
-                  b['dueTime'] as String,
-                );
+                return (a['dueTime'] as String)
+                    .compareTo(b['dueTime'] as String);
               } else if (a['type'] == 'task') {
-                return (a['dueTime'] as String).compareTo(
-                  b['startTime'] as String,
-                );
+                return (a['dueTime'] as String)
+                    .compareTo(b['startTime'] as String);
               } else if (b['type'] == 'task') {
-                return (a['startTime'] as String).compareTo(
-                  b['dueTime'] as String,
-                );
+                return (a['startTime'] as String)
+                    .compareTo(b['dueTime'] as String);
               } else {
-                return (a['startTime'] as String).compareTo(
-                  b['startTime'] as String,
-                );
+                return (a['startTime'] as String)
+                    .compareTo(b['startTime'] as String);
               }
             });
 
             return Column(
-              children: [
-                ...events.map((event) {
-                  if (event['type'] == 'task') {
-                    return _buildTaskCard(event);
-                  } else {
-                    return _buildEnhancedClassCard(event);
-                  }
-                }).toList(),
-              ],
+              children: events.map((event) {
+                if (event['type'] == 'task') {
+                  return _buildTaskCard(event);
+                } else {
+                  return _buildEnhancedClassCard(event);
+                }
+              }).toList(),
             );
           },
         ),
@@ -1036,83 +1005,84 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Stream<List<Map<String, dynamic>>> _getCombinedEventsStream(String userId) {
+  Stream<List<Map<String, dynamic>>> _getCombinedEventsStream(
+      String userId) {
     return _firestore
         .collection('timetable')
         .where('userId', isEqualTo: userId)
         .snapshots()
         .asyncMap((timetableSnapshot) async {
-          List<Map<String, dynamic>> allEvents = [];
+      List<Map<String, dynamic>> allEvents = [];
 
-          for (var doc in timetableSnapshot.docs) {
-            try {
-              final data = doc.data() as Map<String, dynamic>;
-              final timestamp = data['date'] as Timestamp?;
+      for (var doc in timetableSnapshot.docs) {
+        try {
+          final data = doc.data() as Map<String, dynamic>;
+          final timestamp = data['date'] as Timestamp?;
 
-              if (timestamp != null) {
-                final eventDate = timestamp.toDate();
+          if (timestamp != null) {
+            final eventDate = timestamp.toDate();
 
-                if (eventDate.year == _selectedDate.year &&
-                    eventDate.month == _selectedDate.month &&
-                    eventDate.day == _selectedDate.day) {
-                  allEvents.add({
-                    'id': doc.id,
-                    'className': data['className'] ?? 'Untitled',
-                    'startTime': data['startTime'] ?? '00:00',
-                    'endTime': data['endTime'] ?? '00:00',
-                    'room': data['room'] ?? '',
-                    'building': data['building'] ?? '',
-                    'lecturerName': data['lecturerName'] ?? '',
-                    'type': data['type'] ?? 'class',
-                    'date': timestamp,
-                    'semester': data['semester'],
-                    'academicYear': data['academicYear'],
-                  });
-                }
-              }
-            } catch (e) {
-              print('Error processing timetable document ${doc.id}: $e');
-              continue;
+            if (eventDate.year == _selectedDate.year &&
+                eventDate.month == _selectedDate.month &&
+                eventDate.day == _selectedDate.day) {
+              allEvents.add({
+                'id': doc.id,
+                'className': data['className'] ?? 'Untitled',
+                'startTime': data['startTime'] ?? '00:00',
+                'endTime': data['endTime'] ?? '00:00',
+                'room': data['room'] ?? '',
+                'building': data['building'] ?? '',
+                'lecturerName': data['lecturerName'] ?? '',
+                'type': data['type'] ?? 'class',
+                'date': timestamp,
+                'semester': data['semester'],
+                'academicYear': data['academicYear'],
+              });
             }
           }
+        } catch (e) {
+          print('Error processing timetable document ${doc.id}: $e');
+          continue;
+        }
+      }
 
-          final tasksSnapshot = await _firestore
-              .collection('tasks')
-              .where('userId', isEqualTo: userId)
-              .get();
+      final tasksSnapshot = await _firestore
+          .collection('tasks')
+          .where('userId', isEqualTo: userId)
+          .get();
 
-          for (var doc in tasksSnapshot.docs) {
-            try {
-              final data = doc.data() as Map<String, dynamic>;
-              final timestamp = data['dueDate'] as Timestamp?;
+      for (var doc in tasksSnapshot.docs) {
+        try {
+          final data = doc.data() as Map<String, dynamic>;
+          final timestamp = data['dueDate'] as Timestamp?;
 
-              if (timestamp != null) {
-                final dueDate = timestamp.toDate();
+          if (timestamp != null) {
+            final dueDate = timestamp.toDate();
 
-                if (dueDate.year == _selectedDate.year &&
-                    dueDate.month == _selectedDate.month &&
-                    dueDate.day == _selectedDate.day) {
-                  allEvents.add({
-                    'id': doc.id,
-                    'type': 'task',
-                    'taskTitle': data['taskTitle'] ?? 'Untitled Task',
-                    'taskDetails': data['taskDetails'] ?? '',
-                    'subject': data['subject'] ?? '',
-                    'taskType': data['taskType'] ?? '',
-                    'dueDate': timestamp,
-                    'dueTime': DateFormat('HH:mm').format(dueDate),
-                    'completed': data['completed'] ?? false,
-                  });
-                }
-              }
-            } catch (e) {
-              print('Error processing task document ${doc.id}: $e');
-              continue;
+            if (dueDate.year == _selectedDate.year &&
+                dueDate.month == _selectedDate.month &&
+                dueDate.day == _selectedDate.day) {
+              allEvents.add({
+                'id': doc.id,
+                'type': 'task',
+                'taskTitle': data['taskTitle'] ?? 'Untitled Task',
+                'taskDetails': data['taskDetails'] ?? '',
+                'subject': data['subject'] ?? '',
+                'taskType': data['taskType'] ?? '',
+                'dueDate': timestamp,
+                'dueTime': DateFormat('HH:mm').format(dueDate),
+                'completed': data['completed'] ?? false,
+              });
             }
           }
+        } catch (e) {
+          print('Error processing task document ${doc.id}: $e');
+          continue;
+        }
+      }
 
-          return allEvents;
-        });
+      return allEvents;
+    });
   }
 
   Widget _buildTaskCard(Map<String, dynamic> task) {
@@ -1127,7 +1097,9 @@ class _HomePageState extends State<HomePage> {
           color: Colors.white,
           borderRadius: BorderRadius.circular(20),
           border: Border.all(
-            color: isCompleted ? const Color(0xFF34A853) : Colors.black,
+            color: isCompleted
+                ? const Color(0xFF34A853)
+                : Colors.black,
             width: 2,
           ),
           boxShadow: [
@@ -1154,8 +1126,7 @@ class _HomePageState extends State<HomePage> {
                   end: Alignment.bottomRight,
                 ),
                 borderRadius: const BorderRadius.vertical(
-                  top: Radius.circular(18),
-                ),
+                    top: Radius.circular(18)),
               ),
               child: Row(
                 children: [
@@ -1169,7 +1140,9 @@ class _HomePageState extends State<HomePage> {
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Icon(
-                      isCompleted ? Icons.check_circle : Icons.task_alt,
+                      isCompleted
+                          ? Icons.check_circle
+                          : Icons.task_alt,
                       color: Colors.white,
                       size: 24,
                     ),
@@ -1199,7 +1172,8 @@ class _HomePageState extends State<HomePage> {
                               ),
                             ),
                             const SizedBox(width: 8),
-                            if (!isCompleted) _CountdownTimer(dueDate: dueDate),
+                            if (!isCompleted)
+                              _CountdownTimer(dueDate: dueDate),
                           ],
                         ),
                         const SizedBox(height: 4),
@@ -1207,9 +1181,7 @@ class _HomePageState extends State<HomePage> {
                           children: [
                             Container(
                               padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 4,
-                              ),
+                                  horizontal: 8, vertical: 4),
                               decoration: BoxDecoration(
                                 color: isCompleted
                                     ? const Color(0xFF34A853)
@@ -1229,9 +1201,7 @@ class _HomePageState extends State<HomePage> {
                               const SizedBox(width: 8),
                               Container(
                                 padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 4,
-                                ),
+                                    horizontal: 8, vertical: 4),
                                 decoration: BoxDecoration(
                                   color: const Color(0xFF34A853),
                                   borderRadius: BorderRadius.circular(6),
@@ -1239,11 +1209,8 @@ class _HomePageState extends State<HomePage> {
                                 child: Row(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
-                                    const Icon(
-                                      Icons.check,
-                                      size: 10,
-                                      color: Colors.white,
-                                    ),
+                                    const Icon(Icons.check,
+                                        size: 10, color: Colors.white),
                                     const SizedBox(width: 4),
                                     Text(
                                       'COMPLETED',
@@ -1291,9 +1258,7 @@ class _HomePageState extends State<HomePage> {
                       children: [
                         Expanded(
                           child: _buildDetailItem(
-                            Icons.subject,
-                            task['subject'],
-                          ),
+                              Icons.subject, task['subject']),
                         ),
                       ],
                     ),
@@ -1318,11 +1283,8 @@ class _HomePageState extends State<HomePage> {
       ),
       child: Column(
         children: [
-          const Icon(
-            Icons.event_note_outlined,
-            size: 48,
-            color: Color(0xFF6B7280),
-          ),
+          const Icon(Icons.event_note_outlined,
+              size: 48, color: Color(0xFF6B7280)),
           const SizedBox(height: 12),
           Text(
             'No events scheduled',
@@ -1382,8 +1344,7 @@ class _HomePageState extends State<HomePage> {
                   end: Alignment.bottomRight,
                 ),
                 borderRadius: const BorderRadius.vertical(
-                  top: Radius.circular(18),
-                ),
+                    top: Radius.circular(18)),
               ),
               child: Row(
                 children: [
@@ -1404,18 +1365,14 @@ class _HomePageState extends State<HomePage> {
                         Text(
                           event['className'],
                           style: GoogleFonts.dmMono(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                          ),
+                              fontSize: 16, fontWeight: FontWeight.bold),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
                         const SizedBox(height: 4),
                         Container(
                           padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 4,
-                          ),
+                              horizontal: 8, vertical: 4),
                           decoration: BoxDecoration(
                             color: labelColor,
                             borderRadius: BorderRadius.circular(6),
@@ -1445,7 +1402,8 @@ class _HomePageState extends State<HomePage> {
                       '${_formatTime(event['startTime'])} - ${_formatTime(event['endTime'])}',
                     ),
                   ),
-                  if (event['room'].isNotEmpty || event['building'].isNotEmpty)
+                  if (event['room'].isNotEmpty ||
+                      event['building'].isNotEmpty)
                     Expanded(
                       child: _buildDetailItem(
                         Icons.location_on_outlined,
@@ -1470,9 +1428,7 @@ class _HomePageState extends State<HomePage> {
           child: Text(
             text,
             style: GoogleFonts.dmMono(
-              fontSize: 11,
-              color: const Color(0xFF6B7280),
-            ),
+                fontSize: 11, color: const Color(0xFF6B7280)),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
@@ -1486,7 +1442,6 @@ class _HomePageState extends State<HomePage> {
       final parts = time.split(':');
       final hour = int.parse(parts[0]);
       final minute = parts[1];
-
       if (hour == 0) return '12:$minute AM';
       if (hour < 12) return '$hour:$minute AM';
       if (hour == 12) return '12:$minute PM';
@@ -1511,7 +1466,8 @@ class _HomePageState extends State<HomePage> {
             return Container(
               decoration: const BoxDecoration(
                 color: Colors.white,
-                borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+                borderRadius:
+                    BorderRadius.vertical(top: Radius.circular(24)),
                 border: Border(
                   top: BorderSide(color: Colors.black, width: 2),
                   left: BorderSide(color: Colors.black, width: 2),
@@ -1533,30 +1489,33 @@ class _HomePageState extends State<HomePage> {
                     ),
                     const SizedBox(height: 24),
                     Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 24),
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: 24),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
                             'Task Details',
                             style: GoogleFonts.dmMono(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                            ),
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold),
                           ),
                           const SizedBox(height: 16),
-                          _buildDetailRow('Task Title', task['taskTitle']),
+                          _buildDetailRow(
+                              'Task Title', task['taskTitle']),
                           if (task['taskDetails'].isNotEmpty)
-                            _buildDetailRow('Details', task['taskDetails']),
+                            _buildDetailRow(
+                                'Details', task['taskDetails']),
                           if (task['subject'].isNotEmpty)
                             _buildDetailRow('Subject', task['subject']),
                           _buildDetailRow('Type', task['taskType']),
                           _buildDetailRow(
                             'Due Date',
-                            DateFormat('EEE, dd MMM yyyy').format(dueDate),
+                            DateFormat('EEE, dd MMM yyyy')
+                                .format(dueDate),
                           ),
-                          _buildDetailRow(
-                              'Due Time', _formatTime(task['dueTime'])),
+                          _buildDetailRow('Due Time',
+                              _formatTime(task['dueTime'])),
                           const SizedBox(height: 8),
                           _buildStatusToggleInModal(task, setModalState),
                         ],
@@ -1564,7 +1523,8 @@ class _HomePageState extends State<HomePage> {
                     ),
                     const SizedBox(height: 24),
                     Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 24),
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: 24),
                       child: Row(
                         children: [
                           Expanded(
@@ -1574,7 +1534,8 @@ class _HomePageState extends State<HomePage> {
                                 final result = await Navigator.push(
                                   context,
                                   MaterialPageRoute(
-                                    builder: (_) => EditTaskScreen(taskData: task),
+                                    builder: (_) =>
+                                        EditTaskScreen(taskData: task),
                                   ),
                                 );
                                 if (result == true && mounted) {
@@ -1582,18 +1543,17 @@ class _HomePageState extends State<HomePage> {
                                 }
                               },
                               icon: const Icon(Icons.edit_outlined),
-                              label: Text('Edit', style: GoogleFonts.dmMono()),
+                              label: Text('Edit',
+                                  style: GoogleFonts.dmMono()),
                               style: OutlinedButton.styleFrom(
                                 foregroundColor: Colors.black,
                                 side: const BorderSide(
-                                  color: Colors.black,
-                                  width: 2,
-                                ),
-                                padding:
-                                    const EdgeInsets.symmetric(vertical: 16),
+                                    color: Colors.black, width: 2),
+                                padding: const EdgeInsets.symmetric(
+                                    vertical: 16),
                                 shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
+                                    borderRadius:
+                                        BorderRadius.circular(12)),
                               ),
                             ),
                           ),
@@ -1601,33 +1561,36 @@ class _HomePageState extends State<HomePage> {
                           Expanded(
                             child: ElevatedButton.icon(
                               onPressed: () async {
-                                final messenger = ScaffoldMessenger.of(context);
+                                final messenger =
+                                    ScaffoldMessenger.of(context);
                                 Navigator.pop(context);
+                                // Cancel notifications and clean Firestore
+                                await NotificationService()
+                                    .cancelNotificationsForEvent(
+                                        task['id']);
                                 await _firestore
                                     .collection('tasks')
                                     .doc(task['id'])
                                     .delete();
-                                messenger.showSnackBar(
-                                  SnackBar(
-                                    content: Text(
-                                      'Task deleted',
-                                      style: GoogleFonts.dmMono(),
-                                    ),
-                                    backgroundColor: const Color(0xFFB90000),
-                                  ),
-                                );
+                                messenger.showSnackBar(SnackBar(
+                                  content: Text('Task deleted',
+                                      style: GoogleFonts.dmMono()),
+                                  backgroundColor:
+                                      const Color(0xFFB90000),
+                                ));
                               },
                               icon: const Icon(Icons.delete_outline),
-                              label:
-                                  Text('Delete', style: GoogleFonts.dmMono()),
+                              label: Text('Delete',
+                                  style: GoogleFonts.dmMono()),
                               style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFFB90000),
+                                backgroundColor:
+                                    const Color(0xFFB90000),
                                 foregroundColor: Colors.white,
-                                padding:
-                                    const EdgeInsets.symmetric(vertical: 16),
+                                padding: const EdgeInsets.symmetric(
+                                    vertical: 16),
                                 shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
+                                    borderRadius:
+                                        BorderRadius.circular(12)),
                               ),
                             ),
                           ),
@@ -1651,18 +1614,6 @@ class _HomePageState extends State<HomePage> {
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
       builder: (context) {
-        Color labelColor;
-        switch (event['type']) {
-          case 'exam':
-            labelColor = const Color(0xFFB90000);
-            break;
-          case 'task':
-            labelColor = Colors.orange;
-            break;
-          default:
-            labelColor = const Color(0xFFFBBC05);
-        }
-
         return Container(
           decoration: const BoxDecoration(
             color: Colors.white,
@@ -1695,9 +1646,7 @@ class _HomePageState extends State<HomePage> {
                       Text(
                         'Class Details',
                         style: GoogleFonts.dmMono(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
+                            fontSize: 18, fontWeight: FontWeight.bold),
                       ),
                       const SizedBox(height: 16),
                       _buildDetailRow('Class Name', event['className']),
@@ -1710,7 +1659,8 @@ class _HomePageState extends State<HomePage> {
                       if (event['building'].isNotEmpty)
                         _buildDetailRow('Building', event['building']),
                       if (event['lecturerName'].isNotEmpty)
-                        _buildDetailRow('Lecturer', event['lecturerName']),
+                        _buildDetailRow(
+                            'Lecturer', event['lecturerName']),
                     ],
                   ),
                 ),
@@ -1736,13 +1686,11 @@ class _HomePageState extends State<HomePage> {
                           style: OutlinedButton.styleFrom(
                             foregroundColor: Colors.black,
                             side: const BorderSide(
-                              color: Colors.black,
-                              width: 2,
-                            ),
-                            padding: const EdgeInsets.symmetric(vertical: 16),
+                                color: Colors.black, width: 2),
+                            padding:
+                                const EdgeInsets.symmetric(vertical: 16),
                             shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
+                                borderRadius: BorderRadius.circular(12)),
                           ),
                         ),
                       ),
@@ -1750,31 +1698,32 @@ class _HomePageState extends State<HomePage> {
                       Expanded(
                         child: ElevatedButton.icon(
                           onPressed: () async {
-                            final messenger = ScaffoldMessenger.of(context);
+                            final messenger =
+                                ScaffoldMessenger.of(context);
                             Navigator.pop(context);
+                            // Cancel notifications and clean Firestore
+                            await NotificationService()
+                                .cancelNotificationsForEvent(event['id']);
                             await _firestore
                                 .collection('timetable')
                                 .doc(event['id'])
                                 .delete();
-                            messenger.showSnackBar(
-                              SnackBar(
-                                content: Text(
-                                  'Class deleted',
-                                  style: GoogleFonts.dmMono(),
-                                ),
-                                backgroundColor: const Color(0xFFB90000),
-                              ),
-                            );
+                            messenger.showSnackBar(SnackBar(
+                              content: Text('Class deleted',
+                                  style: GoogleFonts.dmMono()),
+                              backgroundColor: const Color(0xFFB90000),
+                            ));
                           },
                           icon: const Icon(Icons.delete_outline),
-                          label: Text('Delete', style: GoogleFonts.dmMono()),
+                          label:
+                              Text('Delete', style: GoogleFonts.dmMono()),
                           style: ElevatedButton.styleFrom(
                             backgroundColor: const Color(0xFFB90000),
                             foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(vertical: 16),
+                            padding:
+                                const EdgeInsets.symmetric(vertical: 16),
                             shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
+                                borderRadius: BorderRadius.circular(12)),
                           ),
                         ),
                       ),
@@ -1801,18 +1750,14 @@ class _HomePageState extends State<HomePage> {
             child: Text(
               label,
               style: GoogleFonts.dmMono(
-                fontSize: 12,
-                color: const Color(0xFF6B7280),
-              ),
+                  fontSize: 12, color: const Color(0xFF6B7280)),
             ),
           ),
           Expanded(
             child: Text(
               value,
               style: GoogleFonts.dmMono(
-                fontSize: 12,
-                fontWeight: FontWeight.bold,
-              ),
+                  fontSize: 12, fontWeight: FontWeight.bold),
             ),
           ),
         ],
@@ -1833,9 +1778,7 @@ class _HomePageState extends State<HomePage> {
             child: Text(
               'Status',
               style: GoogleFonts.dmMono(
-                fontSize: 12,
-                color: const Color(0xFF6B7280),
-              ),
+                  fontSize: 12, color: const Color(0xFF6B7280)),
             ),
           ),
           Expanded(
@@ -1848,16 +1791,12 @@ class _HomePageState extends State<HomePage> {
                           .collection('tasks')
                           .doc(task['id'])
                           .update({'completed': false});
-                      setModalState(() {
-                        task['completed'] = false;
-                      });
+                      setModalState(() => task['completed'] = false);
                       setState(() {});
                     },
                     child: Container(
                       padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 10,
-                      ),
+                          horizontal: 16, vertical: 10),
                       decoration: BoxDecoration(
                         color: !isCompleted
                             ? const Color(0xFFFBBC05)
@@ -1893,16 +1832,12 @@ class _HomePageState extends State<HomePage> {
                           .collection('tasks')
                           .doc(task['id'])
                           .update({'completed': true});
-                      setModalState(() {
-                        task['completed'] = true;
-                      });
+                      setModalState(() => task['completed'] = true);
                       setState(() {});
                     },
                     child: Container(
                       padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 10,
-                      ),
+                          horizontal: 16, vertical: 10),
                       decoration: BoxDecoration(
                         color: isCompleted
                             ? const Color(0xFF34A853)
@@ -1944,7 +1879,8 @@ class _HomePageState extends State<HomePage> {
       child: SafeArea(
         top: false,
         child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+          padding:
+              const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
@@ -1972,7 +1908,9 @@ class _HomePageState extends State<HomePage> {
         width: 48,
         height: 48,
         decoration: BoxDecoration(
-          color: isActive ? const Color(0xFF6B7280) : Colors.transparent,
+          color: isActive
+              ? const Color(0xFF6B7280)
+              : Colors.transparent,
           shape: BoxShape.circle,
         ),
         child: Icon(
@@ -2005,10 +1943,112 @@ class _HomePageState extends State<HomePage> {
   }
 }
 
-// Real-time countdown timer widget
+// ── BELL DOT ─────────────────────────────────────────────────────────────────
+// Filters by scheduledFor <= now — checked every second via Timer.
+// instant the OS fires the alarm (via onDidReceiveNotificationResponse).
+// That Firestore write triggers the stream, so the dot appears in real time
+// with zero polling — no timer needed.
+
+class _BellDot extends StatefulWidget {
+  final String userId;
+  final FirebaseFirestore firestore;
+  final VoidCallback onTap;
+
+  const _BellDot({
+    required this.userId,
+    required this.firestore,
+    required this.onTap,
+  });
+
+  @override
+  State<_BellDot> createState() => _BellDotState();
+}
+
+class _BellDotState extends State<_BellDot> {
+  // Docs are cached from Firestore stream. A 60-second timer re-runs build()
+  // so that DateTime.now() advances and the scheduledFor<=now check picks up
+  // newly-fired notifications even when no Firestore write has occurred.
+  List<QueryDocumentSnapshot> _docs = [];
+  StreamSubscription<QuerySnapshot>? _sub;
+  late final Timer _ticker;
+
+  @override
+  void initState() {
+    super.initState();
+    // Real-time Firestore listener — updates instantly when isRead changes
+    _sub = widget.firestore
+        .collection('notification_history')
+        .where('userId', isEqualTo: widget.userId)
+        .snapshots()
+        .listen((snap) {
+      if (mounted) setState(() => _docs = snap.docs);
+    });
+    // Timer re-evaluates scheduledFor<=now every 60s for notifications that
+    // fire without triggering a Firestore write (no user tap needed)
+    _ticker = Timer.periodic(const Duration(seconds: 60), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _sub?.cancel();
+    _ticker.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final now = DateTime.now();
+    // Show red dot if any unread notification has already fired
+    final hasUnread = _docs.any((doc) {
+      final data = doc.data() as Map<String, dynamic>;
+      final isRead = data['isRead'] as bool? ?? false;
+      if (isRead) return false;
+      final ts = data['scheduledFor'] as Timestamp?;
+      if (ts == null) return false;
+      return !ts.toDate().isAfter(now);
+    });
+
+    return _AnimatedTapButton(
+      onTap: widget.onTap,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Icon(
+            hasUnread
+                ? Icons.notifications
+                : Icons.notifications_outlined,
+            color: Colors.black,
+            size: 28,
+          ),
+          if (hasUnread)
+            Positioned(
+              right: 0,
+              top: 0,
+              child: Container(
+                width: 10,
+                height: 10,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFB90000),
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: const Color(0xFFE5E7EB),
+                    width: 1.5,
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── COUNTDOWN TIMER ──────────────────────────────────────────────────────────
+
 class _CountdownTimer extends StatefulWidget {
   final DateTime dueDate;
-
   const _CountdownTimer({required this.dueDate});
 
   @override
@@ -2024,9 +2064,7 @@ class _CountdownTimerState extends State<_CountdownTimer> {
     super.initState();
     _updateRemainingTime();
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted) {
-        _updateRemainingTime();
-      }
+      if (mounted) _updateRemainingTime();
     });
   }
 
@@ -2055,7 +2093,7 @@ class _CountdownTimerState extends State<_CountdownTimer> {
     } else {
       countdownColor = const Color(0xFF34A853);
       countdownIcon = Icons.schedule;
-      
+
       if (_remainingTime.inDays > 0) {
         final days = _remainingTime.inDays;
         final hours = _remainingTime.inHours % 24;
@@ -2075,10 +2113,7 @@ class _CountdownTimerState extends State<_CountdownTimer> {
     }
 
     return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: 12,
-        vertical: 6,
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(
         color: countdownColor.withOpacity(0.1),
         borderRadius: BorderRadius.circular(8),
@@ -2102,6 +2137,8 @@ class _CountdownTimerState extends State<_CountdownTimer> {
     );
   }
 }
+
+// ── ANIMATED TAP BUTTON ──────────────────────────────────────────────────────
 
 class _AnimatedTapButton extends StatefulWidget {
   final Widget child;
@@ -2136,6 +2173,8 @@ class _AnimatedTapButtonState extends State<_AnimatedTapButton> {
     );
   }
 }
+
+// ── TRIANGLE PAINTER ─────────────────────────────────────────────────────────
 
 class TrianglePainter extends CustomPainter {
   @override

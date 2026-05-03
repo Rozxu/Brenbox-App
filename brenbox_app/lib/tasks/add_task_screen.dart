@@ -4,6 +4,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
 
+import '../services/notification_scheduler.dart';
+
 class AddTaskScreen extends StatefulWidget {
   const AddTaskScreen({Key? key}) : super(key: key);
 
@@ -160,6 +162,8 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
         'completed': false,
         'createdAt': Timestamp.now(),
       });
+
+      await NotificationScheduler().rescheduleAllNotifications();
 
       if (!mounted) return;
 

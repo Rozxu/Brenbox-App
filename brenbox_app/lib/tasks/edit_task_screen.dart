@@ -3,6 +3,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
+import '../services/notification_scheduler.dart';
 
 class EditTaskScreen extends StatefulWidget {
   final Map<String, dynamic> taskData;
@@ -165,6 +166,8 @@ class _EditTaskScreenState extends State<EditTaskScreen> {
         'updatedAt': Timestamp.now(),
       });
 
+      await NotificationScheduler().rescheduleAllNotifications();
+      
       if (!mounted) return;
 
       await showDialog(

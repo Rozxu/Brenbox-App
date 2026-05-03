@@ -4,6 +4,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
 
+import '../services/notification_scheduler.dart';
+
 class EditClassScreen extends StatefulWidget {
   final Map<String, dynamic> classData;
 
@@ -187,6 +189,8 @@ class _EditClassScreenState extends State<EditClassScreen> {
           .collection('timetable')
           .doc(widget.classData['id'])
           .update(updateData);
+
+      await NotificationScheduler().rescheduleAllNotifications();
 
       if (!mounted) return;
 
