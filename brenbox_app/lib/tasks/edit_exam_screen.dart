@@ -5,6 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
 
 import '../services/notification_scheduler.dart';
+import '../app_preferences.dart';
 
 class EditExamScreen extends StatefulWidget {
   final Map<String, dynamic> examData;
@@ -123,16 +124,26 @@ class _EditExamScreenState extends State<EditExamScreen> {
   }
 
   Future<void> _selectDate(BuildContext context) async {
+    final isDark = AppColors.isDark(context);
     final DateTime? picked = await showDatePicker(
       context: context,
       initialDate: _examDate,
       firstDate: DateTime(2020),
       lastDate: DateTime(2030),
-      builder: (context, child) {
+      builder: (_, child) {
         return Theme(
-          data: Theme.of(context).copyWith(
-            colorScheme: const ColorScheme.light(primary: Color(0xFF9AB900)),
-          ),
+          data: isDark
+              ? ThemeData.dark().copyWith(
+                  colorScheme: const ColorScheme.dark(
+                    primary: Color(0xFF9AB900),
+                    onPrimary: Colors.white,
+                    surface: Color(0xFF252D47),
+                    onSurface: Colors.white,
+                  ),
+                )
+              : ThemeData.light().copyWith(
+                  colorScheme: const ColorScheme.light(primary: Color(0xFF9AB900)),
+                ),
           child: child!,
         );
       },
@@ -362,10 +373,10 @@ class _EditExamScreenState extends State<EditExamScreen> {
         barrierDismissible: false,
         builder: (dialogContext) {
           return AlertDialog(
-            backgroundColor: Colors.white,
+            backgroundColor: AppColors.card(context),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(12),
-              side: const BorderSide(color: Colors.black, width: 2),
+              side: BorderSide(color: AppColors.border(context), width: 2),
             ),
             title: Row(
               children: [
@@ -384,7 +395,7 @@ class _EditExamScreenState extends State<EditExamScreen> {
                 onPressed: () => Navigator.of(dialogContext).pop(),
                 child: Text('OK',
                     style: GoogleFonts.dmMono(
-                        fontWeight: FontWeight.bold, color: Colors.black)),
+                        fontWeight: FontWeight.bold, color: AppColors.text(context))),
               ),
             ],
           );
@@ -404,10 +415,10 @@ class _EditExamScreenState extends State<EditExamScreen> {
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
-        backgroundColor: Colors.white,
+        backgroundColor: AppColors.card(context),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(12),
-          side: const BorderSide(color: Colors.black, width: 2),
+          side: BorderSide(color: AppColors.border(context), width: 2),
         ),
         title: Row(
           children: [
@@ -426,7 +437,7 @@ class _EditExamScreenState extends State<EditExamScreen> {
             onPressed: () => Navigator.pop(context),
             child: Text('OK',
                 style: GoogleFonts.dmMono(
-                    fontWeight: FontWeight.bold, color: Colors.black)),
+                    fontWeight: FontWeight.bold, color: AppColors.text(context))),
           ),
         ],
       ),
@@ -443,7 +454,7 @@ class _EditExamScreenState extends State<EditExamScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFE5E7EB),
+      backgroundColor: AppColors.bg(context),
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
@@ -452,8 +463,8 @@ class _EditExamScreenState extends State<EditExamScreen> {
           icon: Container(
             width: 42,
             height: 42,
-            decoration: const BoxDecoration(
-              color: Color.fromARGB(255, 43, 43, 43),
+            decoration: BoxDecoration(
+              color: AppColors.chipBg(context),
               shape: BoxShape.circle,
             ),
             child: const Icon(Icons.arrow_back, color: Colors.white, size: 20),
@@ -464,7 +475,7 @@ class _EditExamScreenState extends State<EditExamScreen> {
           style: GoogleFonts.dmMono(
             fontSize: 20,
             fontWeight: FontWeight.bold,
-            color: Colors.black,
+            color: AppColors.text(context),
           ),
         ),
       ),
@@ -509,9 +520,9 @@ class _EditExamScreenState extends State<EditExamScreen> {
               child: Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: AppColors.input(context),
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.black, width: 2),
+                  border: Border.all(color: AppColors.border(context), width: 2),
                 ),
                 child: Row(
                   children: [
@@ -541,9 +552,9 @@ class _EditExamScreenState extends State<EditExamScreen> {
                         child: Container(
                           padding: const EdgeInsets.all(16),
                           decoration: BoxDecoration(
-                            color: Colors.white,
+                            color: AppColors.input(context),
                             borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: Colors.black, width: 2),
+                            border: Border.all(color: AppColors.border(context), width: 2),
                           ),
                           child: Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -570,9 +581,9 @@ class _EditExamScreenState extends State<EditExamScreen> {
                         child: Container(
                           padding: const EdgeInsets.all(16),
                           decoration: BoxDecoration(
-                            color: Colors.white,
+                            color: AppColors.input(context),
                             borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: Colors.black, width: 2),
+                            border: Border.all(color: AppColors.border(context), width: 2),
                           ),
                           child: Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -599,13 +610,13 @@ class _EditExamScreenState extends State<EditExamScreen> {
                     onPressed: () => Navigator.pop(context),
                     style: OutlinedButton.styleFrom(
                       padding: const EdgeInsets.symmetric(vertical: 16),
-                      side: const BorderSide(color: Colors.black, width: 2),
+                      side: BorderSide(color: AppColors.border(context), width: 2),
                       shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12)),
                     ),
                     child: Text('Cancel',
                         style: GoogleFonts.dmMono(
-                            color: Colors.black, fontWeight: FontWeight.bold)),
+                            color: AppColors.text(context), fontWeight: FontWeight.bold)),
                   ),
                 ),
                 const SizedBox(width: 16),
@@ -643,20 +654,20 @@ class _EditExamScreenState extends State<EditExamScreen> {
       style: GoogleFonts.dmMono(fontSize: 14),
       decoration: InputDecoration(
         hintText: hint,
-        hintStyle: GoogleFonts.dmMono(fontSize: 14, color: Colors.grey),
+        hintStyle: GoogleFonts.dmMono(fontSize: 14, color: AppColors.subtext(context)),
         filled: true,
-        fillColor: Colors.white,
+        fillColor: AppColors.input(context),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: Colors.black, width: 2),
+          borderSide: BorderSide(color: AppColors.border(context), width: 2),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: Colors.black, width: 2),
+          borderSide: BorderSide(color: AppColors.border(context), width: 2),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: Colors.black, width: 2),
+          borderSide: BorderSide(color: AppColors.border(context), width: 2),
         ),
         contentPadding: const EdgeInsets.all(16),
       ),
@@ -668,9 +679,9 @@ class _EditExamScreenState extends State<EditExamScreen> {
       return Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: AppColors.input(context),
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Colors.black, width: 2),
+          border: Border.all(color: AppColors.border(context), width: 2),
         ),
         child: Row(
           children: [
@@ -682,7 +693,7 @@ class _EditExamScreenState extends State<EditExamScreen> {
             ),
             const SizedBox(width: 12),
             Text('Loading subjects...',
-                style: GoogleFonts.dmMono(fontSize: 14, color: Colors.grey)),
+                style: GoogleFonts.dmMono(fontSize: 14, color: AppColors.subtext(context))),
           ],
         ),
       );
@@ -700,13 +711,13 @@ class _EditExamScreenState extends State<EditExamScreen> {
           backgroundColor: Colors.transparent,
           builder: (context) {
             return Container(
-              decoration: const BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+              decoration: BoxDecoration(
+                color: AppColors.card(context),
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
                 border: Border(
-                  top: BorderSide(color: Colors.black, width: 2),
-                  left: BorderSide(color: Colors.black, width: 2),
-                  right: BorderSide(color: Colors.black, width: 2),
+                  top: BorderSide(color: AppColors.border(context), width: 2),
+                  left: BorderSide(color: AppColors.border(context), width: 2),
+                  right: BorderSide(color: AppColors.border(context), width: 2),
                 ),
               ),
               child: SafeArea(
@@ -718,7 +729,7 @@ class _EditExamScreenState extends State<EditExamScreen> {
                       width: 40,
                       height: 4,
                       decoration: BoxDecoration(
-                        color: Colors.grey.shade300,
+                        color: AppColors.border(context),
                         borderRadius: BorderRadius.circular(2),
                       ),
                     ),
@@ -730,34 +741,40 @@ class _EditExamScreenState extends State<EditExamScreen> {
                               fontSize: 18, fontWeight: FontWeight.bold)),
                     ),
                     const SizedBox(height: 16),
-                    ListView.builder(
-                      shrinkWrap: true,
-                      itemCount: _availableSubjects.length + 1,
-                      itemBuilder: (context, index) {
-                        if (index == 0) {
+                    ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxHeight:
+                            MediaQuery.of(context).size.height * 0.40,
+                      ),
+                      child: ListView.builder(
+                        shrinkWrap: true,
+                        itemCount: _availableSubjects.length + 1,
+                        itemBuilder: (context, index) {
+                          if (index == 0) {
+                            return ListTile(
+                              title: Text('None',
+                                  style: GoogleFonts.dmMono(fontSize: 14)),
+                              onTap: () {
+                                setState(() => _selectedSubject = null);
+                                Navigator.pop(context);
+                              },
+                            );
+                          }
+                          final subject = _availableSubjects[index - 1];
                           return ListTile(
-                            title: Text('None',
+                            title: Text(subject,
                                 style: GoogleFonts.dmMono(fontSize: 14)),
+                            trailing: _selectedSubject == subject
+                                ? const Icon(Icons.check,
+                                    color: Color(0xFF9AB900))
+                                : null,
                             onTap: () {
-                              setState(() => _selectedSubject = null);
+                              setState(() => _selectedSubject = subject);
                               Navigator.pop(context);
                             },
                           );
-                        }
-                        final subject = _availableSubjects[index - 1];
-                        return ListTile(
-                          title: Text(subject,
-                              style: GoogleFonts.dmMono(fontSize: 14)),
-                          trailing: _selectedSubject == subject
-                              ? const Icon(Icons.check,
-                                  color: Color(0xFF9AB900))
-                              : null,
-                          onTap: () {
-                            setState(() => _selectedSubject = subject);
-                            Navigator.pop(context);
-                          },
-                        );
-                      },
+                        },
+                      ),
                     ),
                     const SizedBox(height: 16),
                   ],
@@ -770,9 +787,9 @@ class _EditExamScreenState extends State<EditExamScreen> {
       child: Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: AppColors.input(context),
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Colors.black, width: 2),
+          border: Border.all(color: AppColors.border(context), width: 2),
         ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -782,7 +799,7 @@ class _EditExamScreenState extends State<EditExamScreen> {
                 _selectedSubject ?? 'Select Subject',
                 style: GoogleFonts.dmMono(
                   fontSize: 14,
-                  color: _selectedSubject != null ? Colors.black : Colors.grey,
+                  color: _selectedSubject != null ? AppColors.text(context) : AppColors.subtext(context),
                 ),
               ),
             ),
@@ -805,11 +822,11 @@ class _EditExamScreenState extends State<EditExamScreen> {
               child: Container(
                 padding: const EdgeInsets.symmetric(vertical: 12),
                 decoration: BoxDecoration(
-                  color: isSelected ? const Color(0xFFFEFFE6) : Colors.white,
+                  color: isSelected ? const Color(0xFFFEFFE6) : AppColors.card(context),
                   borderRadius: BorderRadius.circular(12),
                   border: Border.all(
                     color:
-                        isSelected ? const Color(0xFF9AB900) : Colors.black,
+                        isSelected ? const Color(0xFF9AB900) : AppColors.border(context),
                     width: 2,
                   ),
                 ),
@@ -819,7 +836,7 @@ class _EditExamScreenState extends State<EditExamScreen> {
                   style: GoogleFonts.dmMono(
                       fontSize: 13,
                       fontWeight: FontWeight.bold,
-                      color: Colors.black),
+                      color: isSelected ? const Color(0xFF9AB900) : AppColors.text(context)),
                 ),
               ),
             ),
@@ -841,11 +858,11 @@ class _EditExamScreenState extends State<EditExamScreen> {
               child: Container(
                 padding: const EdgeInsets.symmetric(vertical: 12),
                 decoration: BoxDecoration(
-                  color: isSelected ? const Color(0xFFFEFFE6) : Colors.white,
+                  color: isSelected ? const Color(0xFFFEFFE6) : AppColors.card(context),
                   borderRadius: BorderRadius.circular(12),
                   border: Border.all(
                     color:
-                        isSelected ? const Color(0xFF9AB900) : Colors.black,
+                        isSelected ? const Color(0xFF9AB900) : AppColors.border(context),
                     width: 2,
                   ),
                 ),
@@ -855,7 +872,7 @@ class _EditExamScreenState extends State<EditExamScreen> {
                   style: GoogleFonts.dmMono(
                       fontSize: 13,
                       fontWeight: FontWeight.bold,
-                      color: Colors.black),
+                      color: isSelected ? const Color(0xFF9AB900) : AppColors.text(context)),
                 ),
               ),
             ),
@@ -978,23 +995,23 @@ class _CustomTimePickerDialogState extends State<_CustomTimePickerDialog> {
       builder: (context, child) {
         return Theme(
           data: Theme.of(context).copyWith(
-            colorScheme: const ColorScheme.light(
-              primary: Color(0xFF9AB900),
+            colorScheme: ColorScheme.light(
+              primary: const Color(0xFF9AB900),
               onPrimary: Colors.white,
-              surface: Colors.white,
-              onSurface: Colors.black,
+              surface: AppColors.card(context),
+              onSurface: AppColors.text(context),
             ),
             timePickerTheme: TimePickerThemeData(
-              backgroundColor: Colors.white,
+              backgroundColor: AppColors.card(context),
               dialHandColor: const Color(0xFF9AB900),
-              dialBackgroundColor: Colors.grey.shade100,
-              hourMinuteTextColor: Colors.black,
-              hourMinuteColor: Colors.grey.shade200,
-              dayPeriodTextColor: Colors.black,
-              dayPeriodColor: Colors.grey.shade200,
+              dialBackgroundColor: AppColors.fieldBg(context),
+              hourMinuteTextColor: AppColors.text(context),
+              hourMinuteColor: AppColors.fieldBg(context),
+              dayPeriodTextColor: AppColors.text(context),
+              dayPeriodColor: AppColors.fieldBg(context),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(16),
-                side: const BorderSide(color: Colors.black, width: 2),
+                side: BorderSide(color: AppColors.border(context), width: 2),
               ),
             ),
           ),
@@ -1021,10 +1038,10 @@ class _CustomTimePickerDialogState extends State<_CustomTimePickerDialog> {
     final period = _isAm ? 'AM' : 'PM';
 
     return Dialog(
-      backgroundColor: Colors.white,
+      backgroundColor: AppColors.card(context),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
-        side: const BorderSide(color: Colors.black, width: 2),
+        side: BorderSide(color: AppColors.border(context), width: 2),
       ),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
@@ -1043,9 +1060,9 @@ class _CustomTimePickerDialogState extends State<_CustomTimePickerDialog> {
                 padding: const EdgeInsets.symmetric(
                     vertical: 14, horizontal: 16),
                 decoration: BoxDecoration(
-                  color: Colors.grey.shade50,
+                  color: AppColors.fieldBg(context),
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.black26, width: 1.5),
+                  border: Border.all(color: AppColors.border(context), width: 1.5),
                 ),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
@@ -1088,14 +1105,14 @@ class _CustomTimePickerDialogState extends State<_CustomTimePickerDialog> {
 
             Row(
               children: [
-                const Expanded(child: Divider(color: Colors.black12)),
+                Expanded(child: Divider(color: AppColors.border(context))),
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 10),
                   child: Text('or type manually',
                       style: GoogleFonts.dmMono(
-                          fontSize: 10, color: Colors.grey)),
+                          fontSize: 10, color: AppColors.subtext(context))),
                 ),
-                const Expanded(child: Divider(color: Colors.black12)),
+                Expanded(child: Divider(color: AppColors.border(context))),
               ],
             ),
             const SizedBox(height: 16),
@@ -1145,13 +1162,13 @@ class _CustomTimePickerDialogState extends State<_CustomTimePickerDialog> {
                     onPressed: () => Navigator.pop(context),
                     style: OutlinedButton.styleFrom(
                       padding: const EdgeInsets.symmetric(vertical: 14),
-                      side: const BorderSide(color: Colors.black, width: 2),
+                      side: BorderSide(color: AppColors.border(context), width: 2),
                       shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(10)),
                     ),
                     child: Text('Cancel',
                         style: GoogleFonts.dmMono(
-                            color: Colors.black, fontWeight: FontWeight.bold)),
+                            color: AppColors.text(context), fontWeight: FontWeight.bold)),
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -1224,16 +1241,16 @@ class _SpinnerField extends StatelessWidget {
               counterText: '',
               hintText: label,
               hintStyle: GoogleFonts.dmMono(
-                  fontSize: 18, color: Colors.grey.shade400),
+                  fontSize: 18, color: AppColors.subtext(context)),
               filled: true,
-              fillColor: Colors.grey.shade100,
+              fillColor: AppColors.input(context),
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(10),
-                borderSide: const BorderSide(color: Colors.black, width: 2),
+                borderSide: BorderSide(color: AppColors.border(context), width: 2),
               ),
               enabledBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(10),
-                borderSide: const BorderSide(color: Colors.black, width: 2),
+                borderSide: BorderSide(color: AppColors.border(context), width: 2),
               ),
               focusedBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(10),
@@ -1266,11 +1283,11 @@ class _ArrowBtn extends StatelessWidget {
         width: 68,
         height: 32,
         decoration: BoxDecoration(
-          color: Colors.grey.shade100,
+          color: AppColors.fieldBg(context),
           borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: Colors.black12),
+          border: Border.all(color: AppColors.border(context)),
         ),
-        child: Icon(icon, size: 22, color: Colors.black54),
+        child: Icon(icon, size: 22, color: AppColors.subtext(context)),
       ),
     );
   }
@@ -1314,10 +1331,10 @@ class _PeriodBtn extends StatelessWidget {
         width: 52,
         height: 40,
         decoration: BoxDecoration(
-          color: selected ? const Color(0xFF9AB900) : Colors.grey.shade100,
+          color: selected ? const Color(0xFF9AB900) : AppColors.input(context),
           borderRadius: BorderRadius.circular(8),
           border: Border.all(
-            color: selected ? const Color(0xFF9AB900) : Colors.black26,
+            color: selected ? const Color(0xFF9AB900) : AppColors.border(context),
             width: 2,
           ),
         ),
@@ -1327,7 +1344,7 @@ class _PeriodBtn extends StatelessWidget {
           style: GoogleFonts.dmMono(
             fontSize: 13,
             fontWeight: FontWeight.bold,
-            color: selected ? Colors.white : Colors.black54,
+            color: selected ? Colors.white : AppColors.text(context),
           ),
         ),
       ),

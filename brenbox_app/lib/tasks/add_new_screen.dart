@@ -3,6 +3,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'add_class_screen.dart';
 import 'add_task_screen.dart';
 import 'add_exam_screen.dart';
+import '../app_preferences.dart';
 
 class AddNewScreen extends StatefulWidget {
   const AddNewScreen({Key? key}) : super(key: key);
@@ -17,7 +18,7 @@ class _AddNewScreenState extends State<AddNewScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFE5E7EB),
+      backgroundColor: AppColors.bg(context),
       body: SafeArea(
         child: Column(
           children: [
@@ -32,8 +33,8 @@ class _AddNewScreenState extends State<AddNewScreen> {
                     child: Container(
                       width: 42,
                       height: 42,
-                      decoration: const BoxDecoration(
-                        color: Color.fromARGB(255, 43, 43, 43),
+                      decoration: BoxDecoration(
+                        color: AppColors.chipBg(context),
                         shape: BoxShape.circle,
                       ),
                       child: const Icon(
@@ -62,9 +63,9 @@ class _AddNewScreenState extends State<AddNewScreen> {
               child: Container(
                 padding: const EdgeInsets.all(4),
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: AppColors.card(context),
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.black, width: 2),
+                  border: Border.all(color: AppColors.border(context), width: 2),
                 ),
                 child: Row(
                   children: [
@@ -131,7 +132,7 @@ class _AddNewScreenState extends State<AddNewScreen> {
             style: GoogleFonts.dmMono(
               fontSize: 13,
               fontWeight: FontWeight.bold,
-              color: Colors.black,
+              color: isSelected ? borderColor : AppColors.text(context),
             ),
           ),
         ),

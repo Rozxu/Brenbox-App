@@ -4,6 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import 'email_verification_screen.dart';
+import '../app_preferences.dart';
 
 class SignupScreen extends StatefulWidget {
   const SignupScreen({Key? key}) : super(key: key);
@@ -99,7 +100,7 @@ class _SignupScreenState extends State<SignupScreen> {
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
-        backgroundColor: Colors.white,
+        backgroundColor: AppColors.card(context),
         title: Text('BrenBox', style: GoogleFonts.dmMono()),
         content: Text(message, style: GoogleFonts.dmMono(fontSize: 12)),
         actions: [
@@ -109,7 +110,7 @@ class _SignupScreenState extends State<SignupScreen> {
               'OK',
               style: GoogleFonts.dmMono(
                 fontWeight: FontWeight.bold,
-                color: Colors.black,
+                color: AppColors.text(context),
               ),
             ),
           ),
@@ -122,7 +123,7 @@ class _SignupScreenState extends State<SignupScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFE5E7EB),
+      backgroundColor: AppColors.bg(context),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.symmetric(horizontal: 32),
@@ -196,7 +197,7 @@ class _SignupScreenState extends State<SignupScreen> {
                   child: ElevatedButton(
                     onPressed: _isLoading ? null : _signUp,
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF292929),
+                      backgroundColor: AppColors.chipBg(context),
                       padding: const EdgeInsets.symmetric(vertical: 18),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(24),
@@ -229,14 +230,14 @@ class _SignupScreenState extends State<SignupScreen> {
                     child: Text.rich(
                       TextSpan(
                         text: 'Already have an account? ',
-                        style: GoogleFonts.dmMono(fontSize: 12, color: Colors.black,),
+                        style: GoogleFonts.dmMono(fontSize: 12, color: AppColors.text(context),),
                         children: [
                           TextSpan(
                             text: 'LOG IN',
                             style: GoogleFonts.dmMono(
                               fontSize: 12,
                               fontWeight: FontWeight.bold,
-                              color: Colors.black,
+                              color: AppColors.text(context),
                             ),
                           ),
                         ],
@@ -301,11 +302,11 @@ class _SignupScreenState extends State<SignupScreen> {
       decoration: InputDecoration(
         contentPadding: const EdgeInsets.symmetric(vertical: 16),
         errorStyle: GoogleFonts.dmMono(fontSize: 11),
-        enabledBorder: const UnderlineInputBorder(
-          borderSide: BorderSide(color: Colors.black),
+        enabledBorder: UnderlineInputBorder(
+          borderSide: BorderSide(color: AppColors.border(context)),
         ),
-        focusedBorder: const UnderlineInputBorder(
-          borderSide: BorderSide(color: Colors.black, width: 2),
+        focusedBorder: UnderlineInputBorder(
+          borderSide: BorderSide(color: AppColors.border(context), width: 2),
         ),
         errorBorder: const UnderlineInputBorder(
           borderSide: BorderSide(color: Colors.red),
@@ -323,7 +324,7 @@ class _SignupScreenState extends State<SignupScreen> {
                       : (_passwordVisible
                           ? Icons.visibility
                           : Icons.visibility_off),
-                  color: Colors.black,
+                  color: AppColors.text(context),
                 ),
                 onPressed: () {
                   setState(() {

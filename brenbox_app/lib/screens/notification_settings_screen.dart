@@ -3,6 +3,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../services/notification_scheduler.dart';
+import '../app_preferences.dart';
 
 class NotificationSettingsScreen extends StatefulWidget {
   const NotificationSettingsScreen({Key? key}) : super(key: key);
@@ -160,10 +161,10 @@ class _NotificationSettingsScreenState
       context: context,
       barrierDismissible: false,
       builder: (ctx) => AlertDialog(
-        backgroundColor: Colors.white,
+        backgroundColor: AppColors.card(context),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(14),
-          side: const BorderSide(color: Colors.black, width: 2),
+          side: BorderSide(color: AppColors.border(context), width: 2),
         ),
         title: Text('Unsaved Changes',
             style: GoogleFonts.dmMono(
@@ -188,7 +189,7 @@ class _NotificationSettingsScreenState
           ElevatedButton(
             onPressed: () => Navigator.of(ctx).pop('save'),
             style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF292929),
+              backgroundColor: AppColors.chipBg(context),
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(8)),
             ),
@@ -240,12 +241,12 @@ class _NotificationSettingsScreenState
     return WillPopScope(
       onWillPop: _onWillPop,
       child: Scaffold(
-        backgroundColor: const Color(0xFFE5E7EB),
+        backgroundColor: AppColors.bg(context),
         appBar: AppBar(
           backgroundColor: Colors.transparent,
           elevation: 0,
           leading: IconButton(
-            icon: const Icon(Icons.arrow_back, color: Colors.black),
+            icon: Icon(Icons.arrow_back, color: AppColors.text(context)),
             onPressed: () async {
               final canPop = await _onWillPop();
               if (canPop && mounted) Navigator.pop(context);
@@ -258,7 +259,7 @@ class _NotificationSettingsScreenState
                 style: GoogleFonts.dmMono(
                   fontSize: 17,
                   fontWeight: FontWeight.bold,
-                  color: Colors.black,
+                  color: AppColors.text(context),
                 ),
               ),
               if (_hasUnsavedChanges) ...[
@@ -285,13 +286,13 @@ class _NotificationSettingsScreenState
             ? null
             : SafeArea(
                 child: Container(
-                  color: const Color(0xFFE5E7EB),
+                  color: AppColors.bg(context),
                   padding: const EdgeInsets.fromLTRB(24, 8, 24, 12),
                   child: ElevatedButton(
                     onPressed: _isSaving ? null : _saveSettings,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: _hasUnsavedChanges
-                          ? const Color(0xFF292929)
+                          ? AppColors.chipBg(context)
                           : const Color(0xFF6B7280),
                       padding: const EdgeInsets.symmetric(vertical: 16),
                       shape: RoundedRectangleBorder(
@@ -454,9 +455,9 @@ class _NotificationSettingsScreenState
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.card(context),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.black, width: 2),
+        border: Border.all(color: AppColors.border(context), width: 2),
       ),
       child: Row(
         children: [
@@ -475,9 +476,9 @@ class _NotificationSettingsScreenState
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.card(context),
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.black.withOpacity(0.2), width: 1),
+        border: Border.all(color: AppColors.border(context).withValues(alpha: 0.2), width: 1),
       ),
       child: Row(
         children: [
@@ -540,9 +541,9 @@ class _NotificationSettingsScreenState
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.card(context),
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.black.withOpacity(0.2), width: 1),
+        border: Border.all(color: AppColors.border(context).withValues(alpha: 0.2), width: 1),
       ),
       child: Row(
         children: [
@@ -579,10 +580,10 @@ class _NotificationSettingsScreenState
             padding:
                 const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
             decoration: BoxDecoration(
-              color: isSel ? const Color(0xFF292929) : Colors.white,
+              color: isSel ? AppColors.chipBg(context) : AppColors.card(context),
               borderRadius: BorderRadius.circular(20),
               border: Border.all(
-                color: isSel ? const Color(0xFF292929) : Colors.grey,
+                color: isSel ? AppColors.chipBg(context) : AppColors.border(context),
                 width: 1.5,
               ),
             ),
@@ -591,7 +592,7 @@ class _NotificationSettingsScreenState
               style: GoogleFonts.dmMono(
                 fontSize: 12,
                 fontWeight: FontWeight.bold,
-                color: isSel ? Colors.white : Colors.black,
+                color: isSel ? Colors.white : AppColors.text(context),
               ),
             ),
           ),
@@ -707,23 +708,23 @@ class _CustomTimePickerDialogState extends State<_CustomTimePickerDialog> {
       initialEntryMode: TimePickerEntryMode.dialOnly,
       builder: (context, child) => Theme(
         data: Theme.of(context).copyWith(
-          colorScheme: const ColorScheme.light(
-            primary: Color(0xFFB90000),
+          colorScheme: ColorScheme.light(
+            primary: const Color(0xFFB90000),
             onPrimary: Colors.white,
-            surface: Colors.white,
-            onSurface: Colors.black,
+            surface: AppColors.card(context),
+            onSurface: AppColors.text(context),
           ),
           timePickerTheme: TimePickerThemeData(
-            backgroundColor: Colors.white,
+            backgroundColor: AppColors.card(context),
             dialHandColor: const Color(0xFFB90000),
-            dialBackgroundColor: Colors.grey.shade100,
-            hourMinuteTextColor: Colors.black,
-            hourMinuteColor: Colors.grey.shade200,
-            dayPeriodTextColor: Colors.black,
-            dayPeriodColor: Colors.grey.shade200,
+            dialBackgroundColor: AppColors.fieldBg(context),
+            hourMinuteTextColor: AppColors.text(context),
+            hourMinuteColor: AppColors.fieldBg(context),
+            dayPeriodTextColor: AppColors.text(context),
+            dayPeriodColor: AppColors.fieldBg(context),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(16),
-              side: const BorderSide(color: Colors.black, width: 2),
+              side: BorderSide(color: AppColors.border(context), width: 2),
             ),
           ),
         ),
@@ -748,10 +749,10 @@ class _CustomTimePickerDialogState extends State<_CustomTimePickerDialog> {
     final period = _isAm ? 'AM' : 'PM';
 
     return Dialog(
-      backgroundColor: Colors.white,
+      backgroundColor: AppColors.card(context),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
-        side: const BorderSide(color: Colors.black, width: 2),
+        side: BorderSide(color: AppColors.border(context), width: 2),
       ),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
@@ -769,9 +770,9 @@ class _CustomTimePickerDialogState extends State<_CustomTimePickerDialog> {
                 padding: const EdgeInsets.symmetric(
                     vertical: 14, horizontal: 16),
                 decoration: BoxDecoration(
-                  color: Colors.grey.shade50,
+                  color: AppColors.input(context),
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.black26, width: 1.5),
+                  border: Border.all(color: AppColors.border(context), width: 1.5),
                 ),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
@@ -812,14 +813,14 @@ class _CustomTimePickerDialogState extends State<_CustomTimePickerDialog> {
             const SizedBox(height: 16),
             Row(
               children: [
-                const Expanded(child: Divider(color: Colors.black12)),
+                Expanded(child: Divider(color: AppColors.border(context))),
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 10),
                   child: Text('or type manually',
                       style: GoogleFonts.dmMono(
-                          fontSize: 10, color: Colors.grey)),
+                          fontSize: 10, color: AppColors.subtext(context))),
                 ),
-                const Expanded(child: Divider(color: Colors.black12)),
+                Expanded(child: Divider(color: AppColors.border(context))),
               ],
             ),
             const SizedBox(height: 16),
@@ -864,13 +865,13 @@ class _CustomTimePickerDialogState extends State<_CustomTimePickerDialog> {
                     onPressed: () => Navigator.pop(context),
                     style: OutlinedButton.styleFrom(
                       padding: const EdgeInsets.symmetric(vertical: 14),
-                      side: const BorderSide(color: Colors.black, width: 2),
+                      side: BorderSide(color: AppColors.border(context), width: 2),
                       shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(10)),
                     ),
                     child: Text('Cancel',
                         style: GoogleFonts.dmMono(
-                            color: Colors.black,
+                            color: AppColors.text(context),
                             fontWeight: FontWeight.bold)),
                   ),
                 ),
@@ -945,18 +946,18 @@ class _SpinnerField extends StatelessWidget {
               counterText: '',
               hintText: label,
               hintStyle: GoogleFonts.dmMono(
-                  fontSize: 18, color: Colors.grey.shade400),
+                  fontSize: 18, color: AppColors.subtext(context)),
               filled: true,
-              fillColor: Colors.grey.shade100,
+              fillColor: AppColors.input(context),
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(10),
                 borderSide:
-                    const BorderSide(color: Colors.black, width: 2),
+                    BorderSide(color: AppColors.border(context), width: 2),
               ),
               enabledBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(10),
                 borderSide:
-                    const BorderSide(color: Colors.black, width: 2),
+                    BorderSide(color: AppColors.border(context), width: 2),
               ),
               focusedBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(10),
@@ -989,11 +990,11 @@ class _ArrowBtn extends StatelessWidget {
         width: 68,
         height: 32,
         decoration: BoxDecoration(
-          color: Colors.grey.shade100,
+          color: AppColors.card(context),
           borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: Colors.black12),
+          border: Border.all(color: AppColors.border(context)),
         ),
-        child: Icon(icon, size: 22, color: Colors.black54),
+        child: Icon(icon, size: 22, color: AppColors.subtext(context)),
       ),
     );
   }
@@ -1037,10 +1038,10 @@ class _PeriodBtn extends StatelessWidget {
         width: 52,
         height: 40,
         decoration: BoxDecoration(
-          color: selected ? const Color(0xFFB90000) : Colors.grey.shade100,
+          color: selected ? const Color(0xFFB90000) : AppColors.fieldBg(context),
           borderRadius: BorderRadius.circular(8),
           border: Border.all(
-            color: selected ? const Color(0xFFB90000) : Colors.black26,
+            color: selected ? const Color(0xFFB90000) : AppColors.border(context),
             width: 2,
           ),
         ),
@@ -1050,7 +1051,7 @@ class _PeriodBtn extends StatelessWidget {
           style: GoogleFonts.dmMono(
             fontSize: 13,
             fontWeight: FontWeight.bold,
-            color: selected ? Colors.white : Colors.black54,
+            color: selected ? Colors.white : AppColors.subtext(context),
           ),
         ),
       ),

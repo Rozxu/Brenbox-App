@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../app_preferences.dart';
 
 class ClassDetailScreen extends StatelessWidget {
   final String classId;
@@ -27,7 +28,7 @@ class ClassDetailScreen extends StatelessWidget {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        backgroundColor: Colors.white,
+        backgroundColor: AppColors.card(context),
         title: Text(
           'Delete Class',
           style: GoogleFonts.dmMono(fontWeight: FontWeight.bold),
@@ -41,7 +42,7 @@ class ClassDetailScreen extends StatelessWidget {
             onPressed: () => Navigator.pop(context, false),
             child: Text(
               'Cancel',
-              style: GoogleFonts.dmMono(color: Colors.grey),
+              style: GoogleFonts.dmMono(color: AppColors.subtext(context)),
             ),
           ),
           TextButton(
@@ -96,7 +97,7 @@ class ClassDetailScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFE5E7EB),
+      backgroundColor: AppColors.bg(context),
       body: SafeArea(
         child: Column(
           children: [
@@ -140,22 +141,22 @@ class ClassDetailScreen extends StatelessWidget {
                 child: Container(
                   padding: const EdgeInsets.all(24),
                   decoration: BoxDecoration(
-                    color: Colors.white,
+                    color: AppColors.card(context),
                     borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: Colors.black, width: 2),
+                    border: Border.all(color: AppColors.border(context), width: 2),
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      _buildDetailRow('Class', className),
+                      _buildDetailRow(context, 'Class', className),
                       const SizedBox(height: 16),
-                      _buildDetailRow('Room', room.isEmpty ? '-' : room),
+                      _buildDetailRow(context, 'Room', room.isEmpty ? '-' : room),
                       const SizedBox(height: 16),
-                      _buildDetailRow('Building', building.isEmpty ? '-' : building),
+                      _buildDetailRow(context, 'Building', building.isEmpty ? '-' : building),
                       const SizedBox(height: 16),
-                      _buildDetailRow('Lecturer', lecturerName.isEmpty ? '-' : lecturerName),
+                      _buildDetailRow(context, 'Lecturer', lecturerName.isEmpty ? '-' : lecturerName),
                       const SizedBox(height: 16),
-                      _buildDetailRow('Time', '$startTime - $endTime'),
+                      _buildDetailRow(context, 'Time', '$startTime - $endTime'),
                       const SizedBox(height: 32),
 
                       // Action Buttons
@@ -176,7 +177,7 @@ class ClassDetailScreen extends StatelessWidget {
                               },
                               style: OutlinedButton.styleFrom(
                                 padding: const EdgeInsets.symmetric(vertical: 16),
-                                side: const BorderSide(color: Colors.black, width: 2),
+                                side: BorderSide(color: AppColors.border(context), width: 2),
                                 shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(12),
                                 ),
@@ -184,7 +185,7 @@ class ClassDetailScreen extends StatelessWidget {
                               child: Text(
                                 'Edit',
                                 style: GoogleFonts.dmMono(
-                                  color: Colors.black,
+                                  color: AppColors.text(context),
                                   fontWeight: FontWeight.bold,
                                 ),
                               ),
@@ -223,7 +224,7 @@ class ClassDetailScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildDetailRow(String label, String value) {
+  Widget _buildDetailRow(BuildContext context, String label, String value) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -232,7 +233,7 @@ class ClassDetailScreen extends StatelessWidget {
           style: GoogleFonts.dmMono(
             fontSize: 13,
             fontWeight: FontWeight.bold,
-            color: Colors.grey.shade700,
+            color: AppColors.subtext(context),
           ),
         ),
         const SizedBox(height: 8),

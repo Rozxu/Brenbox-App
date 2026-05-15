@@ -202,4 +202,7 @@ class CertificateService {
       return null;
     }
   }
+  static Reference storageRef(String path) =>
+    FirebaseStorage.instance.ref().child(path);
+
 }

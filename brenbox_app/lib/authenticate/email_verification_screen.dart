@@ -5,6 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import 'account_created_screen.dart';
+import '../app_preferences.dart';
 
 class EmailVerificationScreen extends StatefulWidget {
   final String email;
@@ -114,7 +115,7 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
-        backgroundColor: Colors.white,
+        backgroundColor: AppColors.card(context),
         title: Text('BrenBox', style: GoogleFonts.dmMono()),
         content: Text(message, style: GoogleFonts.dmMono(fontSize: 12)),
         actions: [
@@ -124,7 +125,7 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
               'OK',
               style: GoogleFonts.dmMono(
                 fontWeight: FontWeight.bold,
-                color: Colors.black,
+                color: AppColors.text(context),
               ),
             ),
           ),
@@ -137,7 +138,7 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFE5E7EB),
+      backgroundColor: AppColors.bg(context),
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 32),
@@ -149,14 +150,14 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
                 width: 100,
                 height: 100,
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: AppColors.card(context),
                   shape: BoxShape.circle,
-                  border: Border.all(color: Colors.black, width: 2),
+                  border: Border.all(color: AppColors.border(context), width: 2),
                 ),
-                child: const Icon(
+                child: Icon(
                   Icons.email_outlined,
                   size: 50,
-                  color: Colors.black,
+                  color: AppColors.text(context),
                 ),
               ),
 
@@ -207,12 +208,12 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    const SizedBox(
+                    SizedBox(
                       width: 16,
                       height: 16,
                       child: CircularProgressIndicator(
                         strokeWidth: 2,
-                        color: Colors.black,
+                        color: AppColors.text(context),
                       ),
                     ),
                     const SizedBox(width: 12),
@@ -244,8 +245,8 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
                           fontSize: 12,
                           fontWeight: FontWeight.bold,
                           color: _resendCountdown > 0
-                              ? Colors.grey
-                              : Colors.black,
+                              ? AppColors.subtext(context)
+                              : AppColors.text(context),
                           decoration: TextDecoration.underline,
                         ),
                       ),
@@ -270,7 +271,7 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
                   'Back to Login',
                   style: GoogleFonts.dmMono(
                     fontSize: 12,
-                    color: Colors.black54,
+                    color: AppColors.subtext(context),
                   ),
                 ),
               ),

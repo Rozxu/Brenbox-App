@@ -3,6 +3,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import '../app_preferences.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({Key? key}) : super(key: key);
@@ -206,7 +207,7 @@ class _LoginScreenState extends State<LoginScreen> {
       context: context,
       barrierDismissible: false, // force an explicit choice
       builder: (context) => AlertDialog(
-        backgroundColor: Colors.white,
+        backgroundColor: AppColors.card(context),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(16),
         ),
@@ -226,7 +227,7 @@ class _LoginScreenState extends State<LoginScreen> {
               style: GoogleFonts.dmMono(
                 fontSize: 13,
                 fontWeight: FontWeight.normal,
-                color: Colors.grey.shade600,
+                color: AppColors.subtext(context),
               ),
             ),
           ],
@@ -246,7 +247,7 @@ class _LoginScreenState extends State<LoginScreen> {
               width: double.infinity,
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: const Color(0xFFE5E7EB),
+                color: AppColors.fieldBg(context),
                 borderRadius: BorderRadius.circular(10),
               ),
               child: Column(
@@ -287,7 +288,7 @@ class _LoginScreenState extends State<LoginScreen> {
             child: Text(
               'DECLINE',
               style: GoogleFonts.dmMono(
-                color: Colors.grey.shade600,
+                color: AppColors.subtext(context),
                 fontWeight: FontWeight.bold,
                 fontSize: 12,
               ),
@@ -298,7 +299,7 @@ class _LoginScreenState extends State<LoginScreen> {
           ElevatedButton(
             onPressed: () => Navigator.pop(context, true),
             style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF292929),
+              backgroundColor: AppColors.chipBg(context),
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(8),
@@ -322,7 +323,7 @@ class _LoginScreenState extends State<LoginScreen> {
   Widget _consentDataRow(IconData icon, String label, String value) {
     return Row(
       children: [
-        Icon(icon, size: 16, color: Colors.black54),
+        Icon(icon, size: 16, color: AppColors.subtext(context)),
         const SizedBox(width: 8),
         Text(
           '$label: ',
@@ -382,7 +383,7 @@ class _LoginScreenState extends State<LoginScreen> {
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
-        backgroundColor: Colors.white,
+        backgroundColor: AppColors.card(context),
         title: Text(
           'BrenBox',
           style: GoogleFonts.dmMono(fontWeight: FontWeight.bold),
@@ -397,7 +398,7 @@ class _LoginScreenState extends State<LoginScreen> {
             child: Text(
               'OK',
               style: GoogleFonts.dmMono(
-                color: Colors.black,
+                color: AppColors.text(context),
                 fontWeight: FontWeight.bold,
               ),
             ),
@@ -411,7 +412,7 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFE5E7EB),
+      backgroundColor: AppColors.bg(context),
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
@@ -422,7 +423,9 @@ class _LoginScreenState extends State<LoginScreen> {
                 // LOGO
                 Center(
                   child: Image.asset(
-                    'assets/images/BrenboxLogo.png',
+                    AppColors.isDark(context)
+                        ? 'assets/images/BrenboxLogoWhite.png'
+                        : 'assets/images/BrenboxLogo.png',
                     width: 120,
                   ),
                 ),
@@ -462,7 +465,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       'forgot password?',
                       style: GoogleFonts.dmMono(
                         fontSize: 12,
-                        color: Colors.black,
+                        color: AppColors.text(context),
                       ),
                     ),
                   ),
@@ -475,7 +478,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   child: ElevatedButton(
                     onPressed: _isLoading ? null : _signIn,
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF292929),
+                      backgroundColor: AppColors.chipBg(context),
                       padding: const EdgeInsets.symmetric(vertical: 18),
                     ),
                     child: _isLoading
@@ -520,7 +523,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
                         color: Colors.white,
-                        border: Border.all(color: Colors.grey.shade300),
+                        border: Border.all(color: AppColors.border(context)),
                       ),
                       padding: const EdgeInsets.all(10),
                       child: Image.asset(
@@ -550,7 +553,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         style: GoogleFonts.dmMono(
                           fontSize: 13,
                           fontWeight: FontWeight.bold,
-                          color: _isLoading ? Colors.grey : Colors.black,
+                          color: _isLoading ? AppColors.subtext(context) : AppColors.text(context),
                         ),
                       ),
                     ),
@@ -578,7 +581,7 @@ class _LoginScreenState extends State<LoginScreen> {
       style: GoogleFonts.dmMono(),
       decoration: InputDecoration(
         filled: true,
-        fillColor: Colors.white,
+        fillColor: AppColors.input(context),
         hintText: hint,
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
@@ -594,7 +597,7 @@ class _LoginScreenState extends State<LoginScreen> {
       style: GoogleFonts.dmMono(),
       decoration: InputDecoration(
         filled: true,
-        fillColor: Colors.white,
+        fillColor: AppColors.input(context),
         hintText: 'Password',
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
@@ -602,7 +605,7 @@ class _LoginScreenState extends State<LoginScreen> {
         suffixIcon: IconButton(
           icon: Icon(
             _obscurePassword ? Icons.visibility_off : Icons.visibility,
-            color: Colors.grey,
+            color: AppColors.subtext(context),
           ),
           onPressed: () {
             setState(() => _obscurePassword = !_obscurePassword);

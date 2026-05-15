@@ -1,7 +1,10 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:timezone/timezone.dart' as tz;
 import 'package:timezone/data/latest_all.dart' as tz;
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 class NotificationService {
   static final NotificationService _instance = NotificationService._internal();
@@ -12,9 +15,15 @@ class NotificationService {
       FlutterLocalNotificationsPlugin();
   final _firestore = FirebaseFirestore.instance;
 
-  static const String _classChannelId = 'class_channel';
-  static const String _taskChannelId = 'task_channel';
-  static const String _examChannelId = 'exam_channel';
+  static GlobalKey<NavigatorState>? _navigatorKey;
+
+  static const String _classChannelId  = 'class_channel';
+  static const String _taskChannelId   = 'task_channel';
+  static const String _examChannelId   = 'exam_channel';
+  static const String _inviteChannelId = 'invite_channel';
+  static const String _groupChannelId  = 'group_channel';
+
+  void setNavigatorKey(GlobalKey<NavigatorState> key) => _navigatorKey = key;
 
   Future<void> initialize() async {
     tz.initializeTimeZones();
@@ -136,6 +145,18 @@ class NotificationService {
       description: 'Notifications for upcoming exams',
       importance: Importance.max,
     );
+    const AndroidNotificationChannel inviteChannel = AndroidNotificationChannel(
+      _inviteChannelId,
+      'Invite Notifications',
+      description: 'Notifications for timetable shares and group invites',
+      importance: Importance.high,
+    );
+    const AndroidNotificationChannel groupChannel = AndroidNotificationChannel(
+      _groupChannelId,
+      'Group Activity',
+      description: 'Notifications for study group activity',
+      importance: Importance.high,
+    );
 
     final AndroidFlutterLocalNotificationsPlugin? androidPlugin =
         _plugin.resolvePlatformSpecificImplementation<
@@ -144,6 +165,8 @@ class NotificationService {
       await androidPlugin.createNotificationChannel(classChannel);
       await androidPlugin.createNotificationChannel(taskChannel);
       await androidPlugin.createNotificationChannel(examChannel);
+      await androidPlugin.createNotificationChannel(inviteChannel);
+      await androidPlugin.createNotificationChannel(groupChannel);
     }
   }
 
@@ -171,14 +194,204 @@ class NotificationService {
 
   static Future<void> _handleNotificationTap(String? payload) async {
     if (payload == null) return;
-    try {
-      await FirebaseFirestore.instance
-          .collection('notification_history')
-          .doc(payload)
-          .update({'isRead': true});
-    } catch (e) {
-      print('Error marking notification as read: $e');
+
+    if (payload.startsWith('group:')) {
+      // format: group:{groupId}:{tab}:{historyDocId}
+      final rest = payload.substring('group:'.length);
+      final firstColon = rest.indexOf(':');
+      final secondColon = firstColon != -1 ? rest.indexOf(':', firstColon + 1) : -1;
+      if (firstColon == -1 || secondColon == -1) return;
+
+      final groupId     = rest.substring(0, firstColon);
+      final tab         = int.tryParse(rest.substring(firstColon + 1, secondColon)) ?? 0;
+      final historyDocId = rest.substring(secondColon + 1);
+
+      try {
+        await FirebaseFirestore.instance
+            .collection('notification_history')
+            .doc(historyDocId)
+            .update({'isRead': true});
+      } catch (_) {}
+
+      if (_navigatorKey?.currentState != null) {
+        _navigatorKey!.currentState!.pushNamedAndRemoveUntil(
+          '/home',
+          (route) => false,
+          arguments: {'groupId': groupId, 'tab': tab},
+        );
+      }
+    } else if (payload.startsWith('calendar:')) {
+      final docId = payload.substring('calendar:'.length);
+      try {
+        await FirebaseFirestore.instance
+            .collection('notification_history')
+            .doc(docId)
+            .update({'isRead': true});
+      } catch (_) {}
+
+      if (_navigatorKey?.currentState != null) {
+        _navigatorKey!.currentState!.pushNamedAndRemoveUntil(
+          '/home',
+          (route) => false,
+          arguments: {'navIndex': 1},
+        );
+      }
+    } else {
+      // Regular scheduled notification (class / exam / task)
+      try {
+        await FirebaseFirestore.instance
+            .collection('notification_history')
+            .doc(payload)
+            .update({'isRead': true});
+      } catch (_) {}
     }
+  }
+
+  // ── INVITE NOTIFICATIONS ───────────────────────────────────────────────────
+
+  /// Shows an immediate (non-scheduled) notification for a timetable share or
+  /// group invite. Writes a notification_history row with scheduledFor = now
+  /// so it appears in the bell feed instantly, then fires the phone notification.
+  Future<void> showInviteNotification({
+    required String userId,
+    required String title,
+    required String body,
+    required String type,    // 'group_invite' or 'timetable_invite'
+    required String eventId,
+  }) async {
+    // Write history row — scheduledFor = now so it shows immediately
+    final docRef = await _firestore.collection('notification_history').add({
+      'userId': userId,
+      'title': title,
+      'body': body,
+      'type': type,
+      'eventId': eventId,
+      'isRead': false,
+      'createdAt': Timestamp.now(),
+      'scheduledFor': Timestamp.now(),
+    });
+
+    // Unique ID in the 70000–89999 range (avoids class/task/exam ranges)
+    final int id = (eventId.hashCode.abs() % 20000) + 70000;
+
+    const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
+      _inviteChannelId,
+      'Invite Notifications',
+      importance: Importance.high,
+      priority: Priority.high,
+    );
+
+    await _plugin.show(
+      id,
+      title,
+      body,
+      const NotificationDetails(android: androidDetails),
+      payload: 'calendar:${docRef.id}',
+    );
+  }
+
+  // ── FCM TOKEN & FOREGROUND HANDLER ────────────────────────────────────────
+
+  Future<void> saveFcmToken(String userId) async {
+    try {
+      await FirebaseMessaging.instance.requestPermission();
+      final token = await FirebaseMessaging.instance.getToken();
+      if (token != null) {
+        await _firestore.collection('users').doc(userId).update({'fcmToken': token});
+      }
+      FirebaseMessaging.instance.onTokenRefresh.listen((newToken) {
+        _firestore.collection('users').doc(userId).update({'fcmToken': newToken});
+      });
+    } catch (_) {}
+  }
+
+  /// Shows a local notification when FCM arrives while the app is in the
+  /// foreground (Android does not auto-display FCM in foreground).
+  /// Builds the correct payload so tapping it navigates to the right screen.
+  Future<void> handleForegroundFcmMessage(RemoteMessage message) async {
+    final notification = message.notification;
+    if (notification == null) return;
+
+    final data = message.data;
+    final type = data['type'] as String? ?? '';
+
+    final String channelId;
+    final String channelName;
+    String? payload;
+
+    if (type.startsWith('group_')) {
+      channelId   = _groupChannelId;
+      channelName = 'Group Activity';
+      final groupId      = data['groupId']      ?? '';
+      final tab          = data['tab']           ?? '0';
+      final historyDocId = data['historyDocId']  ?? '';
+      payload = 'group:$groupId:$tab:$historyDocId';
+    } else if (type == 'group_invite' || type == 'timetable_invite') {
+      channelId   = _inviteChannelId;
+      channelName = 'Invite Notifications';
+      final historyDocId = data['historyDocId'] ?? '';
+      payload = 'calendar:$historyDocId';
+    } else {
+      return;
+    }
+
+    final androidDetails = AndroidNotificationDetails(
+      channelId, channelName,
+      importance: Importance.high, priority: Priority.high,
+    );
+    final id = DateTime.now().millisecondsSinceEpoch % 100000;
+    await _plugin.show(
+      id, notification.title, notification.body,
+      NotificationDetails(android: androidDetails),
+      payload: payload,
+    );
+  }
+
+  // ── GROUP ACTIVITY NOTIFICATIONS ──────────────────────────────────────────
+
+  /// Shows an immediate notification when activity happens in a study group.
+  /// Stores groupId, groupName, subject, and tab in notification_history so
+  /// the history screen can navigate directly to the right tab when tapped.
+  Future<void> showGroupActivityNotification({
+    required String userId,
+    required String groupId,
+    required String groupName,
+    required String subject,
+    required String title,
+    required String body,
+    required String type,   // 'group_chat', 'group_event', 'group_poll', etc.
+    required int tab,       // 0=chat, 1=milestones, 2=updates, 3=notes
+  }) async {
+    final docRef = await _firestore.collection('notification_history').add({
+      'userId':    userId,
+      'title':     title,
+      'body':      body,
+      'type':      type,
+      'groupId':   groupId,
+      'groupName': groupName,
+      'subject':   subject,
+      'tab':       tab,
+      'isRead':    false,
+      'createdAt':    Timestamp.now(),
+      'scheduledFor': Timestamp.now(),
+    });
+
+    final int id = (docRef.id.hashCode.abs() % 10000) + 90000;
+
+    const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
+      _groupChannelId,
+      'Group Activity',
+      importance: Importance.high,
+      priority: Priority.high,
+    );
+
+    await _plugin.show(
+      id,
+      title,
+      body,
+      const NotificationDetails(android: androidDetails),
+      payload: 'group:$groupId:$tab:${docRef.id}',
+    );
   }
 
   // ── CORE SCHEDULE METHOD ───────────────────────────────────────────────────
@@ -331,9 +544,12 @@ class NotificationService {
   // ── CANCEL ─────────────────────────────────────────────────────────────────
 
   Future<void> cancelNotificationsForEvent(String eventId) async {
+    final userId = FirebaseAuth.instance.currentUser?.uid;
+
     final dedupeSnap = await _firestore
         .collection('scheduled_notifications')
         .where('eventId', isEqualTo: eventId)
+        .where('userId', isEqualTo: userId)
         .get();
     for (var doc in dedupeSnap.docs) {
       final notifId = doc.data()['notificationId'] as int?;
@@ -346,6 +562,7 @@ class NotificationService {
         .collection('notification_history')
         .where('eventId', isEqualTo: eventId)
         .where('isRead', isEqualTo: false)
+        .where('userId', isEqualTo: userId)
         .get();
     for (var doc in historySnap.docs) {
       await doc.reference.delete();

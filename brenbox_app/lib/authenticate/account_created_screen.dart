@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import '../app_preferences.dart';
 
 class AccountCreatedScreen extends StatelessWidget {
   const AccountCreatedScreen({Key? key}) : super(key: key);
@@ -7,7 +8,7 @@ class AccountCreatedScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFE5E7EB),
+      backgroundColor: AppColors.bg(context),
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(32),
@@ -19,7 +20,7 @@ class AccountCreatedScreen extends StatelessWidget {
                 width: 120,
                 height: 120,
                 decoration: BoxDecoration(
-                  color: Colors.grey.shade600,
+                  color: AppColors.subtext(context),
                   shape: BoxShape.circle,
                 ),
                 child:
@@ -50,7 +51,7 @@ class AccountCreatedScreen extends StatelessWidget {
                         context, '/login', (_) => false);
                   },
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF292929),
+                    backgroundColor: AppColors.chipBg(context),
                     padding: const EdgeInsets.symmetric(vertical: 18),
                     shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(24)),

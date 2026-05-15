@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../app_preferences.dart';
 
 // ==========================================
 // FORGOT PASSWORD SCREEN (Enter Email)
@@ -92,7 +93,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
-        backgroundColor: Colors.white,
+        backgroundColor: AppColors.card(context),
         title: Text(
           'BrenBox',
           style: GoogleFonts.dmMono(fontWeight: FontWeight.bold),
@@ -108,7 +109,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
               'OK',
               style: GoogleFonts.dmMono(
                 fontWeight: FontWeight.bold,
-                color: Colors.black,
+                color: AppColors.text(context),
               ),
             ),
           ),
@@ -120,7 +121,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFE5E7EB),
+      backgroundColor: AppColors.bg(context),
       body: SafeArea(
         child: SingleChildScrollView(
           child: ConstrainedBox(
@@ -176,21 +177,21 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                       keyboardType: TextInputType.emailAddress,
                       decoration: InputDecoration(
                         filled: true,
-                        fillColor: Colors.white,
+                        fillColor: AppColors.input(context),
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(12),
                           borderSide:
-                              const BorderSide(color: Colors.black, width: 2),
+                              BorderSide(color: AppColors.border(context), width: 2),
                         ),
                         enabledBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(12),
                           borderSide:
-                              const BorderSide(color: Colors.black, width: 2),
+                              BorderSide(color: AppColors.border(context), width: 2),
                         ),
                         focusedBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(12),
                           borderSide:
-                              const BorderSide(color: Colors.black, width: 2),
+                              BorderSide(color: AppColors.border(context), width: 2),
                         ),
                         contentPadding: const EdgeInsets.all(16),
                       ),
@@ -203,7 +204,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                       child: ElevatedButton(
                         onPressed: _isLoading ? null : _sendPasswordResetEmail,
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF292929),
+                          backgroundColor: AppColors.chipBg(context),
                           padding: const EdgeInsets.symmetric(vertical: 18),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(24),
@@ -254,7 +255,7 @@ class PasswordResetEmailSentScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFE5E7EB),
+      backgroundColor: AppColors.bg(context),
       body: SafeArea(
         child: SizedBox(
           width: double.infinity,
@@ -271,13 +272,13 @@ class PasswordResetEmailSentScreen extends StatelessWidget {
                   height: 120,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    border: Border.all(color: Colors.black, width: 2),
-                    color: Colors.white,
+                    border: Border.all(color: AppColors.border(context), width: 2),
+                    color: AppColors.card(context),
                   ),
-                  child: const Icon(
+                  child: Icon(
                     Icons.email_outlined,
                     size: 60,
-                    color: Colors.black,
+                    color: AppColors.text(context),
                   ),
                 ),
 
@@ -357,7 +358,7 @@ class PasswordResetEmailSentScreen extends StatelessWidget {
                     style: GoogleFonts.dmMono(
                       fontSize: 13,
                       fontWeight: FontWeight.bold,
-                      color: Colors.black,
+                      color: AppColors.text(context),
                       decoration: TextDecoration.underline,
                     ),
                   ),
@@ -378,7 +379,7 @@ class PasswordResetEmailSentScreen extends StatelessWidget {
                     textAlign: TextAlign.center,
                     style: GoogleFonts.dmMono(
                       fontSize: 13,
-                      color: Colors.grey.shade700,
+                      color: AppColors.subtext(context),
                     ),
                   ),
                 ),

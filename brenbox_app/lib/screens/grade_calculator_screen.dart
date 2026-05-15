@@ -1,10 +1,11 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../grade/set_grade_screen.dart';
+import '../app_preferences.dart';
 
 class GradeCalculatorScreen extends StatefulWidget {
   const GradeCalculatorScreen({Key? key}) : super(key: key);
@@ -41,11 +42,7 @@ class _GradeCalculatorScreenState extends State<GradeCalculatorScreen> {
   String _searchQuery = '';
   bool _isSaving = false;
 
-  // ── Colours aligned to CalendarScreen palette ──────────────────
-  static const _bgPage   = Color(0xFFE5E7EB); // matches calendar background
-  static const _bgCard   = Colors.white;
-  static const _bgField  = Color(0xFFE5E7EB); // same as page bg for cohesion
-  static const _dark     = Color(0xFF1A1A1A);
+  // ── Colours ──────────────────────────────────────────────────────
   static const _tan      = Color(0xFFD4B896);
   static const _gradeGreen  = Color(0xFF34A853);
   static const _gradeYellow = Color(0xFFFBBC05);
@@ -460,7 +457,7 @@ class _GradeCalculatorScreenState extends State<GradeCalculatorScreen> {
   Future<void> _deleteResult(String docId) async {
     try {
       await _firestore.collection('grade_results').doc(docId).delete();
-      _snack('Result deleted.', _dark);
+      _snack('Result deleted.', AppColors.text(context));
     } catch (e) {
       _snack('Failed to delete: $e', _gradeRed);
     }
@@ -552,7 +549,7 @@ class _GradeCalculatorScreenState extends State<GradeCalculatorScreen> {
         'targetNeeded': newTargetNeeded,
         'updatedAt': FieldValue.serverTimestamp(),
       });
-      _snack('Result updated!', _dark);
+      _snack('Result updated!', AppColors.text(context));
     } catch (e) {
       _snack('Failed to update: $e', _gradeRed);
     }
@@ -620,10 +617,10 @@ class _GradeCalculatorScreenState extends State<GradeCalculatorScreen> {
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
-        backgroundColor: Colors.white,
+        backgroundColor: AppColors.card(context),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(16),
-          side: const BorderSide(color: Colors.black, width: 2),
+          side: BorderSide(color: AppColors.border(context), width: 2),
         ),
         title: Row(
           children: [
@@ -665,7 +662,7 @@ class _GradeCalculatorScreenState extends State<GradeCalculatorScreen> {
               'OK',
               style: GoogleFonts.dmMono(
                 fontWeight: FontWeight.bold,
-                color: _dark,
+                color: AppColors.text(context),
               ),
             ),
           ),
@@ -680,7 +677,7 @@ class _GradeCalculatorScreenState extends State<GradeCalculatorScreen> {
       Expanded(
         child: Text(
           label,
-          style: GoogleFonts.dmMono(fontSize: 12, color: Colors.black54),
+          style: GoogleFonts.dmMono(fontSize: 12, color: AppColors.subtext(context)),
         ),
       ),
       const SizedBox(width: 8),
@@ -723,7 +720,7 @@ class _GradeCalculatorScreenState extends State<GradeCalculatorScreen> {
         _nearestGrade != null;
 
     return Scaffold(
-      backgroundColor: _bgPage,
+      backgroundColor: AppColors.bg(context),
       body: SafeArea(
         bottom: false,
         child: SingleChildScrollView(
@@ -738,7 +735,7 @@ class _GradeCalculatorScreenState extends State<GradeCalculatorScreen> {
                 style: GoogleFonts.dmMono(
                   fontSize: 24,
                   fontWeight: FontWeight.bold,
-                  color: _dark,
+                  color: AppColors.text(context),
                 ),
               ),
               const SizedBox(height: 12),
@@ -749,7 +746,7 @@ class _GradeCalculatorScreenState extends State<GradeCalculatorScreen> {
                 text: TextSpan(
                   style: GoogleFonts.dmMono(
                     fontSize: 10,
-                    color: Colors.black87,
+                    color: AppColors.text(context),
                   ),
                   children: [
                     TextSpan(
@@ -757,7 +754,7 @@ class _GradeCalculatorScreenState extends State<GradeCalculatorScreen> {
                       style: GoogleFonts.dmMono(
                         fontSize: 10,
                         fontWeight: FontWeight.bold,
-                        color: Colors.black,
+                        color: AppColors.text(context),
                       ),
                     ),
                     const TextSpan(
@@ -788,14 +785,14 @@ class _GradeCalculatorScreenState extends State<GradeCalculatorScreen> {
                     ),
                     child: Row(
                       children: [
-                        const Icon(Icons.lock_outline, size: 18, color: _dark),
+                        Icon(Icons.lock_outline, size: 18, color: AppColors.text(context)),
                         const SizedBox(width: 10),
                         Expanded(
                           child: Text(
                             'Grade settings not set — inputs are disabled. Tap to configure.',
                             style: GoogleFonts.dmMono(
                               fontSize: 12,
-                              color: _dark,
+                              color: AppColors.text(context),
                             ),
                           ),
                         ),
@@ -812,9 +809,9 @@ class _GradeCalculatorScreenState extends State<GradeCalculatorScreen> {
                   child: Container(
                     padding: const EdgeInsets.all(24),
                     decoration: BoxDecoration(
-                      color: _bgCard,
+                      color: AppColors.card(context),
                       borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: Colors.black, width: 2),
+                      border: Border.all(color: AppColors.border(context), width: 2),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -833,7 +830,7 @@ class _GradeCalculatorScreenState extends State<GradeCalculatorScreen> {
                                     style: GoogleFonts.dmMono(
                                       fontSize: 12,
                                       fontWeight: FontWeight.bold,
-                                      color: _dark,
+                                      color: AppColors.text(context),
                                     ),
                                   ),
                                   const SizedBox(height: 6),
@@ -872,7 +869,7 @@ class _GradeCalculatorScreenState extends State<GradeCalculatorScreen> {
                                     style: GoogleFonts.dmMono(
                                       fontSize: 12,
                                       fontWeight: FontWeight.bold,
-                                      color: _dark,
+                                      color: AppColors.text(context),
                                     ),
                                   ),
                                   const SizedBox(height: 6),
@@ -882,10 +879,9 @@ class _GradeCalculatorScreenState extends State<GradeCalculatorScreen> {
                                       horizontal: 10,
                                     ),
                                     decoration: BoxDecoration(
-                                      color: _bgField,
+                                      color: AppColors.fieldBg(context),
                                       borderRadius: BorderRadius.circular(8),
-                                      border:
-                                          Border.all(color: Colors.black26),
+                                      border: Border.all(color: AppColors.border(context).withValues(alpha: 0.26)),
                                     ),
                                     alignment: Alignment.centerLeft,
                                     child: Text(
@@ -893,8 +889,8 @@ class _GradeCalculatorScreenState extends State<GradeCalculatorScreen> {
                                       style: GoogleFonts.dmMono(
                                         fontSize: 12,
                                         color: _selectedSemester != null
-                                            ? _dark
-                                            : Colors.black38,
+                                            ? AppColors.text(context)
+                                            : AppColors.subtext(context),
                                       ),
                                       overflow: TextOverflow.ellipsis,
                                     ),
@@ -909,10 +905,10 @@ class _GradeCalculatorScreenState extends State<GradeCalculatorScreen> {
                                 width: 40,
                                 height: 40,
                                 decoration: BoxDecoration(
-                                  color: _bgField,
+                                  color: AppColors.fieldBg(context),
                                   borderRadius: BorderRadius.circular(8),
                                   border: Border.all(
-                                    color: Colors.black38,
+                                    color: AppColors.border(context).withValues(alpha: 0.38),
                                     width: 1,
                                   ),
                                 ),
@@ -1056,10 +1052,10 @@ class _GradeCalculatorScreenState extends State<GradeCalculatorScreen> {
                                     const SizedBox(width: 4),
                                     GestureDetector(
                                       onTap: () => _removeRow(i),
-                                      child: const Icon(
+                                      child: Icon(
                                         Icons.close,
                                         size: 18,
-                                        color: Colors.black54,
+                                        color: const Color(0xFF6B7280),
                                       ),
                                     ),
                                   ],
@@ -1148,7 +1144,7 @@ class _GradeCalculatorScreenState extends State<GradeCalculatorScreen> {
                               style: GoogleFonts.dmMono(
                                 fontSize: 13,
                                 fontWeight: FontWeight.bold,
-                                color: _dark,
+                                color: AppColors.text(context),
                               ),
                             ),
                             const SizedBox(width: 12),
@@ -1158,9 +1154,9 @@ class _GradeCalculatorScreenState extends State<GradeCalculatorScreen> {
                                 horizontal: 12,
                               ),
                               decoration: BoxDecoration(
-                                color: _bgField,
+                                color: AppColors.fieldBg(context),
                                 borderRadius: BorderRadius.circular(8),
-                                border: Border.all(color: Colors.black38),
+                                border: Border.all(color: AppColors.border(context).withValues(alpha: 0.38)),
                               ),
                               child: DropdownButtonHideUnderline(
                                 child: DropdownButton<String>(
@@ -1171,18 +1167,18 @@ class _GradeCalculatorScreenState extends State<GradeCalculatorScreen> {
                                         : 'Set grade first',
                                     style: GoogleFonts.dmMono(
                                       fontSize: 12,
-                                      color: Colors.black38,
+                                      color: AppColors.subtext(context),
                                     ),
                                   ),
                                   style: GoogleFonts.dmMono(
                                     fontSize: 13,
-                                    color: _dark,
+                                    color: AppColors.text(context),
                                   ),
-                                  dropdownColor: Colors.white,
-                                  icon: const Icon(
+                                  dropdownColor: AppColors.card(context),
+                                  icon: Icon(
                                     Icons.arrow_drop_down,
                                     size: 20,
-                                    color: _dark,
+                                    color: AppColors.text(context),
                                   ),
                                   items: _targetGradeOptions
                                       .map(
@@ -1192,7 +1188,7 @@ class _GradeCalculatorScreenState extends State<GradeCalculatorScreen> {
                                             g,
                                             style: GoogleFonts.dmMono(
                                               fontSize: 13,
-                                              color: _dark,
+                                              color: AppColors.text(context),
                                             ),
                                           ),
                                         ),
@@ -1227,7 +1223,7 @@ class _GradeCalculatorScreenState extends State<GradeCalculatorScreen> {
                             Expanded(
                               child: _actionBtn(
                                 label: '+ ADD METHOD',
-                                color: _bgCard,
+                                color: AppColors.card(context),
                                 onTap: _addAssessmentRow,
                               ),
                             ),
@@ -1337,7 +1333,7 @@ class _GradeCalculatorScreenState extends State<GradeCalculatorScreen> {
                             text: TextSpan(
                               style: GoogleFonts.dmMono(
                                 fontSize: 12,
-                                color: _dark,
+                                color: AppColors.text(context),
                               ),
                               children: [
                                 const TextSpan(
@@ -1374,7 +1370,7 @@ class _GradeCalculatorScreenState extends State<GradeCalculatorScreen> {
                 child: ElevatedButton(
                   onPressed: _isSaving ? null : _saveResult,
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF292929),
+                    backgroundColor: AppColors.chipBg(context),
                     disabledBackgroundColor: Colors.black38,
                     padding: const EdgeInsets.symmetric(vertical: 18),
                     elevation: 0,
@@ -1414,7 +1410,7 @@ class _GradeCalculatorScreenState extends State<GradeCalculatorScreen> {
                     style: GoogleFonts.dmMono(
                       fontSize: 20,
                       fontWeight: FontWeight.bold,
-                      color: _dark,
+                      color: AppColors.text(context),
                     ),
                   ),
                   SizedBox(
@@ -1431,28 +1427,26 @@ class _GradeCalculatorScreenState extends State<GradeCalculatorScreen> {
                         hintText: 'Search...',
                         hintStyle: GoogleFonts.dmMono(
                           fontSize: 12,
-                          color: Colors.black38,
+                          color: const Color(0xFF6B7280),
                         ),
-                        suffixIcon: const Icon(
+                        suffixIcon: Icon(
                           Icons.search,
                           size: 16,
-                          color: Colors.black45,
+                          color: const Color(0xFF6B7280),
                         ),
                         filled: true,
-                        fillColor: _bgCard,
+                        fillColor: AppColors.card(context),
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(20),
-                          borderSide:
-                              const BorderSide(color: Colors.black54),
+                          borderSide: BorderSide(color: AppColors.border(context)),
                         ),
                         enabledBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(20),
-                          borderSide:
-                              const BorderSide(color: Colors.black38),
+                          borderSide: BorderSide(color: AppColors.border(context).withValues(alpha: 0.38)),
                         ),
                         focusedBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(20),
-                          borderSide: const BorderSide(color: Colors.black),
+                          borderSide: BorderSide(color: AppColors.border(context)),
                         ),
                       ),
                       onChanged: (v) =>
@@ -1543,9 +1537,9 @@ class _GradeCalculatorScreenState extends State<GradeCalculatorScreen> {
       Container(
         padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 8),
         decoration: BoxDecoration(
-          color: _bgCard,
+          color: AppColors.card(context),
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.black, width: 2),
+          border: Border.all(color: AppColors.border(context), width: 2),
         ),
         child: Column(
           children: [
@@ -1554,7 +1548,7 @@ class _GradeCalculatorScreenState extends State<GradeCalculatorScreen> {
               style: GoogleFonts.dmMono(
                 fontSize: 12,
                 fontWeight: FontWeight.bold,
-                color: _dark,
+                color: AppColors.text(context),
               ),
             ),
             const SizedBox(height: 6),
@@ -1564,7 +1558,7 @@ class _GradeCalculatorScreenState extends State<GradeCalculatorScreen> {
                 fontSize: 36,
                 fontWeight: FontWeight.bold,
                 fontStyle: FontStyle.italic,
-                color: valueColor ?? _dark,
+                color: valueColor ?? AppColors.text(context),
               ),
             ),
             if (subLabel != null) ...[
@@ -1604,14 +1598,14 @@ class _GradeCalculatorScreenState extends State<GradeCalculatorScreen> {
   Widget _emptyState(String msg) => Container(
     padding: const EdgeInsets.all(32),
     decoration: BoxDecoration(
-      color: _bgCard,
+      color: AppColors.card(context),
       borderRadius: BorderRadius.circular(16),
-      border: Border.all(color: Colors.black, width: 2),
+      border: Border.all(color: AppColors.border(context), width: 2),
     ),
     child: Center(
       child: Text(
         msg,
-        style: GoogleFonts.dmMono(fontSize: 13, color: Colors.grey),
+        style: GoogleFonts.dmMono(fontSize: 13, color: AppColors.subtext(context)),
       ),
     ),
   );
@@ -1622,7 +1616,7 @@ class _GradeCalculatorScreenState extends State<GradeCalculatorScreen> {
     style: GoogleFonts.dmMono(
       fontSize: 11,
       fontWeight: FontWeight.bold,
-      color: _dark,
+      color: AppColors.text(context),
     ),
   );
 
@@ -1631,25 +1625,25 @@ class _GradeCalculatorScreenState extends State<GradeCalculatorScreen> {
         isDense: true,
         hintText: hint,
         hintStyle:
-            GoogleFonts.dmMono(fontSize: 11, color: Colors.black26),
+            GoogleFonts.dmMono(fontSize: 11, color: AppColors.subtext(context)),
         contentPadding:
             const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
         filled: true,
-        fillColor: _bgField,
+        fillColor: AppColors.fieldBg(context),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(8),
           borderSide:
-              BorderSide(color: hasError ? _gradeRed : Colors.black38),
+              BorderSide(color: hasError ? _gradeRed : AppColors.border(context).withValues(alpha: 0.38)),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(8),
           borderSide:
-              BorderSide(color: hasError ? _gradeRed : Colors.black26),
+              BorderSide(color: hasError ? _gradeRed : AppColors.border(context).withValues(alpha: 0.26)),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(8),
           borderSide:
-              BorderSide(color: hasError ? _gradeRed : Colors.black87),
+              BorderSide(color: hasError ? _gradeRed : AppColors.border(context)),
         ),
       );
 
@@ -1687,9 +1681,9 @@ class _GradeCalculatorScreenState extends State<GradeCalculatorScreen> {
         height: 38,
         padding: const EdgeInsets.symmetric(horizontal: 8),
         decoration: BoxDecoration(
-          color: _bgField,
+          color: AppColors.fieldBg(context),
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: Colors.black26),
+          border: Border.all(color: AppColors.border(context).withValues(alpha: 0.26)),
         ),
         child: DropdownButtonHideUnderline(
           child: DropdownButton<String>(
@@ -1698,12 +1692,12 @@ class _GradeCalculatorScreenState extends State<GradeCalculatorScreen> {
             hint: Text(
               hint,
               style:
-                  GoogleFonts.dmMono(fontSize: 12, color: Colors.black38),
+                  GoogleFonts.dmMono(fontSize: 12, color: AppColors.subtext(context)),
             ),
-            style: GoogleFonts.dmMono(fontSize: 12, color: _dark),
-            dropdownColor: Colors.white,
+            style: GoogleFonts.dmMono(fontSize: 12, color: AppColors.text(context)),
+            dropdownColor: AppColors.card(context),
             icon:
-                const Icon(Icons.arrow_drop_down, size: 18, color: _dark),
+                Icon(Icons.arrow_drop_down, size: 18, color: AppColors.text(context)),
             items: items
                 .map(
                   (s) => DropdownMenuItem(
@@ -1711,7 +1705,7 @@ class _GradeCalculatorScreenState extends State<GradeCalculatorScreen> {
                     child: Text(
                       s,
                       style:
-                          GoogleFonts.dmMono(fontSize: 12, color: _dark),
+                          GoogleFonts.dmMono(fontSize: 12, color: AppColors.text(context)),
                     ),
                   ),
                 )
@@ -1733,7 +1727,7 @@ class _GradeCalculatorScreenState extends State<GradeCalculatorScreen> {
           decoration: BoxDecoration(
             color: color,
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.black, width: 2),
+            border: Border.all(color: AppColors.border(context), width: 2),
           ),
           child: Center(
             child: Text(
@@ -1741,7 +1735,7 @@ class _GradeCalculatorScreenState extends State<GradeCalculatorScreen> {
               style: GoogleFonts.dmMono(
                 fontWeight: FontWeight.bold,
                 fontSize: 13,
-                color: _dark,
+                color: AppColors.text(context),
               ),
             ),
           ),
@@ -2013,6 +2007,53 @@ class _SavedCardState extends State<_SavedCard> {
         ? _savedNearestGrade(assessments, targetGrade, total)
         : null;
 
+    // When the original target is impossible, use nearestGrade as the
+    // effective target and recompute marks-needed for every pending assessment.
+    final effectiveTargetGrade = nearestGrade ?? targetGrade;
+
+    final List<Map<String, dynamic>> effectiveAssessments = () {
+      if (nearestGrade == null || widget.gradeRanges.isEmpty) return assessments;
+
+      final nr = widget.gradeRanges.firstWhere(
+        (r) => r['label'] == nearestGrade,
+        orElse: () => <String, dynamic>{},
+      );
+      if (nr.isEmpty) return assessments;
+      final nMin = (nr['min'] as num).toDouble();
+
+      double earned = 0;
+      double pendingWeight = 0;
+      for (final a in assessments) {
+        final marks   = (a['marks'] ?? 0).toDouble();
+        final fm      = (a['fullmarks'] ?? 0).toDouble();
+        final contrib = (a['contribution'] ?? 0).toDouble();
+        final isPending = marks <= 0 && contrib <= 0 && fm > 0;
+        if (isPending) {
+          pendingWeight += (a['percent'] ?? 0).toDouble();
+        } else {
+          earned += contrib;
+        }
+      }
+
+      final stillNeeded = nMin - earned;
+      return assessments.map((a) {
+        final marks   = (a['marks'] ?? 0).toDouble();
+        final fm      = (a['fullmarks'] ?? 0).toDouble();
+        final pct     = (a['percent'] ?? 0).toDouble();
+        final contrib = (a['contribution'] ?? 0).toDouble();
+        final isPending = marks <= 0 && contrib <= 0 && fm > 0;
+        if (!isPending || fm <= 0 || pct <= 0) return a;
+
+        double newNeeded = -1.0;
+        if (stillNeeded <= 0) {
+          newNeeded = 0.0;
+        } else if (pendingWeight > 0 && pendingWeight >= stillNeeded) {
+          newNeeded = ((stillNeeded / pendingWeight) * fm).clamp(0.0, fm).toDouble();
+        }
+        return {...a, 'marksNeededForTarget': newNeeded};
+      }).toList();
+    }();
+
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
       decoration: BoxDecoration(
@@ -2081,7 +2122,10 @@ class _SavedCardState extends State<_SavedCard> {
                         if (_isEditing) _initEditState();
                       });
                     } else if (val == 'delete') {
-                      await widget.onDelete(widget.docId);
+                      final ok = await confirmDeleteDialog(context,
+                          title: 'Delete Result',
+                          message: 'Are you sure you want to delete this grade result? This cannot be undone.');
+                      if (ok) await widget.onDelete(widget.docId);
                     }
                   },
                   color: Colors.white,
@@ -2100,14 +2144,14 @@ class _SavedCardState extends State<_SavedCard> {
                         children: [
                           Icon(
                             _isEditing ? Icons.close : Icons.edit_outlined,
-                            color: _isEditing ? Colors.grey : _tan,
+                            color: _isEditing ? AppColors.subtext(context) : _tan,
                             size: 18,
                           ),
                           const SizedBox(width: 8),
                           Text(
                             _isEditing ? 'Cancel Edit' : 'Edit Result',
                             style: GoogleFonts.dmMono(
-                              color: _isEditing ? Colors.grey : _dark,
+                              color: _isEditing ? AppColors.subtext(context) : _dark,
                             ),
                           ),
                         ],
@@ -2302,9 +2346,10 @@ class _SavedCardState extends State<_SavedCard> {
           // Assessment rows
           ...List.generate(assessments.length, (i) {
             final a            = assessments[i];
+            final aEff         = effectiveAssessments[i];
             final name         = (a['name'] ?? '').toString();
             final contribution = (a['contribution'] ?? 0).toDouble();
-            final mNeeded      = (a['marksNeededForTarget'] ?? -1).toDouble();
+            final mNeeded      = (aEff['marksNeededForTarget'] ?? -1).toDouble();
             final fullmarks    = (a['fullmarks'] ?? 0).toDouble();
 
             if (_isEditing) {
@@ -2460,7 +2505,7 @@ class _SavedCardState extends State<_SavedCard> {
                                   ),
                                   const SizedBox(width: 3),
                                   Text(
-                                    'Need ${mNeeded.toStringAsFixed(1)} / ${fullmarks.toStringAsFixed(0)} for $targetGrade',
+                                    'Need ${mNeeded.toStringAsFixed(1)} / ${fullmarks.toStringAsFixed(0)} for $effectiveTargetGrade',
                                     style: GoogleFonts.dmMono(
                                       fontSize: 9,
                                       color: _gradeYellow,
@@ -2727,12 +2772,12 @@ class _SavedCardState extends State<_SavedCard> {
           // How-to-reach breakdown
           Builder(
             builder: (_) {
-              final pending = assessments.where(
+              final pending = effectiveAssessments.where(
                 (a) =>
                     (a['marksNeededForTarget'] ?? -1).toDouble() >= 0 &&
                     (a['fullmarks'] ?? 0) > 0,
               );
-              if (pending.isEmpty || targetGrade.isEmpty) {
+              if (pending.isEmpty || effectiveTargetGrade.isEmpty) {
                 return const SizedBox.shrink();
               }
 
@@ -2756,7 +2801,7 @@ class _SavedCardState extends State<_SavedCard> {
                         ),
                         const SizedBox(width: 6),
                         Text(
-                          'How to reach $targetGrade:',
+                          'How to reach $effectiveTargetGrade:',
                           style: GoogleFonts.dmMono(
                             color: Colors.white,
                             fontWeight: FontWeight.bold,

@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../app_preferences.dart';
 
 class SetGradeScreen extends StatefulWidget {
   const SetGradeScreen({Key? key}) : super(key: key);
@@ -16,10 +17,8 @@ class _SetGradeScreenState extends State<SetGradeScreen> {
   final _firestore = FirebaseFirestore.instance;
 
   // ── Palette matching CertificateRepositoryScreen ──────────────────────────
-  static const _bgPage  = Color(0xFFE5E7EB);
   static const _tan     = Color(0xFFD4B896);
   static const _dark    = Color(0xFF292929);
-  static const _bgField = Colors.white;
   static const _red     = Color(0xFFB90000);
 
   final List<String> _gradeLabels = [
@@ -160,7 +159,7 @@ class _SetGradeScreenState extends State<SetGradeScreen> {
         'updatedAt': FieldValue.serverTimestamp(),
       });
       if (mounted) {
-        _snack('Grade settings saved!', _dark);
+        _snack('Grade settings saved!', AppColors.chipBg(context));
         Navigator.pop(context, true);
       }
     } catch (e) {
@@ -182,7 +181,7 @@ class _SetGradeScreenState extends State<SetGradeScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: _bgPage,
+      backgroundColor: AppColors.bg(context),
       body: SafeArea(
         child: _isLoading
             ? const Center(child: CircularProgressIndicator(color: _dark))
@@ -205,9 +204,9 @@ class _SetGradeScreenState extends State<SetGradeScreen> {
                             width: 40,
                             height: 40,
                             decoration: BoxDecoration(
-                              color: _dark,
+                              color: AppColors.chipBg(context),
                               shape: BoxShape.circle,
-                              border: Border.all(color: Colors.black, width: 2),
+                              border: Border.all(color: AppColors.border(context), width: 2),
                             ),
                             child: const Icon(Icons.arrow_back,
                                 size: 16, color: Colors.white),
@@ -222,7 +221,7 @@ class _SetGradeScreenState extends State<SetGradeScreen> {
                               style: GoogleFonts.dmMono(
                                 fontSize: 24,
                                 fontWeight: FontWeight.bold,
-                                color: _dark,
+                                color: AppColors.text(context),
                               ),
                             ),
                             Text(
@@ -231,7 +230,7 @@ class _SetGradeScreenState extends State<SetGradeScreen> {
                                   : 'Define the score range for each grade',
                               style: GoogleFonts.dmMono(
                                 fontSize: 11,
-                                color: Colors.black45,
+                                color: AppColors.subtext(context),
                               ),
                             ),
                           ],
@@ -249,9 +248,9 @@ class _SetGradeScreenState extends State<SetGradeScreen> {
                       padding: const EdgeInsets.symmetric(
                           horizontal: 16, vertical: 12),
                       decoration: BoxDecoration(
-                        color: Colors.white,
+                        color: AppColors.card(context),
                         borderRadius: BorderRadius.circular(16),
-                        border: Border.all(color: Colors.black38, width: 2),
+                        border: Border.all(color: AppColors.border(context).withValues(alpha: 0.38), width: 2),
                       ),
                       child: Row(
                         children: [
@@ -262,7 +261,7 @@ class _SetGradeScreenState extends State<SetGradeScreen> {
                               margin: const EdgeInsets.symmetric(horizontal: 8),
                               color: _step == 2
                                   ? _tan
-                                  : Colors.black26,
+                                  : AppColors.border(context).withValues(alpha: 0.26),
                             ),
                           ),
                           _stepDot(2),
@@ -271,7 +270,7 @@ class _SetGradeScreenState extends State<SetGradeScreen> {
                             _step == 1 ? 'Choose grades' : 'Fill ranges',
                             style: GoogleFonts.dmMono(
                               fontSize: 11,
-                              color: Colors.black45,
+                              color: AppColors.subtext(context),
                               fontWeight: FontWeight.bold,
                             ),
                           ),
@@ -312,9 +311,9 @@ class _SetGradeScreenState extends State<SetGradeScreen> {
             width: double.infinity,
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             decoration: BoxDecoration(
-              color: Colors.white,
+              color: AppColors.card(context),
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: const Color.fromARGB(255, 62, 62, 62), width: 1.5),
+              border: Border.all(color: AppColors.border(context), width: 1.5),
             ),
             child: Row(
               children: [
@@ -325,7 +324,7 @@ class _SetGradeScreenState extends State<SetGradeScreen> {
                     'Tap the grades your institution uses',
                     style: GoogleFonts.dmMono(
                       fontSize: 12,
-                      color: Colors.black54,
+                      color: AppColors.subtext(context),
                     ),
                   ),
                 ),
@@ -354,7 +353,7 @@ class _SetGradeScreenState extends State<SetGradeScreen> {
                   padding: const EdgeInsets.symmetric(
                       horizontal: 20, vertical: 12),
                   decoration: BoxDecoration(
-                    color: isSelected ? _tan : Colors.white,
+                    color: isSelected ? _tan : AppColors.card(context),
                     borderRadius: BorderRadius.circular(12),
                     border: Border.all(
                       color: isSelected ? const Color(0xFFB8956A) : Colors.black26,
@@ -387,13 +386,14 @@ class _SetGradeScreenState extends State<SetGradeScreen> {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Icon(Icons.check_circle_outline, size: 14, color: Color(0xFF292929)),
+                  Icon(Icons.check_circle_outline, size: 14,
+                      color: AppColors.isDark(context) ? _tan : _dark),
                   const SizedBox(width: 6),
                   Text(
                     '${_selectedGrades.length} grade${_selectedGrades.length == 1 ? '' : 's'} selected',
                     style: GoogleFonts.dmMono(
                       fontSize: 12,
-                      color: _dark,
+                      color: AppColors.isDark(context) ? _tan : _dark,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
@@ -424,7 +424,7 @@ class _SetGradeScreenState extends State<SetGradeScreen> {
                     textAlign: TextAlign.center,
                     style: GoogleFonts.dmMono(
                         fontSize: 12,
-                        color: Colors.black54,
+                        color: AppColors.subtext(context),
                         fontWeight: FontWeight.bold)),
               ),
               const SizedBox(width: 32),
@@ -433,7 +433,7 @@ class _SetGradeScreenState extends State<SetGradeScreen> {
                     textAlign: TextAlign.center,
                     style: GoogleFonts.dmMono(
                         fontSize: 12,
-                        color: Colors.black54,
+                        color: AppColors.subtext(context),
                         fontWeight: FontWeight.bold)),
               ),
             ],
@@ -476,7 +476,7 @@ class _SetGradeScreenState extends State<SetGradeScreen> {
                         style: GoogleFonts.dmMono(
                             fontSize: 18,
                             fontWeight: FontWeight.bold,
-                            color: _dark)),
+                            color: AppColors.text(context))),
                     const SizedBox(width: 8),
                     Expanded(child: _numBox(_maxCtrl[label]!)),
                   ],
@@ -521,9 +521,9 @@ class _SetGradeScreenState extends State<SetGradeScreen> {
           child: OutlinedButton(
             onPressed: () => setState(() => _step = 1),
             style: OutlinedButton.styleFrom(
-              foregroundColor: Colors.black,
+              foregroundColor: AppColors.text(context),
               padding: const EdgeInsets.symmetric(vertical: 16),
-              side: const BorderSide(color: Color.fromARGB(255, 30, 30, 30), width: 2),
+              side: BorderSide(color: AppColors.border(context), width: 2),
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12)),
             ),
@@ -531,7 +531,7 @@ class _SetGradeScreenState extends State<SetGradeScreen> {
                 style: GoogleFonts.dmMono(
                     fontWeight: FontWeight.bold,
                     fontSize: 13,
-                    color: _dark)),
+                    color: AppColors.text(context))),
           ),
         ),
         const SizedBox(width: 12),
@@ -574,7 +574,7 @@ class _SetGradeScreenState extends State<SetGradeScreen> {
         color: active ? _tan : Colors.transparent,
         shape: BoxShape.circle,
         border: Border.all(
-          color: active ? _tan : Colors.black26,
+          color: active ? _tan : AppColors.border(context).withValues(alpha: 0.26),
           width: 2,
         ),
       ),
@@ -584,7 +584,7 @@ class _SetGradeScreenState extends State<SetGradeScreen> {
           style: GoogleFonts.dmMono(
             fontSize: 11,
             fontWeight: FontWeight.bold,
-            color: active ? _dark : Colors.black38,
+            color: active ? _dark : AppColors.subtext(context),
           ),
         ),
       ),
@@ -593,7 +593,7 @@ class _SetGradeScreenState extends State<SetGradeScreen> {
 
   Widget _numBox(TextEditingController ctrl) => TextField(
         controller:  ctrl,
-        style:       GoogleFonts.dmMono(fontSize: 13, color: _dark),
+        style:       GoogleFonts.dmMono(fontSize: 13, color: AppColors.text(context)),
         keyboardType: const TextInputType.numberWithOptions(decimal: true),
         inputFormatters: [
           FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*')),
@@ -603,7 +603,7 @@ class _SetGradeScreenState extends State<SetGradeScreen> {
           isDense:         true,
           contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 11),
           filled:          true,
-          fillColor:       _bgField,
+          fillColor:       AppColors.input(context),
           border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(10),
               borderSide: const BorderSide(color: Color(0xFFB8956A), width: 2)),

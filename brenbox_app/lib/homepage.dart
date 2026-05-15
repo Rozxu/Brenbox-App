@@ -1,20 +1,23 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import 'dart:async';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'tasks/add_new_screen.dart';
 import 'tasks/edit_class_screen.dart';
 import 'tasks/edit_task_screen.dart';
 import 'tasks/edit_exam_screen.dart';
 import 'screens/calendar_screen.dart';
+import 'screens/study_group_screen.dart';
 import 'authenticate/account_screen.dart';
 import 'screens/grade_calculator_screen.dart';
 import 'screens/certificate_repository_screen.dart';
 import 'screens/notification_history_screen.dart';
 import 'services/notification_service.dart';
 import 'services/notification_scheduler.dart';
+import 'app_preferences.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({Key? key}) : super(key: key);
@@ -35,7 +38,65 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final args = ModalRoute.of(context)?.settings.arguments as Map?;
+      if (args == null || !mounted) return;
+      if (args['navIndex'] != null) {
+        setState(() => _selectedNavIndex = args['navIndex'] as int);
+      }
+      if (args['groupId'] != null) {
+        _navigateToGroup(
+          args['groupId'] as String,
+          args['tab'] as int? ?? 0,
+        );
+      }
+    });
     _loadUserData();
+  }
+
+  StreamSubscription<RemoteMessage>? _fcmForegroundSub;
+
+  @override
+  void dispose() {
+    _fcmForegroundSub?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _navigateToGroup(String groupId, int tab) async {
+    try {
+      final doc = await _firestore.collection('study_groups').doc(groupId).get();
+      if (!mounted) return;
+      if (!doc.exists) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(
+            'Group not found. It may have been deleted.',
+            style: GoogleFonts.dmMono(),
+          ),
+          backgroundColor: const Color(0xFFB90000),
+        ));
+        return;
+      }
+      final data      = doc.data()!;
+      final groupName = data['name']    as String? ?? '';
+      final subject   = data['subject'] as String? ?? '';
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => StudyGroupScreen(
+            groupId:    groupId,
+            groupName:  groupName,
+            subject:    subject,
+            initialTab: tab,
+          ),
+        ),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Could not open group.', style: GoogleFonts.dmMono()),
+        backgroundColor: const Color(0xFFB90000),
+      ));
+    }
   }
 
   Future<void> _loadUserData() async {
@@ -54,19 +115,54 @@ class _HomePageState extends State<HomePage> {
       _isLoading = false;
     });
 
-    // ── FIXED: use onAppOpen() instead of rescheduleAllNotifications().
-    // onAppOpen() is lightweight — it only schedules genuinely NEW events
-    // (dedupe prevents re-scheduling anything already queued) and purges
-    // old Firestore records. It does NOT cancel + re-fire everything,
-    // which was the cause of the notification spam on every app open.
+    fontScaleNotifier.value = (doc.data()?['fontScale'] as num?)?.toDouble() ?? kDefaultFontScale;
+    darkModeNotifier.value  = doc.data()?['darkMode']  as bool? ?? false;
+
+    // Save FCM token so Cloud Functions can push to this device
+    NotificationService().saveFcmToken(user.uid);
+
+    // Foreground: Android won't auto-display FCM — show it ourselves
+    _fcmForegroundSub = FirebaseMessaging.onMessage.listen(
+      (msg) => NotificationService().handleForegroundFcmMessage(msg),
+    );
+
+    // Background tap (app was suspended, user tapped notification)
+    FirebaseMessaging.onMessageOpenedApp.listen(_handleFcmTap);
+
+    // Terminated tap (app was fully closed, user tapped notification)
+    FirebaseMessaging.instance
+        .getInitialMessage()
+        .then((msg) { if (msg != null) _handleFcmTap(msg); });
+
+    // onAppOpen() is lightweight — schedules new events and restores lost OS
+    // alarms without cancelling everything already queued.
     NotificationScheduler().onAppOpen();
+  }
+
+  void _handleFcmTap(RemoteMessage message) {
+    final data         = message.data;
+    final type         = data['type']         as String? ?? '';
+    final historyDocId = data['historyDocId'] as String?;
+
+    if (historyDocId != null) {
+      _firestore
+          .collection('notification_history')
+          .doc(historyDocId)
+          .update({'isRead': true});
+    }
+
+    if (type.startsWith('group_')) {
+      final groupId = data['groupId'] as String?;
+      final tab     = int.tryParse(data['tab'] ?? '0') ?? 0;
+      if (groupId != null && mounted) _navigateToGroup(groupId, tab);
+    } else if (type == 'group_invite' || type == 'timetable_invite') {
+      if (mounted) setState(() => _selectedNavIndex = 1);
+    }
   }
 
   Future<void> _logout() async {
     await _auth.signOut();
-    if (mounted) {
-      Navigator.pushReplacementNamed(context, '/login');
-    }
+    // AuthGate listens to authStateChanges() and navigates automatically.
   }
 
   List<DateTime> _getWeekDates() {
@@ -135,44 +231,34 @@ class _HomePageState extends State<HomePage> {
         }
       }
 
-      // isUpcoming = event exists on a FUTURE date (shows red border)
-      // past dates with events get a black border (handled in _dateCircle)
       final bool isUpcoming = hasEvents && checkDate.isAfter(today);
-
       return {'hasEvents': hasEvents, 'isUpcoming': isUpcoming};
-    });
+    }).handleError((_) {});
   }
 
-  Stream<List<Map<String, dynamic>>> _getUpcomingExamsStream() {
+  Stream<List<Map<String, dynamic>>> _getExamsForDateStream() {
     final user = _auth.currentUser;
     if (user == null) return Stream.value([]);
+    final selected = _selectedDate;
 
     return _firestore
         .collection('exams')
         .where('userId', isEqualTo: user.uid)
         .snapshots()
         .map((snapshot) {
-      final now = DateTime.now();
-      final List<Map<String, dynamic>> upcoming = [];
-
+      final List<Map<String, dynamic>> result = [];
       for (var doc in snapshot.docs) {
         try {
-          final data              = doc.data();
-          final examDateTimestamp = data['examDate'] as Timestamp?;
+          final data               = doc.data();
+          final examDateTimestamp  = data['examDate'] as Timestamp?;
           if (examDateTimestamp == null) continue;
-
+          final examDate = examDateTimestamp.toDate();
+          if (examDate.year  != selected.year  ||
+              examDate.month != selected.month ||
+              examDate.day   != selected.day) continue;
           final startTime = (data['startTime'] as Timestamp).toDate();
           final endTime   = (data['endTime']   as Timestamp).toDate();
-
-          // Keep the exam visible all day on its date so the card can
-          // show DONE after endTime passes. Remove only after midnight.
-          final examDate = examDateTimestamp.toDate();
-          final endOfExamDay = DateTime(
-            examDate.year, examDate.month, examDate.day, 23, 59, 59,
-          );
-          if (endOfExamDay.isBefore(now)) continue;
-
-          upcoming.add({
+          result.add({
             'id':        doc.id,
             'examName':  data['examName']  ?? 'Untitled Exam',
             'subject':   data['subject']   ?? '',
@@ -183,19 +269,14 @@ class _HomePageState extends State<HomePage> {
             'startTime': startTime,
             'endTime':   endTime,
           });
-        } catch (e) {
-          print('Error processing exam document: $e');
+        } catch (_) {
           continue;
         }
       }
-
-      // Sort earliest first
-      upcoming.sort((a, b) =>
-          (a['examDate'] as Timestamp).toDate()
-              .compareTo((b['examDate'] as Timestamp).toDate()));
-
-      return upcoming;
-    });
+      result.sort((a, b) =>
+          (a['startTime'] as DateTime).compareTo(b['startTime'] as DateTime));
+      return result;
+    }).handleError((_) => <Map<String, dynamic>>[]);
   }
 
   @override
@@ -219,7 +300,7 @@ class _HomePageState extends State<HomePage> {
     ];
 
     return Scaffold(
-      backgroundColor: const Color(0xFFE5E7EB),
+      backgroundColor: AppColors.bg(context),
       body: Column(
         children: [
           Expanded(
@@ -279,15 +360,14 @@ class _HomePageState extends State<HomePage> {
       children: [
         Text(
           'HOME',
-          style:
-              GoogleFonts.dmMono(fontSize: 24, fontWeight: FontWeight.bold),
+          style: GoogleFonts.dmMono(
+            fontSize: 24,
+            fontWeight: FontWeight.bold,
+            color: AppColors.text(context),
+          ),
         ),
         Row(
           children: [
-            // Bell icon — uses _BellDot which holds its own 30-second timer
-            // so DateTime.now() is re-evaluated even when Firestore has no
-            // new writes, ensuring the dot appears as soon as a scheduled
-            // notification's time arrives.
             _BellDot(
               userId: _auth.currentUser?.uid ?? '',
               firestore: _firestore,
@@ -295,22 +375,21 @@ class _HomePageState extends State<HomePage> {
                 Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (_) => const NotificationHistoryScreen(),
+                    builder: (_) => NotificationHistoryScreen(
+                      onGoToCalendar: () {
+                        setState(() => _selectedNavIndex = 1);
+                      },
+                    ),
                   ),
                 );
               },
             ),
-
             const SizedBox(width: 16),
             _AnimatedTapButton(
-              onTap: () {
-                setState(() {
-                  _selectedNavIndex = 4;
-                });
-              },
-              child: const Icon(
+              onTap: () => setState(() => _selectedNavIndex = 4),
+              child: Icon(
                 Icons.person_outline,
-                color: Colors.black,
+                color: AppColors.text(context),
                 size: 28,
               ),
             ),
@@ -343,15 +422,18 @@ class _HomePageState extends State<HomePage> {
         Text(
           'Schedule',
           style: GoogleFonts.dmMono(
-              fontSize: 20, fontWeight: FontWeight.bold),
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+            color: AppColors.text(context),
+          ),
         ),
         const SizedBox(height: 16),
         Container(
           padding: const EdgeInsets.all(24),
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: AppColors.card(context),
             borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: Colors.black, width: 2),
+            border: Border.all(color: AppColors.border(context), width: 2),
           ),
           child: Column(
             children: [
@@ -363,13 +445,14 @@ class _HomePageState extends State<HomePage> {
                     style: GoogleFonts.dmMono(
                       fontSize: 16,
                       fontWeight: FontWeight.bold,
+                      color: AppColors.text(context),
                     ),
                   ),
                   Container(
                     padding: const EdgeInsets.symmetric(
                         horizontal: 16, vertical: 8),
                     decoration: BoxDecoration(
-                      color: const Color.fromARGB(255, 27, 27, 27),
+                      color: AppColors.chipBg(context),
                       borderRadius: BorderRadius.circular(16),
                     ),
                     child: Text(
@@ -442,7 +525,7 @@ class _HomePageState extends State<HomePage> {
               padding:
                   const EdgeInsets.symmetric(horizontal: 40, vertical: 12),
               decoration: BoxDecoration(
-                color: const Color(0xFF292929),
+                color: AppColors.chipBg(context),
                 borderRadius: BorderRadius.circular(24),
               ),
               child: Text(
@@ -461,17 +544,24 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildAssessmentsSection() {
+    final isToday = DateFormat('dd MMM yyyy').format(_selectedDate) ==
+        DateFormat('dd MMM yyyy').format(DateTime.now());
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Assessments Dates',
+          isToday
+              ? 'Assessments Dates'
+              : 'Assessments - ${DateFormat('EEE, dd MMM').format(_selectedDate)}',
           style: GoogleFonts.dmMono(
-              fontSize: 20, fontWeight: FontWeight.bold),
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+            color: AppColors.text(context),
+          ),
         ),
         const SizedBox(height: 16),
         StreamBuilder<List<Map<String, dynamic>>>(
-          stream: _getUpcomingExamsStream(),
+          stream: _getExamsForDateStream(),
           builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) {
               return Container(
@@ -487,20 +577,20 @@ class _HomePageState extends State<HomePage> {
                 height: 140,
                 padding: const EdgeInsets.all(24),
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: AppColors.card(context),
                   borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: Colors.black, width: 2),
+                  border: Border.all(color: AppColors.border(context), width: 2),
                 ),
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    const Icon(Icons.assignment_outlined,
-                        size: 40, color: Color(0xFF6B7280)),
+                    Icon(Icons.assignment_outlined,
+                        size: 40, color: AppColors.subtext(context)),
                     const SizedBox(height: 8),
                     Text(
                       'No upcoming assessments',
                       style: GoogleFonts.dmMono(
-                          fontSize: 12, color: Colors.grey),
+                          fontSize: 12, color: AppColors.subtext(context)),
                     ),
                   ],
                 ),
@@ -544,24 +634,24 @@ class _HomePageState extends State<HomePage> {
 
     if (isPast) {
       durationLabel   = 'DONE';
-      labelBg         = Colors.grey.shade200;
-      labelFg         = Colors.grey.shade600;
-      cardBorderColor = Colors.black;        // plain black border for past
+      labelBg         = AppColors.fieldBg(context);
+      labelFg         = AppColors.subtext(context);
+      cardBorderColor = AppColors.border(context);
     } else if (isToday) {
       durationLabel   = 'TODAY';
       labelBg         = const Color(0xFF9AB900);
       labelFg         = Colors.white;
-      cardBorderColor = Colors.black;
+      cardBorderColor = AppColors.border(context);
     } else if (daysUntil == 1) {
       durationLabel   = '1 DAY';
       labelBg         = const Color(0xFFFEFFE6);
       labelFg         = const Color(0xFF9AB900);
-      cardBorderColor = Colors.black;
+      cardBorderColor = AppColors.border(context);
     } else {
       durationLabel   = '$daysUntil DAYS';
       labelBg         = const Color(0xFFFEFFE6);
       labelFg         = const Color(0xFF9AB900);
-      cardBorderColor = Colors.black;
+      cardBorderColor = AppColors.border(context);
     }
 
     return _AnimatedTapButton(
@@ -570,7 +660,7 @@ class _HomePageState extends State<HomePage> {
         width: 280,
         margin: const EdgeInsets.only(right: 16),
         decoration: BoxDecoration(
-          color: isPast ? Colors.grey.shade50 : Colors.white,
+          color: AppColors.card(context),
           borderRadius: BorderRadius.circular(16),
           border: Border.all(color: cardBorderColor, width: 2),
         ),
@@ -579,10 +669,10 @@ class _HomePageState extends State<HomePage> {
             Container(
               width: 90,
               padding:
-                  const EdgeInsets.symmetric(vertical: 16, horizontal: 8),
-              decoration: const BoxDecoration(
+                  const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
+              decoration: BoxDecoration(
                 border: Border(
-                    right: BorderSide(color: Colors.black, width: 2)),
+                    right: BorderSide(color: AppColors.border(context), width: 2)),
               ),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -595,7 +685,7 @@ class _HomePageState extends State<HomePage> {
                       borderRadius: BorderRadius.circular(10),
                       border: Border.all(
                           color: isPast
-                              ? Colors.grey.shade400
+                              ? AppColors.border(context)
                               : const Color(0xFF9AB900),
                           width: 2),
                     ),
@@ -608,17 +698,23 @@ class _HomePageState extends State<HomePage> {
                       ),
                     ),
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 4),
                   Text(
                     DateFormat('MMM').format(examDate).toUpperCase(),
                     style: GoogleFonts.dmMono(
-                        fontSize: 14, fontWeight: FontWeight.bold),
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.text(context),
+                    ),
                   ),
                   const SizedBox(height: 2),
                   Text(
                     DateFormat('dd').format(examDate),
                     style: GoogleFonts.dmMono(
-                        fontSize: 28, fontWeight: FontWeight.bold),
+                      fontSize: 28,
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.text(context),
+                    ),
                   ),
                 ],
               ),
@@ -642,7 +738,10 @@ class _HomePageState extends State<HomePage> {
                     Text(
                       exam['examName'],
                       style: GoogleFonts.dmMono(
-                          fontSize: 13, fontWeight: FontWeight.bold),
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.text(context),
+                      ),
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -652,23 +751,23 @@ class _HomePageState extends State<HomePage> {
                         exam['subject'],
                         style: GoogleFonts.dmMono(
                             fontSize: 10,
-                            color: const Color(0xFF6B7280)),
+                            color: AppColors.subtext(context)),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
                     ],
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 4),
                     Row(
                       children: [
-                        const Icon(Icons.access_time,
-                            size: 12, color: Color(0xFF6B7280)),
+                        Icon(Icons.access_time,
+                            size: 12, color: AppColors.subtext(context)),
                         const SizedBox(width: 4),
                         Expanded(
                           child: Text(
                             '${DateFormat('hh:mm a').format(startTime)} - ${DateFormat('hh:mm a').format(endTime)}',
                             style: GoogleFonts.dmMono(
                                 fontSize: 10,
-                                color: const Color(0xFF6B7280)),
+                                color: AppColors.subtext(context)),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
@@ -683,7 +782,7 @@ class _HomePageState extends State<HomePage> {
                               ? Icons.computer
                               : Icons.location_on_outlined,
                           size: 12,
-                          color: const Color(0xFF6B7280),
+                          color: AppColors.subtext(context),
                         ),
                         const SizedBox(width: 4),
                         Expanded(
@@ -695,7 +794,7 @@ class _HomePageState extends State<HomePage> {
                                     : exam['venue']),
                             style: GoogleFonts.dmMono(
                                 fontSize: 10,
-                                color: const Color(0xFF6B7280)),
+                                color: AppColors.subtext(context)),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
@@ -723,13 +822,13 @@ class _HomePageState extends State<HomePage> {
       isScrollControlled: true,
       builder: (context) {
         return Container(
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          decoration: BoxDecoration(
+            color: AppColors.card(context),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
             border: Border(
-              top: BorderSide(color: Colors.black, width: 2),
-              left: BorderSide(color: Colors.black, width: 2),
-              right: BorderSide(color: Colors.black, width: 2),
+              top: BorderSide(color: AppColors.border(context), width: 2),
+              left: BorderSide(color: AppColors.border(context), width: 2),
+              right: BorderSide(color: AppColors.border(context), width: 2),
             ),
           ),
           child: SafeArea(
@@ -741,7 +840,7 @@ class _HomePageState extends State<HomePage> {
                   width: 40,
                   height: 4,
                   decoration: BoxDecoration(
-                    color: Colors.grey.shade300,
+                    color: AppColors.border(context),
                     borderRadius: BorderRadius.circular(2),
                   ),
                 ),
@@ -754,7 +853,10 @@ class _HomePageState extends State<HomePage> {
                       Text(
                         'Exam Details',
                         style: GoogleFonts.dmMono(
-                            fontSize: 18, fontWeight: FontWeight.bold),
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.text(context),
+                        ),
                       ),
                       const SizedBox(height: 16),
                       _buildDetailRow('Exam Name', exam['examName']),
@@ -792,12 +894,15 @@ class _HomePageState extends State<HomePage> {
                             );
                             if (result == true && mounted) setState(() {});
                           },
-                          icon: const Icon(Icons.edit_outlined),
-                          label: Text('Edit', style: GoogleFonts.dmMono()),
+                          icon: Icon(Icons.edit_outlined,
+                              color: AppColors.text(context)),
+                          label: Text('Edit',
+                              style: GoogleFonts.dmMono(
+                                  color: AppColors.text(context))),
                           style: OutlinedButton.styleFrom(
-                            foregroundColor: Colors.black,
-                            side: const BorderSide(
-                                color: Colors.black, width: 2),
+                            foregroundColor: AppColors.text(context),
+                            side: BorderSide(
+                                color: AppColors.border(context), width: 2),
                             padding:
                                 const EdgeInsets.symmetric(vertical: 16),
                             shape: RoundedRectangleBorder(
@@ -812,6 +917,10 @@ class _HomePageState extends State<HomePage> {
                             final messenger =
                                 ScaffoldMessenger.of(context);
                             Navigator.pop(context);
+                            final ok = await confirmDeleteDialog(context,
+                                title: 'Delete Exam',
+                                message: 'Are you sure you want to delete this exam? This cannot be undone.');
+                            if (!ok) return;
                             // Cancel notifications and clean up Firestore
                             await NotificationService()
                                 .cancelNotificationsForEvent(exam['id']);
@@ -859,7 +968,7 @@ class _HomePageState extends State<HomePage> {
         style: GoogleFonts.dmMono(
           fontSize: 13,
           fontWeight: FontWeight.bold,
-          color: Colors.black87,
+          color: AppColors.text(context),
         ),
       ),
     );
@@ -886,7 +995,9 @@ class _HomePageState extends State<HomePage> {
       borderColor = const Color(0xFFB90000);
       borderWidth = 2;
     } else if (hasEvents) {
-      borderColor = Colors.black;
+      borderColor = AppColors.isDark(context)
+          ? Colors.white.withValues(alpha: 0.35)
+          : Colors.black;
       borderWidth = 2;
     }
 
@@ -918,7 +1029,7 @@ class _HomePageState extends State<HomePage> {
                   style: GoogleFonts.dmMono(
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
-                    color: isToday ? Colors.white : Colors.black,
+                    color: isToday ? Colors.white : AppColors.text(context),
                   ),
                 ),
               ),
@@ -928,7 +1039,7 @@ class _HomePageState extends State<HomePage> {
                 top: 36,
                 child: CustomPaint(
                   size: const Size(10, 8),
-                  painter: TrianglePainter(),
+                  painter: TrianglePainter(color: AppColors.text(context)),
                 ),
               ),
           ],
@@ -950,7 +1061,10 @@ class _HomePageState extends State<HomePage> {
               ? 'Today Timetable'
               : 'Timetable - ${DateFormat('EEE, dd MMM').format(_selectedDate)}',
           style: GoogleFonts.dmMono(
-              fontSize: 16, fontWeight: FontWeight.bold),
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+            color: AppColors.text(context),
+          ),
         ),
         const SizedBox(height: 16),
         StreamBuilder<List<Map<String, dynamic>>>(
@@ -1005,84 +1119,98 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Stream<List<Map<String, dynamic>>> _getCombinedEventsStream(
-      String userId) {
-    return _firestore
-        .collection('timetable')
-        .where('userId', isEqualTo: userId)
-        .snapshots()
-        .asyncMap((timetableSnapshot) async {
-      List<Map<String, dynamic>> allEvents = [];
+  Stream<List<Map<String, dynamic>>> _getCombinedEventsStream(String userId) {
+    final controller = StreamController<List<Map<String, dynamic>>>();
 
-      for (var doc in timetableSnapshot.docs) {
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> timetableDocs = [];
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> tasksDocs = [];
+
+    void emitCombined() {
+      if (controller.isClosed) return;
+      final allEvents = <Map<String, dynamic>>[];
+
+      for (var doc in timetableDocs) {
         try {
-          final data = doc.data() as Map<String, dynamic>;
+          final data = doc.data();
           final timestamp = data['date'] as Timestamp?;
-
-          if (timestamp != null) {
-            final eventDate = timestamp.toDate();
-
-            if (eventDate.year == _selectedDate.year &&
-                eventDate.month == _selectedDate.month &&
-                eventDate.day == _selectedDate.day) {
-              allEvents.add({
-                'id': doc.id,
-                'className': data['className'] ?? 'Untitled',
-                'startTime': data['startTime'] ?? '00:00',
-                'endTime': data['endTime'] ?? '00:00',
-                'room': data['room'] ?? '',
-                'building': data['building'] ?? '',
-                'lecturerName': data['lecturerName'] ?? '',
-                'type': data['type'] ?? 'class',
-                'date': timestamp,
-                'semester': data['semester'],
-                'academicYear': data['academicYear'],
-              });
-            }
+          if (timestamp == null) continue;
+          final eventDate = timestamp.toDate();
+          if (eventDate.year == _selectedDate.year &&
+              eventDate.month == _selectedDate.month &&
+              eventDate.day == _selectedDate.day) {
+            allEvents.add({
+              'id': doc.id,
+              'className': data['className'] ?? 'Untitled',
+              'startTime': data['startTime'] ?? '00:00',
+              'endTime': data['endTime'] ?? '00:00',
+              'room': data['room'] ?? '',
+              'building': data['building'] ?? '',
+              'lecturerName': data['lecturerName'] ?? '',
+              'type': data['type'] ?? 'class',
+              'date': timestamp,
+              'semester': data['semester'],
+              'academicYear': data['academicYear'],
+            });
           }
         } catch (e) {
           print('Error processing timetable document ${doc.id}: $e');
-          continue;
         }
       }
 
-      final tasksSnapshot = await _firestore
-          .collection('tasks')
-          .where('userId', isEqualTo: userId)
-          .get();
-
-      for (var doc in tasksSnapshot.docs) {
+      for (var doc in tasksDocs) {
         try {
-          final data = doc.data() as Map<String, dynamic>;
+          final data = doc.data();
           final timestamp = data['dueDate'] as Timestamp?;
-
-          if (timestamp != null) {
-            final dueDate = timestamp.toDate();
-
-            if (dueDate.year == _selectedDate.year &&
-                dueDate.month == _selectedDate.month &&
-                dueDate.day == _selectedDate.day) {
-              allEvents.add({
-                'id': doc.id,
-                'type': 'task',
-                'taskTitle': data['taskTitle'] ?? 'Untitled Task',
-                'taskDetails': data['taskDetails'] ?? '',
-                'subject': data['subject'] ?? '',
-                'taskType': data['taskType'] ?? '',
-                'dueDate': timestamp,
-                'dueTime': DateFormat('HH:mm').format(dueDate),
-                'completed': data['completed'] ?? false,
-              });
-            }
+          if (timestamp == null) continue;
+          final dueDate = timestamp.toDate();
+          if (dueDate.year == _selectedDate.year &&
+              dueDate.month == _selectedDate.month &&
+              dueDate.day == _selectedDate.day) {
+            allEvents.add({
+              'id': doc.id,
+              'type': 'task',
+              'taskTitle': data['taskTitle'] ?? 'Untitled Task',
+              'taskDetails': data['taskDetails'] ?? '',
+              'subject': data['subject'] ?? '',
+              'taskType': data['taskType'] ?? '',
+              'dueDate': timestamp,
+              'dueTime': DateFormat('HH:mm').format(dueDate),
+              'completed': data['completed'] ?? false,
+            });
           }
         } catch (e) {
           print('Error processing task document ${doc.id}: $e');
-          continue;
         }
       }
 
-      return allEvents;
-    });
+      controller.add(allEvents);
+    }
+
+    final timetableSub = _firestore
+        .collection('timetable')
+        .where('userId', isEqualTo: userId)
+        .snapshots()
+        .listen(
+          (snap) { timetableDocs = snap.docs; emitCombined(); },
+          onError: (_) {},
+        );
+
+    final tasksSub = _firestore
+        .collection('tasks')
+        .where('userId', isEqualTo: userId)
+        .snapshots()
+        .listen(
+          (snap) { tasksDocs = snap.docs; emitCombined(); },
+          onError: (_) {},
+        );
+
+    controller.onCancel = () {
+      timetableSub.cancel();
+      tasksSub.cancel();
+      if (!controller.isClosed) controller.close();
+    };
+
+    return controller.stream;
   }
 
   Widget _buildTaskCard(Map<String, dynamic> task) {
@@ -1094,21 +1222,14 @@ class _HomePageState extends State<HomePage> {
       child: Container(
         margin: const EdgeInsets.only(bottom: 16),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: AppColors.card(context),
           borderRadius: BorderRadius.circular(20),
           border: Border.all(
             color: isCompleted
                 ? const Color(0xFF34A853)
-                : Colors.black,
+                : AppColors.border(context),
             width: 2,
           ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.05),
-              blurRadius: 10,
-              offset: const Offset(0, 4),
-            ),
-          ],
         ),
         child: Column(
           children: [
@@ -1118,9 +1239,9 @@ class _HomePageState extends State<HomePage> {
                 gradient: LinearGradient(
                   colors: [
                     isCompleted
-                        ? const Color(0xFF34A853).withOpacity(0.1)
-                        : const Color(0xFF008BB9).withOpacity(0.1),
-                    Colors.white,
+                        ? const Color(0xFF34A853).withValues(alpha: 0.15)
+                        : const Color(0xFF008BB9).withValues(alpha: 0.15),
+                    AppColors.card(context),
                   ],
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
@@ -1164,8 +1285,8 @@ class _HomePageState extends State<HomePage> {
                                       ? TextDecoration.lineThrough
                                       : null,
                                   color: isCompleted
-                                      ? Colors.grey.shade600
-                                      : Colors.black,
+                                      ? AppColors.subtext(context)
+                                      : AppColors.text(context),
                                 ),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
@@ -1277,18 +1398,19 @@ class _HomePageState extends State<HomePage> {
       width: double.infinity,
       padding: const EdgeInsets.all(32),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.card(context),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.black, width: 2),
+        border: Border.all(color: AppColors.border(context), width: 2),
       ),
       child: Column(
         children: [
-          const Icon(Icons.event_note_outlined,
-              size: 48, color: Color(0xFF6B7280)),
+          Icon(Icons.event_note_outlined,
+              size: 48, color: AppColors.subtext(context)),
           const SizedBox(height: 12),
           Text(
             'No events scheduled',
-            style: GoogleFonts.dmMono(fontSize: 13, color: Colors.grey),
+            style: GoogleFonts.dmMono(
+                fontSize: 13, color: AppColors.subtext(context)),
           ),
         ],
       ),
@@ -1322,16 +1444,9 @@ class _HomePageState extends State<HomePage> {
       child: Container(
         margin: const EdgeInsets.only(bottom: 16),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: AppColors.card(context),
           borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: Colors.black, width: 2),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.05),
-              blurRadius: 10,
-              offset: const Offset(0, 4),
-            ),
-          ],
+          border: Border.all(color: AppColors.border(context), width: 2),
         ),
         child: Column(
           children: [
@@ -1339,7 +1454,10 @@ class _HomePageState extends State<HomePage> {
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
                 gradient: LinearGradient(
-                  colors: [labelColor.withOpacity(0.1), Colors.white],
+                  colors: [
+                    labelColor.withValues(alpha: 0.15),
+                    AppColors.card(context),
+                  ],
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                 ),
@@ -1365,7 +1483,10 @@ class _HomePageState extends State<HomePage> {
                         Text(
                           event['className'],
                           style: GoogleFonts.dmMono(
-                              fontSize: 16, fontWeight: FontWeight.bold),
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.text(context),
+                          ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
@@ -1422,13 +1543,13 @@ class _HomePageState extends State<HomePage> {
   Widget _buildDetailItem(IconData icon, String text) {
     return Row(
       children: [
-        Icon(icon, size: 16, color: const Color(0xFF6B7280)),
+        Icon(icon, size: 16, color: AppColors.subtext(context)),
         const SizedBox(width: 6),
         Expanded(
           child: Text(
             text,
             style: GoogleFonts.dmMono(
-                fontSize: 11, color: const Color(0xFF6B7280)),
+                fontSize: 11, color: AppColors.subtext(context)),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
@@ -1461,17 +1582,15 @@ class _HomePageState extends State<HomePage> {
       builder: (context) {
         return StatefulBuilder(
           builder: (BuildContext context, StateSetter setModalState) {
-            final isCompleted = task['completed'] ?? false;
-
             return Container(
-              decoration: const BoxDecoration(
-                color: Colors.white,
+              decoration: BoxDecoration(
+                color: AppColors.card(context),
                 borderRadius:
-                    BorderRadius.vertical(top: Radius.circular(24)),
+                    const BorderRadius.vertical(top: Radius.circular(24)),
                 border: Border(
-                  top: BorderSide(color: Colors.black, width: 2),
-                  left: BorderSide(color: Colors.black, width: 2),
-                  right: BorderSide(color: Colors.black, width: 2),
+                  top: BorderSide(color: AppColors.border(context), width: 2),
+                  left: BorderSide(color: AppColors.border(context), width: 2),
+                  right: BorderSide(color: AppColors.border(context), width: 2),
                 ),
               ),
               child: SafeArea(
@@ -1483,7 +1602,7 @@ class _HomePageState extends State<HomePage> {
                       width: 40,
                       height: 4,
                       decoration: BoxDecoration(
-                        color: Colors.grey.shade300,
+                        color: AppColors.border(context),
                         borderRadius: BorderRadius.circular(2),
                       ),
                     ),
@@ -1497,8 +1616,10 @@ class _HomePageState extends State<HomePage> {
                           Text(
                             'Task Details',
                             style: GoogleFonts.dmMono(
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold),
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: AppColors.text(context),
+                            ),
                           ),
                           const SizedBox(height: 16),
                           _buildDetailRow(
@@ -1542,13 +1663,15 @@ class _HomePageState extends State<HomePage> {
                                   setState(() {});
                                 }
                               },
-                              icon: const Icon(Icons.edit_outlined),
+                              icon: Icon(Icons.edit_outlined,
+                                  color: AppColors.text(context)),
                               label: Text('Edit',
-                                  style: GoogleFonts.dmMono()),
+                                  style: GoogleFonts.dmMono(
+                                      color: AppColors.text(context))),
                               style: OutlinedButton.styleFrom(
-                                foregroundColor: Colors.black,
-                                side: const BorderSide(
-                                    color: Colors.black, width: 2),
+                                foregroundColor: AppColors.text(context),
+                                side: BorderSide(
+                                    color: AppColors.border(context), width: 2),
                                 padding: const EdgeInsets.symmetric(
                                     vertical: 16),
                                 shape: RoundedRectangleBorder(
@@ -1564,6 +1687,10 @@ class _HomePageState extends State<HomePage> {
                                 final messenger =
                                     ScaffoldMessenger.of(context);
                                 Navigator.pop(context);
+                                final ok = await confirmDeleteDialog(context,
+                                    title: 'Delete Task',
+                                    message: 'Are you sure you want to delete this task? This cannot be undone.');
+                                if (!ok) return;
                                 // Cancel notifications and clean Firestore
                                 await NotificationService()
                                     .cancelNotificationsForEvent(
@@ -1615,13 +1742,13 @@ class _HomePageState extends State<HomePage> {
       isScrollControlled: true,
       builder: (context) {
         return Container(
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          decoration: BoxDecoration(
+            color: AppColors.card(context),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
             border: Border(
-              top: BorderSide(color: Colors.black, width: 2),
-              left: BorderSide(color: Colors.black, width: 2),
-              right: BorderSide(color: Colors.black, width: 2),
+              top: BorderSide(color: AppColors.border(context), width: 2),
+              left: BorderSide(color: AppColors.border(context), width: 2),
+              right: BorderSide(color: AppColors.border(context), width: 2),
             ),
           ),
           child: SafeArea(
@@ -1633,7 +1760,7 @@ class _HomePageState extends State<HomePage> {
                   width: 40,
                   height: 4,
                   decoration: BoxDecoration(
-                    color: Colors.grey.shade300,
+                    color: AppColors.border(context),
                     borderRadius: BorderRadius.circular(2),
                   ),
                 ),
@@ -1646,7 +1773,10 @@ class _HomePageState extends State<HomePage> {
                       Text(
                         'Class Details',
                         style: GoogleFonts.dmMono(
-                            fontSize: 18, fontWeight: FontWeight.bold),
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.text(context),
+                        ),
                       ),
                       const SizedBox(height: 16),
                       _buildDetailRow('Class Name', event['className']),
@@ -1681,12 +1811,15 @@ class _HomePageState extends State<HomePage> {
                               ),
                             );
                           },
-                          icon: const Icon(Icons.edit_outlined),
-                          label: Text('Edit', style: GoogleFonts.dmMono()),
+                          icon: Icon(Icons.edit_outlined,
+                              color: AppColors.text(context)),
+                          label: Text('Edit',
+                              style: GoogleFonts.dmMono(
+                                  color: AppColors.text(context))),
                           style: OutlinedButton.styleFrom(
-                            foregroundColor: Colors.black,
-                            side: const BorderSide(
-                                color: Colors.black, width: 2),
+                            foregroundColor: AppColors.text(context),
+                            side: BorderSide(
+                                color: AppColors.border(context), width: 2),
                             padding:
                                 const EdgeInsets.symmetric(vertical: 16),
                             shape: RoundedRectangleBorder(
@@ -1701,6 +1834,10 @@ class _HomePageState extends State<HomePage> {
                             final messenger =
                                 ScaffoldMessenger.of(context);
                             Navigator.pop(context);
+                            final ok = await confirmDeleteDialog(context,
+                                title: 'Delete Class',
+                                message: 'Are you sure you want to delete this class? This cannot be undone.');
+                            if (!ok) return;
                             // Cancel notifications and clean Firestore
                             await NotificationService()
                                 .cancelNotificationsForEvent(event['id']);
@@ -1750,14 +1887,17 @@ class _HomePageState extends State<HomePage> {
             child: Text(
               label,
               style: GoogleFonts.dmMono(
-                  fontSize: 12, color: const Color(0xFF6B7280)),
+                  fontSize: 12, color: AppColors.subtext(context)),
             ),
           ),
           Expanded(
             child: Text(
               value,
               style: GoogleFonts.dmMono(
-                  fontSize: 12, fontWeight: FontWeight.bold),
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+                color: AppColors.text(context),
+              ),
             ),
           ),
         ],
@@ -1800,12 +1940,12 @@ class _HomePageState extends State<HomePage> {
                       decoration: BoxDecoration(
                         color: !isCompleted
                             ? const Color(0xFFFBBC05)
-                            : Colors.grey.shade200,
+                            : AppColors.fieldBg(context),
                         borderRadius: BorderRadius.circular(8),
                         border: Border.all(
                           color: !isCompleted
                               ? const Color(0xFFFBBC05)
-                              : Colors.grey.shade400,
+                              : AppColors.border(context),
                           width: 2,
                         ),
                       ),
@@ -1817,7 +1957,7 @@ class _HomePageState extends State<HomePage> {
                             fontWeight: FontWeight.bold,
                             color: !isCompleted
                                 ? Colors.white
-                                : Colors.grey.shade600,
+                                : AppColors.subtext(context),
                           ),
                         ),
                       ),
@@ -1841,12 +1981,12 @@ class _HomePageState extends State<HomePage> {
                       decoration: BoxDecoration(
                         color: isCompleted
                             ? const Color(0xFF34A853)
-                            : Colors.grey.shade200,
+                            : AppColors.fieldBg(context),
                         borderRadius: BorderRadius.circular(8),
                         border: Border.all(
                           color: isCompleted
                               ? const Color(0xFF34A853)
-                              : Colors.grey.shade400,
+                              : AppColors.border(context),
                           width: 2,
                         ),
                       ),
@@ -1858,7 +1998,7 @@ class _HomePageState extends State<HomePage> {
                             fontWeight: FontWeight.bold,
                             color: isCompleted
                                 ? Colors.white
-                                : Colors.grey.shade600,
+                                : AppColors.subtext(context),
                           ),
                         ),
                       ),
@@ -1875,7 +2015,7 @@ class _HomePageState extends State<HomePage> {
 
   Widget _buildBottomNavigation() {
     return Container(
-      decoration: const BoxDecoration(color: Colors.white),
+      decoration: BoxDecoration(color: AppColors.navBg(context)),
       child: SafeArea(
         top: false,
         child: Padding(
@@ -1915,7 +2055,7 @@ class _HomePageState extends State<HomePage> {
         ),
         child: Icon(
           icon,
-          color: isActive ? Colors.white : Colors.black,
+          color: isActive ? Colors.white : AppColors.text(context),
           size: 24,
         ),
       ),
@@ -1933,8 +2073,8 @@ class _HomePageState extends State<HomePage> {
       child: Container(
         width: 56,
         height: 56,
-        decoration: const BoxDecoration(
-          color: Color(0xFF292929),
+        decoration: BoxDecoration(
+          color: AppColors.chipBg(context),
           shape: BoxShape.circle,
         ),
         child: const Icon(Icons.add, color: Colors.white, size: 32),
@@ -1980,9 +2120,12 @@ class _BellDotState extends State<_BellDot> {
         .collection('notification_history')
         .where('userId', isEqualTo: widget.userId)
         .snapshots()
-        .listen((snap) {
-      if (mounted) setState(() => _docs = snap.docs);
-    });
+        .listen(
+      (snap) {
+        if (mounted) setState(() => _docs = snap.docs);
+      },
+      onError: (_) {},
+    );
     // Timer re-evaluates scheduledFor<=now every 60s for notifications that
     // fire without triggering a Firestore write (no user tap needed)
     _ticker = Timer.periodic(const Duration(seconds: 60), (_) {
@@ -2019,7 +2162,7 @@ class _BellDotState extends State<_BellDot> {
             hasUnread
                 ? Icons.notifications
                 : Icons.notifications_outlined,
-            color: Colors.black,
+            color: AppColors.text(context),
             size: 28,
           ),
           if (hasUnread)
@@ -2033,7 +2176,7 @@ class _BellDotState extends State<_BellDot> {
                   color: const Color(0xFFB90000),
                   shape: BoxShape.circle,
                   border: Border.all(
-                    color: const Color(0xFFE5E7EB),
+                    color: AppColors.bg(context),
                     width: 1.5,
                   ),
                 ),
@@ -2115,7 +2258,7 @@ class _CountdownTimerState extends State<_CountdownTimer> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(
-        color: countdownColor.withOpacity(0.1),
+        color: countdownColor.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: countdownColor, width: 1.5),
       ),
@@ -2143,12 +2286,10 @@ class _CountdownTimerState extends State<_CountdownTimer> {
 class _AnimatedTapButton extends StatefulWidget {
   final Widget child;
   final VoidCallback onTap;
-  final Duration duration;
 
   const _AnimatedTapButton({
     required this.child,
     required this.onTap,
-    this.duration = const Duration(milliseconds: 100),
   });
 
   @override
@@ -2167,7 +2308,7 @@ class _AnimatedTapButtonState extends State<_AnimatedTapButton> {
       onTap: widget.onTap,
       child: AnimatedScale(
         scale: _isTapped ? 0.95 : 1.0,
-        duration: widget.duration,
+        duration: const Duration(milliseconds: 100),
         child: widget.child,
       ),
     );
@@ -2177,10 +2318,13 @@ class _AnimatedTapButtonState extends State<_AnimatedTapButton> {
 // ── TRIANGLE PAINTER ─────────────────────────────────────────────────────────
 
 class TrianglePainter extends CustomPainter {
+  final Color color;
+  const TrianglePainter({this.color = Colors.black});
+
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
-      ..color = Colors.black
+      ..color = color
       ..style = PaintingStyle.fill;
 
     final path = Path()

@@ -5,6 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
 
 import '../services/notification_scheduler.dart';
+import '../app_preferences.dart';
 
 class AddClassScreen extends StatefulWidget {
   const AddClassScreen({Key? key}) : super(key: key);
@@ -42,16 +43,26 @@ class _AddClassScreenState extends State<AddClassScreen> {
   }
 
   Future<void> _selectDate(BuildContext context, bool isStartDate) async {
+    final isDark = AppColors.isDark(context);
     final DateTime? picked = await showDatePicker(
       context: context,
       initialDate: DateTime.now(),
       firstDate: DateTime.now(),
       lastDate: DateTime(2030),
-      builder: (context, child) {
+      builder: (_, child) {
         return Theme(
-          data: Theme.of(context).copyWith(
-            colorScheme: const ColorScheme.light(primary: Color(0xFF6B7280)),
-          ),
+          data: isDark
+              ? ThemeData.dark().copyWith(
+                  colorScheme: const ColorScheme.dark(
+                    primary: Color(0xFF6B7280),
+                    onPrimary: Colors.white,
+                    surface: Color(0xFF252D47),
+                    onSurface: Colors.white,
+                  ),
+                )
+              : ThemeData.light().copyWith(
+                  colorScheme: const ColorScheme.light(primary: Color(0xFF6B7280)),
+                ),
           child: child!,
         );
       },
@@ -399,10 +410,10 @@ class _AddClassScreenState extends State<AddClassScreen> {
           final shouldContinue = await showDialog<bool>(
             context: context,
             builder: (context) => AlertDialog(
-              backgroundColor: Colors.white,
+              backgroundColor: AppColors.card(context),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
-                side: const BorderSide(color: Colors.black, width: 2),
+                side: BorderSide(color: AppColors.border(context), width: 2),
               ),
               title: Row(
                 children: [
@@ -441,7 +452,7 @@ class _AddClassScreenState extends State<AddClassScreen> {
                   onPressed: () => Navigator.pop(context, false),
                   child: Text(
                     'Cancel',
-                    style: GoogleFonts.dmMono(color: Colors.grey),
+                    style: GoogleFonts.dmMono(color: AppColors.subtext(context)),
                   ),
                 ),
                 TextButton(
@@ -450,7 +461,7 @@ class _AddClassScreenState extends State<AddClassScreen> {
                     'Continue',
                     style: GoogleFonts.dmMono(
                       fontWeight: FontWeight.bold,
-                      color: Colors.black,
+                      color: AppColors.text(context),
                     ),
                   ),
                 ),
@@ -487,10 +498,10 @@ class _AddClassScreenState extends State<AddClassScreen> {
           return WillPopScope(
             onWillPop: () async => false,
             child: AlertDialog(
-              backgroundColor: Colors.white,
+              backgroundColor: AppColors.card(context),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
-                side: const BorderSide(color: Colors.black, width: 2),
+                side: BorderSide(color: AppColors.border(context), width: 2),
               ),
               title: Row(
                 children: [
@@ -524,7 +535,7 @@ class _AddClassScreenState extends State<AddClassScreen> {
                     'OK',
                     style: GoogleFonts.dmMono(
                       fontWeight: FontWeight.bold,
-                      color: Colors.black,
+                      color: AppColors.text(context),
                     ),
                   ),
                 ),
@@ -550,10 +561,10 @@ class _AddClassScreenState extends State<AddClassScreen> {
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
-        backgroundColor: Colors.white,
+        backgroundColor: AppColors.card(context),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(12),
-          side: const BorderSide(color: Colors.black, width: 2),
+          side: BorderSide(color: AppColors.border(context), width: 2),
         ),
         title: Row(
           children: [
@@ -593,7 +604,7 @@ class _AddClassScreenState extends State<AddClassScreen> {
               'OK',
               style: GoogleFonts.dmMono(
                 fontWeight: FontWeight.bold,
-                color: Colors.black,
+                color: AppColors.text(context),
               ),
             ),
           ),
@@ -690,7 +701,7 @@ class _AddClassScreenState extends State<AddClassScreen> {
                   onPressed: () => Navigator.pop(context),
                   style: OutlinedButton.styleFrom(
                     padding: const EdgeInsets.symmetric(vertical: 16),
-                    side: const BorderSide(color: Colors.black, width: 2),
+                    side: BorderSide(color: AppColors.border(context), width: 2),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12),
                     ),
@@ -698,7 +709,7 @@ class _AddClassScreenState extends State<AddClassScreen> {
                   child: Text(
                     'Cancel',
                     style: GoogleFonts.dmMono(
-                      color: Colors.black,
+                      color: AppColors.text(context),
                       fontWeight: FontWeight.bold,
                     ),
                   ),
@@ -748,20 +759,20 @@ class _AddClassScreenState extends State<AddClassScreen> {
       style: GoogleFonts.dmMono(fontSize: 14),
       decoration: InputDecoration(
         hintText: hint,
-        hintStyle: GoogleFonts.dmMono(fontSize: 14, color: Colors.grey),
+        hintStyle: GoogleFonts.dmMono(fontSize: 14, color: AppColors.subtext(context)),
         filled: true,
-        fillColor: Colors.white,
+        fillColor: AppColors.input(context),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: Colors.black, width: 2),
+          borderSide: BorderSide(color: AppColors.border(context), width: 2),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: Colors.black, width: 2),
+          borderSide: BorderSide(color: AppColors.border(context), width: 2),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: Colors.black, width: 2),
+          borderSide: BorderSide(color: AppColors.border(context), width: 2),
         ),
         contentPadding: const EdgeInsets.all(16),
       ),
@@ -781,10 +792,10 @@ class _AddClassScreenState extends State<AddClassScreen> {
         child: Container(
           padding: const EdgeInsets.symmetric(vertical: 12),
           decoration: BoxDecoration(
-            color: isSelected ? const Color(0xFFFFEBEE) : Colors.white,
+            color: isSelected ? const Color(0xFFFFEBEE) : AppColors.card(context),
             borderRadius: BorderRadius.circular(12),
             border: Border.all(
-              color: isSelected ? const Color(0xFFB90000) : Colors.black,
+              color: isSelected ? const Color(0xFFB90000) : AppColors.border(context),
               width: 2,
             ),
           ),
@@ -794,7 +805,7 @@ class _AddClassScreenState extends State<AddClassScreen> {
             style: GoogleFonts.dmMono(
               fontSize: 11,
               fontWeight: FontWeight.bold,
-              color: Colors.black,
+              color: isSelected ? const Color(0xFFB90000) : AppColors.text(context),
             ),
           ),
         ),
@@ -828,10 +839,10 @@ class _AddClassScreenState extends State<AddClassScreen> {
         child: Container(
           padding: const EdgeInsets.symmetric(vertical: 12),
           decoration: BoxDecoration(
-            color: isSelected ? const Color(0xFFFFEBEE) : Colors.white,
+            color: isSelected ? const Color(0xFFFFEBEE) : AppColors.card(context),
             borderRadius: BorderRadius.circular(12),
             border: Border.all(
-              color: isSelected ? const Color(0xFFB90000) : Colors.black,
+              color: isSelected ? const Color(0xFFB90000) : AppColors.border(context),
               width: 2,
             ),
           ),
@@ -841,7 +852,7 @@ class _AddClassScreenState extends State<AddClassScreen> {
             style: GoogleFonts.dmMono(
               fontSize: 13,
               fontWeight: FontWeight.bold,
-              color: Colors.black,
+              color: isSelected ? const Color(0xFFB90000) : AppColors.text(context),
             ),
           ),
         ),
@@ -864,9 +875,9 @@ class _AddClassScreenState extends State<AddClassScreen> {
           child: Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              color: Colors.white,
+              color: AppColors.input(context),
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: Colors.black, width: 2),
+              border: Border.all(color: AppColors.border(context), width: 2),
             ),
             child: Row(
               children: [
@@ -877,7 +888,7 @@ class _AddClassScreenState extends State<AddClassScreen> {
                         : 'Select date',
                     style: GoogleFonts.dmMono(
                       fontSize: 14,
-                      color: date != null ? Colors.black : Colors.grey,
+                      color: date != null ? AppColors.text(context) : AppColors.subtext(context),
                     ),
                   ),
                 ),
@@ -909,18 +920,18 @@ class _AddClassScreenState extends State<AddClassScreen> {
                       vertical: 4,
                     ),
                     decoration: BoxDecoration(
-                      color: Colors.white,
+                      color: AppColors.input(context),
                       borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: Colors.black, width: 2),
+                      border: Border.all(color: AppColors.border(context), width: 2),
                     ),
                     child: Theme(
                       data: Theme.of(context).copyWith(
-                        canvasColor: Colors.white,
-                        colorScheme: const ColorScheme.light(
-                          primary: Color(0xFF6B7280),
+                        canvasColor: AppColors.card(context),
+                        colorScheme: ColorScheme.light(
+                          primary: const Color(0xFF6B7280),
                           onPrimary: Colors.white,
-                          surface: Colors.white,
-                          onSurface: Colors.black,
+                          surface: AppColors.card(context),
+                          onSurface: AppColors.text(context),
                         ),
                       ),
                       child: DropdownButton<int>(
@@ -929,12 +940,12 @@ class _AddClassScreenState extends State<AddClassScreen> {
                         underline: const SizedBox(),
                         style: GoogleFonts.dmMono(
                           fontSize: 14,
-                          color: Colors.black,
+                          color: AppColors.text(context),
                         ),
-                        dropdownColor: Colors.white,
-                        icon: const Icon(
+                        dropdownColor: AppColors.card(context),
+                        icon: Icon(
                           Icons.arrow_drop_down,
-                          color: Colors.black,
+                          color: AppColors.text(context),
                         ),
                         items: List.generate(10, (index) => index + 1)
                             .map(
@@ -944,7 +955,7 @@ class _AddClassScreenState extends State<AddClassScreen> {
                                   'Semester $i',
                                   style: GoogleFonts.dmMono(
                                     fontSize: 14,
-                                    color: Colors.black,
+                                    color: AppColors.text(context),
                                   ),
                                 ),
                               ),
@@ -976,10 +987,10 @@ class _AddClassScreenState extends State<AddClassScreen> {
                             horizontal: 12,
                           ),
                           decoration: BoxDecoration(
-                            color: Colors.white,
+                            color: AppColors.input(context),
                             borderRadius: BorderRadius.circular(12),
                             border: Border.all(
-                              color: Colors.black,
+                              color: AppColors.border(context),
                               width: 2,
                             ),
                           ),
@@ -993,7 +1004,7 @@ class _AddClassScreenState extends State<AddClassScreen> {
                                   .padLeft(2, '0'),
                               hintStyle: GoogleFonts.dmMono(
                                 fontSize: 14,
-                                color: Colors.grey,
+                                color: AppColors.subtext(context),
                               ),
                               border: InputBorder.none,
                             ),
@@ -1030,10 +1041,10 @@ class _AddClassScreenState extends State<AddClassScreen> {
                         child: Container(
                           padding: const EdgeInsets.all(16),
                           decoration: BoxDecoration(
-                            color: Colors.grey.shade100,
+                            color: AppColors.card(context),
                             borderRadius: BorderRadius.circular(12),
                             border: Border.all(
-                              color: Colors.black,
+                              color: AppColors.border(context),
                               width: 2,
                             ),
                           ),
@@ -1043,7 +1054,7 @@ class _AddClassScreenState extends State<AddClassScreen> {
                                 .padLeft(2, '0'),
                             style: GoogleFonts.dmMono(
                               fontSize: 14,
-                              color: Colors.black54,
+                              color: AppColors.subtext(context),
                             ),
                             textAlign: TextAlign.center,
                           ),
@@ -1090,9 +1101,9 @@ class _AddClassScreenState extends State<AddClassScreen> {
                 decoration: BoxDecoration(
                   color: isSelected
                       ? const Color(0xFF6B7280)
-                      : Colors.white,
+                      : AppColors.card(context),
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.black, width: 2),
+                  border: Border.all(color: AppColors.border(context), width: 2),
                 ),
                 child: Text(
                   days[index],
@@ -1100,7 +1111,7 @@ class _AddClassScreenState extends State<AddClassScreen> {
                   style: GoogleFonts.dmMono(
                     fontSize: 13,
                     fontWeight: FontWeight.bold,
-                    color: isSelected ? Colors.white : Colors.black,
+                    color: isSelected ? Colors.white : AppColors.text(context),
                   ),
                 ),
               ),
@@ -1126,9 +1137,9 @@ class _AddClassScreenState extends State<AddClassScreen> {
                 child: Container(
                   padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
-                    color: Colors.white,
+                    color: AppColors.input(context),
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.black, width: 2),
+                    border: Border.all(color: AppColors.border(context), width: 2),
                   ),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -1140,8 +1151,8 @@ class _AddClassScreenState extends State<AddClassScreen> {
                         style: GoogleFonts.dmMono(
                           fontSize: 14,
                           color: _startTime != null
-                              ? Colors.black
-                              : Colors.grey,
+                              ? AppColors.text(context)
+                              : AppColors.subtext(context),
                         ),
                       ),
                       const Icon(Icons.access_time, size: 18),
@@ -1164,9 +1175,9 @@ class _AddClassScreenState extends State<AddClassScreen> {
                 child: Container(
                   padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
-                    color: Colors.white,
+                    color: AppColors.input(context),
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.black, width: 2),
+                    border: Border.all(color: AppColors.border(context), width: 2),
                   ),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -1178,8 +1189,8 @@ class _AddClassScreenState extends State<AddClassScreen> {
                         style: GoogleFonts.dmMono(
                           fontSize: 14,
                           color: _endTime != null
-                              ? Colors.black
-                              : Colors.grey,
+                              ? AppColors.text(context)
+                              : AppColors.subtext(context),
                         ),
                       ),
                       const Icon(Icons.access_time, size: 18),
@@ -1327,23 +1338,23 @@ class _CustomTimePickerDialogState extends State<_CustomTimePickerDialog> {
       builder: (context, child) {
         return Theme(
           data: Theme.of(context).copyWith(
-            colorScheme: const ColorScheme.light(
-              primary: Color(0xFF6B7280),
+            colorScheme: ColorScheme.light(
+              primary: const Color(0xFF6B7280),
               onPrimary: Colors.white,
-              surface: Colors.white,
-              onSurface: Colors.black,
+              surface: AppColors.card(context),
+              onSurface: AppColors.text(context),
             ),
             timePickerTheme: TimePickerThemeData(
-              backgroundColor: Colors.white,
+              backgroundColor: AppColors.card(context),
               dialHandColor: const Color(0xFF6B7280),
-              dialBackgroundColor: Colors.grey.shade100,
-              hourMinuteTextColor: Colors.black,
-              hourMinuteColor: Colors.grey.shade200,
-              dayPeriodTextColor: Colors.black,
-              dayPeriodColor: Colors.grey.shade200,
+              dialBackgroundColor: AppColors.fieldBg(context),
+              hourMinuteTextColor: AppColors.text(context),
+              hourMinuteColor: AppColors.fieldBg(context),
+              dayPeriodTextColor: AppColors.text(context),
+              dayPeriodColor: AppColors.fieldBg(context),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(16),
-                side: const BorderSide(color: Colors.black, width: 2),
+                side: BorderSide(color: AppColors.border(context), width: 2),
               ),
             ),
           ),
@@ -1372,10 +1383,10 @@ class _CustomTimePickerDialogState extends State<_CustomTimePickerDialog> {
     final period = _isAm ? 'AM' : 'PM';
 
     return Dialog(
-      backgroundColor: Colors.white,
+      backgroundColor: AppColors.card(context),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
-        side: const BorderSide(color: Colors.black, width: 2),
+        side: BorderSide(color: AppColors.border(context), width: 2),
       ),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
@@ -1402,9 +1413,9 @@ class _CustomTimePickerDialogState extends State<_CustomTimePickerDialog> {
                   horizontal: 16,
                 ),
                 decoration: BoxDecoration(
-                  color: Colors.grey.shade50,
+                  color: AppColors.input(context),
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.black26, width: 1.5),
+                  border: Border.all(color: AppColors.border(context), width: 1.5),
                 ),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
@@ -1462,18 +1473,18 @@ class _CustomTimePickerDialogState extends State<_CustomTimePickerDialog> {
             // ── Divider ────────────────────────────────────────────────────
             Row(
               children: [
-                const Expanded(child: Divider(color: Colors.black12)),
+                Expanded(child: Divider(color: AppColors.border(context))),
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 10),
                   child: Text(
                     'or type manually',
                     style: GoogleFonts.dmMono(
                       fontSize: 10,
-                      color: Colors.grey,
+                      color: AppColors.subtext(context),
                     ),
                   ),
                 ),
-                const Expanded(child: Divider(color: Colors.black12)),
+                Expanded(child: Divider(color: AppColors.border(context))),
               ],
             ),
             const SizedBox(height: 16),
@@ -1529,7 +1540,7 @@ class _CustomTimePickerDialogState extends State<_CustomTimePickerDialog> {
                     onPressed: () => Navigator.pop(context),
                     style: OutlinedButton.styleFrom(
                       padding: const EdgeInsets.symmetric(vertical: 14),
-                      side: const BorderSide(color: Colors.black, width: 2),
+                      side: BorderSide(color: AppColors.border(context), width: 2),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(10),
                       ),
@@ -1537,7 +1548,7 @@ class _CustomTimePickerDialogState extends State<_CustomTimePickerDialog> {
                     child: Text(
                       'Cancel',
                       style: GoogleFonts.dmMono(
-                        color: Colors.black,
+                        color: AppColors.text(context),
                         fontWeight: FontWeight.bold,
                       ),
                     ),
@@ -1621,17 +1632,17 @@ class _SpinnerField extends StatelessWidget {
               hintText: label,
               hintStyle: GoogleFonts.dmMono(
                 fontSize: 18,
-                color: Colors.grey.shade400,
+                color: AppColors.subtext(context),
               ),
               filled: true,
-              fillColor: Colors.grey.shade100,
+              fillColor: AppColors.input(context),
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(10),
-                borderSide: const BorderSide(color: Colors.black, width: 2),
+                borderSide: BorderSide(color: AppColors.border(context), width: 2),
               ),
               enabledBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(10),
-                borderSide: const BorderSide(color: Colors.black, width: 2),
+                borderSide: BorderSide(color: AppColors.border(context), width: 2),
               ),
               focusedBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(10),
@@ -1668,11 +1679,11 @@ class _ArrowBtn extends StatelessWidget {
         width: 68,
         height: 32,
         decoration: BoxDecoration(
-          color: Colors.grey.shade100,
+          color: AppColors.card(context),
           borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: Colors.black12),
+          border: Border.all(color: AppColors.border(context)),
         ),
-        child: Icon(icon, size: 22, color: Colors.black54),
+        child: Icon(icon, size: 22, color: AppColors.subtext(context)),
       ),
     );
   }
@@ -1722,10 +1733,10 @@ class _PeriodBtn extends StatelessWidget {
         width: 52,
         height: 40,
         decoration: BoxDecoration(
-          color: selected ? const Color(0xFF6B7280) : Colors.grey.shade100,
+          color: selected ? const Color(0xFF6B7280) : AppColors.fieldBg(context),
           borderRadius: BorderRadius.circular(8),
           border: Border.all(
-            color: selected ? const Color(0xFF6B7280) : Colors.black26,
+            color: selected ? const Color(0xFF6B7280) : AppColors.border(context),
             width: 2,
           ),
         ),
@@ -1735,7 +1746,7 @@ class _PeriodBtn extends StatelessWidget {
           style: GoogleFonts.dmMono(
             fontSize: 13,
             fontWeight: FontWeight.bold,
-            color: selected ? Colors.white : Colors.black54,
+            color: selected ? Colors.white : AppColors.subtext(context),
           ),
         ),
       ),

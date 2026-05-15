@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:path_provider/path_provider.dart';
 import 'package:flutter_pdfview/flutter_pdfview.dart';
 import '../services/certificate_service.dart';
+import '../app_preferences.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  CERTIFICATE REPOSITORY SCREEN
@@ -29,7 +30,6 @@ class _CertificateRepositoryScreenState
   String? _filterTag;
 
   // ── Palette matching calendar_screen ──────────────────────────────────────
-  static const _bgPage = Color(0xFFE5E7EB);   // same as CalendarScreen
   static const _dark   = Color(0xFF292929);   // same pill/header dark
   static const _red    = Color(0xFFB90000);   // accent red
   static const _tan    = Color(0xFFD4B896);   // keep for tags
@@ -70,10 +70,10 @@ class _CertificateRepositoryScreenState
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        backgroundColor: Colors.white,
+        backgroundColor: AppColors.card(context),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(16),
-          side: const BorderSide(color: Colors.black, width: 2),
+          side: BorderSide(color: AppColors.subtext(context).withValues(alpha: 0.6), width: 1.5),
         ),
         title: Text(
           'Delete Certificate?',
@@ -81,13 +81,13 @@ class _CertificateRepositoryScreenState
         ),
         content: Text(
           'This will permanently delete the certificate file. This action cannot be undone.',
-          style: GoogleFonts.dmMono(fontSize: 12, color: Colors.black54),
+          style: GoogleFonts.dmMono(fontSize: 12, color: AppColors.subtext(context)),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
             child: Text('Cancel',
-                style: GoogleFonts.dmMono(color: Colors.black54)),
+                style: GoogleFonts.dmMono(color: AppColors.subtext(context))),
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(context, true),
@@ -106,7 +106,7 @@ class _CertificateRepositoryScreenState
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text('Certificate deleted',
               style: GoogleFonts.dmMono(fontSize: 12)),
-          backgroundColor: _dark,
+          backgroundColor: AppColors.chipBg(context),
           behavior: SnackBarBehavior.floating,
           shape:
               RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
@@ -163,7 +163,7 @@ class _CertificateRepositoryScreenState
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: _bgPage,
+      backgroundColor: AppColors.bg(context),
       body: SafeArea(
         child: SingleChildScrollView(
           child: Padding(
@@ -187,7 +187,7 @@ class _CertificateRepositoryScreenState
                   'Store and manage your achievement certificates',
                   style: GoogleFonts.dmMono(
                     fontSize: 11,
-                    color: Colors.black45,
+                    color: AppColors.subtext(context),
                   ),
                 ),
 
@@ -196,9 +196,9 @@ class _CertificateRepositoryScreenState
                 // ── Search bar ───────────────────────────────────────
                 Container(
                   decoration: BoxDecoration(
-                    color: Colors.white,
+                    color: AppColors.card(context),
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.black, width: 2),
+                    border: Border.all(color: AppColors.border(context), width: 2),
                   ),
                   child: TextField(
                     controller: _searchController,
@@ -206,9 +206,9 @@ class _CertificateRepositoryScreenState
                     decoration: InputDecoration(
                       hintText: 'Search certificates...',
                       hintStyle: GoogleFonts.dmMono(
-                          fontSize: 12, color: Colors.black38),
-                      prefixIcon: const Icon(Icons.search,
-                          size: 18, color: Colors.black45),
+                          fontSize: 12, color: AppColors.subtext(context)),
+                      prefixIcon: Icon(Icons.search,
+                          size: 18, color: AppColors.subtext(context)),
                       border: InputBorder.none,
                       contentPadding:
                           const EdgeInsets.symmetric(vertical: 18),
@@ -348,14 +348,14 @@ class _CertificateRepositoryScreenState
         margin: const EdgeInsets.only(right: 8),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         decoration: BoxDecoration(
-          color: selected ? _dark : Colors.white,
+          color: selected ? AppColors.chipBg(context) : AppColors.card(context),
           borderRadius: BorderRadius.circular(20),
           border: Border.all(
             color: selected
-                ? _dark
+                ? AppColors.chipBg(context)
                 : isTag
                     ? _tan
-                    : Colors.black,
+                    : AppColors.border(context),
             width: 2,
           ),
         ),
@@ -372,7 +372,7 @@ class _CertificateRepositoryScreenState
               style: GoogleFonts.dmMono(
                 fontSize: 11,
                 fontWeight: FontWeight.bold,
-                color: selected ? Colors.white : Colors.black,
+                color: selected ? Colors.white : AppColors.text(context),
               ),
             ),
           ],
@@ -385,9 +385,9 @@ class _CertificateRepositoryScreenState
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
-        color: _dark,
+        color: AppColors.chipBg(context),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.black, width: 2),
+        border: Border.all(color: AppColors.border(context), width: 2),
       ),
       child: Row(
         children: [
@@ -431,25 +431,25 @@ class _CertificateRepositoryScreenState
       width: double.infinity,
       padding: const EdgeInsets.all(48),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.card(context),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.black, width: 2),
+        border: Border.all(color: AppColors.border(context), width: 2),
       ),
       child: Column(
         children: [
-          const Icon(Icons.workspace_premium_outlined,
-              size: 48, color: Color(0xFF6B7280)),
+          Icon(Icons.workspace_premium_outlined,
+              size: 48, color: AppColors.subtext(context)),
           const SizedBox(height: 12),
           Text(
             noData ? 'No certificates yet' : 'No results found',
-            style: GoogleFonts.dmMono(fontSize: 13, color: Colors.grey),
+            style: GoogleFonts.dmMono(fontSize: 13, color: AppColors.subtext(context)),
           ),
           const SizedBox(height: 4),
           Text(
             noData
                 ? 'Tap + to upload your first certificate'
                 : 'Try a different search or filter',
-            style: GoogleFonts.dmMono(fontSize: 11, color: Colors.black38),
+            style: GoogleFonts.dmMono(fontSize: 11, color: AppColors.subtext(context)),
             textAlign: TextAlign.center,
           ),
           if (noData) ...[
@@ -460,9 +460,9 @@ class _CertificateRepositoryScreenState
                 padding: const EdgeInsets.symmetric(
                     horizontal: 28, vertical: 14),
                 decoration: BoxDecoration(
-                  color: _dark,
+                  color: AppColors.chipBg(context),
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.black, width: 2),
+                  border: Border.all(color: AppColors.border(context), width: 2),
                 ),
                 child: Text(
                   'Upload Certificate',
@@ -500,7 +500,6 @@ class _CertCard extends StatelessWidget {
   final VoidCallback onEdit;
   final VoidCallback onDelete;
 
-  static const _dark = Color(0xFF292929);
   static const _tan  = Color(0xFFD4B896);
   static const _red  = Color(0xFFB90000);
 
@@ -527,9 +526,9 @@ class _CertCard extends StatelessWidget {
       ),
       child: Container(
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: AppColors.card(context),
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.black, width: 2),
+          border: Border.all(color: AppColors.border(context), width: 2),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -540,10 +539,12 @@ class _CertCard extends StatelessWidget {
                 children: [
                   Container(
                     width: double.infinity,
-                    decoration: const BoxDecoration(
-                      color: Color(0xFFF5F0EB),
+                    decoration: BoxDecoration(
+                      color: AppColors.isDark(context)
+                          ? const Color(0xFF1E2848)
+                          : const Color(0xFFF5F0EB),
                       borderRadius:
-                          BorderRadius.vertical(top: Radius.circular(14)),
+                          const BorderRadius.vertical(top: Radius.circular(14)),
                     ),
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
@@ -556,10 +557,10 @@ class _CertCard extends StatelessWidget {
                             color: Colors.white,
                             borderRadius: BorderRadius.circular(6),
                             border: Border.all(
-                                color: Colors.black26, width: 1),
+                                color: Colors.black12, width: 1),
                             boxShadow: [
                               BoxShadow(
-                                color: Colors.black.withOpacity(0.1),
+                                color: Colors.black.withValues(alpha: 0.15),
                                 blurRadius: 4,
                                 offset: const Offset(2, 2),
                               ),
@@ -583,7 +584,7 @@ class _CertCard extends StatelessWidget {
                                         decoration: BoxDecoration(
                                           color: i == 0
                                               ? _tan
-                                              : Colors.black12,
+                                              : Colors.black87,
                                           borderRadius:
                                               BorderRadius.circular(1),
                                         ),
@@ -620,7 +621,7 @@ class _CertCard extends StatelessWidget {
                           Text(
                             '${sizeKB.toStringAsFixed(0)} KB',
                             style: GoogleFonts.dmMono(
-                                fontSize: 9, color: Colors.black38),
+                                fontSize: 9, color: AppColors.subtext(context)),
                           ),
                         ],
                       ],
@@ -636,33 +637,33 @@ class _CertCard extends StatelessWidget {
                         if (val == 'edit') onEdit();
                         if (val == 'delete') onDelete();
                       },
-                      color: Colors.white,
+                      color: AppColors.card(context),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(10),
-                        side: const BorderSide(
-                            color: Colors.black26, width: 1),
+                        side: BorderSide(
+                            color: AppColors.border(context), width: 1),
                       ),
                       icon: Container(
                         decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.85),
+                          color: AppColors.card(context).withValues(alpha: 0.85),
                           shape: BoxShape.circle,
                           border: Border.all(
-                              color: Colors.black26, width: 1),
+                              color: AppColors.border(context), width: 1),
                         ),
-                        child: const Icon(Icons.more_vert,
-                            size: 18, color: Colors.black54),
+                        child: Icon(Icons.more_vert,
+                            size: 18, color: AppColors.subtext(context)),
                       ),
                       itemBuilder: (_) => [
                         PopupMenuItem(
                           value: 'edit',
                           child: Row(children: [
-                            const Icon(Icons.edit_outlined,
-                                color: Color(0xFF292929), size: 16),
+                            Icon(Icons.edit_outlined,
+                                color: AppColors.text(context), size: 16),
                             const SizedBox(width: 8),
                             Text('Edit',
                                 style: GoogleFonts.dmMono(
                                     fontSize: 13,
-                                    color: const Color(0xFF292929))),
+                                    color: AppColors.text(context))),
                           ]),
                         ),
                         PopupMenuItem(
@@ -694,7 +695,7 @@ class _CertCard extends StatelessWidget {
                     style: GoogleFonts.dmMono(
                       fontSize: 10,
                       fontWeight: FontWeight.bold,
-                      color: _dark,
+                      color: AppColors.text(context),
                     ),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
@@ -703,12 +704,12 @@ class _CertCard extends StatelessWidget {
                     const SizedBox(height: 3),
                     Row(
                       children: [
-                        const Icon(Icons.calendar_today_outlined,
-                            size: 9, color: Colors.black38),
+                        Icon(Icons.calendar_today_outlined,
+                            size: 9, color: AppColors.subtext(context)),
                         const SizedBox(width: 3),
                         Text(year,
                             style: GoogleFonts.dmMono(
-                                fontSize: 9, color: Colors.black45)),
+                                fontSize: 9, color: AppColors.subtext(context))),
                       ],
                     ),
                   ],
@@ -731,7 +732,7 @@ class _CertCard extends StatelessWidget {
                                 ),
                                 child: Text(t,
                                     style: GoogleFonts.dmMono(
-                                        fontSize: 8, color: _dark)),
+                                        fontSize: 8, color: AppColors.text(context))),
                               ))
                           .toList(),
                     ),
@@ -760,9 +761,9 @@ class _AddCard extends StatelessWidget {
       onTap: onTap,
       child: Container(
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: AppColors.card(context),
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.black, width: 2),
+          border: Border.all(color: AppColors.border(context), width: 2),
         ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -770,8 +771,8 @@ class _AddCard extends StatelessWidget {
             Container(
               width: 48,
               height: 48,
-              decoration: const BoxDecoration(
-                color: Color(0xFF292929),
+              decoration: BoxDecoration(
+                color: AppColors.chipBg(context),
                 shape: BoxShape.circle,
               ),
               child: const Icon(Icons.add, color: Colors.white, size: 26),
@@ -781,7 +782,7 @@ class _AddCard extends StatelessWidget {
               'Add Certificate',
               style: GoogleFonts.dmMono(
                 fontSize: 11,
-                color: Colors.black54,
+                color: AppColors.subtext(context),
                 fontWeight: FontWeight.bold,
               ),
               textAlign: TextAlign.center,
@@ -830,7 +831,6 @@ class _UploadEditSheetState extends State<_UploadEditSheet> {
   bool _isLoading = false;
   String? _errorMsg;
 
-  static const _dark  = Color(0xFF292929);
   static const _tan   = Color(0xFFD4B896);
   static const _red   = Color(0xFFB90000);
   static const _green = Color(0xFF2E7D32);
@@ -914,7 +914,7 @@ class _UploadEditSheetState extends State<_UploadEditSheet> {
           ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             content: Text('Certificate updated!',
                 style: GoogleFonts.dmMono(fontSize: 12)),
-            backgroundColor: _dark,
+            backgroundColor: AppColors.chipBg(context),
             behavior: SnackBarBehavior.floating,
             shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(8)),
@@ -954,7 +954,7 @@ class _UploadEditSheetState extends State<_UploadEditSheet> {
           ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             content: Text('Certificate uploaded!',
                 style: GoogleFonts.dmMono(fontSize: 12)),
-            backgroundColor: _dark,
+            backgroundColor: AppColors.chipBg(context),
             behavior: SnackBarBehavior.floating,
             shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(8)),
@@ -977,13 +977,13 @@ class _UploadEditSheetState extends State<_UploadEditSheet> {
     return Container(
       padding:
           EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      decoration: BoxDecoration(
+        color: AppColors.card(context),
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
         border: Border(
-          top:   BorderSide(color: Colors.black, width: 2),
-          left:  BorderSide(color: Colors.black, width: 2),
-          right: BorderSide(color: Colors.black, width: 2),
+          top:   BorderSide(color: AppColors.subtext(context).withValues(alpha: 0.6), width: 1.5),
+          left:  BorderSide(color: AppColors.subtext(context).withValues(alpha: 0.6), width: 1.5),
+          right: BorderSide(color: AppColors.subtext(context).withValues(alpha: 0.6), width: 1.5),
         ),
       ),
       child: SafeArea(
@@ -999,7 +999,7 @@ class _UploadEditSheetState extends State<_UploadEditSheet> {
                   width: 40,
                   height: 4,
                   decoration: BoxDecoration(
-                    color: Colors.grey.shade300,
+                    color: AppColors.border(context),
                     borderRadius: BorderRadius.circular(2),
                   ),
                 ),
@@ -1021,7 +1021,7 @@ class _UploadEditSheetState extends State<_UploadEditSheet> {
                   'Step 1 — Select PDF File',
                   style: GoogleFonts.dmMono(
                       fontSize: 11,
-                      color: Colors.black54,
+                      color: AppColors.subtext(context),
                       fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 8),
@@ -1035,10 +1035,10 @@ class _UploadEditSheetState extends State<_UploadEditSheet> {
                     decoration: BoxDecoration(
                       color: hasFile
                           ? _green.withOpacity(0.07)
-                          : const Color(0xFFF5F5F5),
+                          : AppColors.input(context),
                       borderRadius: BorderRadius.circular(12),
                       border: Border.all(
-                        color: hasFile ? _green : Colors.black38,
+                        color: hasFile ? _green : AppColors.border(context),
                         width: hasFile ? 1.5 : 1,
                       ),
                     ),
@@ -1050,14 +1050,14 @@ class _UploadEditSheetState extends State<_UploadEditSheet> {
                           decoration: BoxDecoration(
                             color: hasFile
                                 ? _green.withOpacity(0.15)
-                                : Colors.black.withOpacity(0.06),
+                                : AppColors.fieldBg(context),
                             borderRadius: BorderRadius.circular(8),
                           ),
                           child: Icon(
                             hasFile
                                 ? Icons.check_circle_outline
                                 : Icons.picture_as_pdf_outlined,
-                            color: hasFile ? _green : Colors.black45,
+                            color: hasFile ? _green : AppColors.subtext(context),
                             size: 22,
                           ),
                         ),
@@ -1075,7 +1075,7 @@ class _UploadEditSheetState extends State<_UploadEditSheet> {
                                   fontWeight: FontWeight.bold,
                                   color: hasFile
                                       ? _green
-                                      : Colors.black45,
+                                      : AppColors.subtext(context),
                                 ),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
@@ -1086,14 +1086,14 @@ class _UploadEditSheetState extends State<_UploadEditSheet> {
                                   '${(_pickedBytes!.lengthInBytes / 1024).toStringAsFixed(0)} KB',
                                   style: GoogleFonts.dmMono(
                                       fontSize: 10,
-                                      color: Colors.black38),
+                                      color: AppColors.subtext(context)),
                                 ),
                               ] else ...[
                                 const SizedBox(height: 2),
                                 Text('Tap to browse PDF files',
                                     style: GoogleFonts.dmMono(
                                         fontSize: 10,
-                                        color: Colors.black38)),
+                                        color: AppColors.subtext(context))),
                               ],
                             ],
                           ),
@@ -1102,7 +1102,7 @@ class _UploadEditSheetState extends State<_UploadEditSheet> {
                           padding: const EdgeInsets.symmetric(
                               horizontal: 12, vertical: 6),
                           decoration: BoxDecoration(
-                            color: hasFile ? _green : _dark,
+                            color: hasFile ? _green : AppColors.chipBg(context),
                             borderRadius: BorderRadius.circular(8),
                           ),
                           child: Text(
@@ -1124,7 +1124,7 @@ class _UploadEditSheetState extends State<_UploadEditSheet> {
                   'Step 2 — Fill in Details',
                   style: GoogleFonts.dmMono(
                       fontSize: 11,
-                      color: Colors.black54,
+                      color: AppColors.subtext(context),
                       fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 8),
@@ -1133,7 +1133,7 @@ class _UploadEditSheetState extends State<_UploadEditSheet> {
               // Certificate Title
               Text('Certificate Title *',
                   style: GoogleFonts.dmMono(
-                      fontSize: 11, color: Colors.black54)),
+                      fontSize: 11, color: AppColors.subtext(context))),
               const SizedBox(height: 6),
               TextField(
                 controller: _titleCtrl,
@@ -1141,12 +1141,18 @@ class _UploadEditSheetState extends State<_UploadEditSheet> {
                 decoration: InputDecoration(
                   hintText: 'e.g. Coding Champ 2024',
                   hintStyle: GoogleFonts.dmMono(
-                      fontSize: 12, color: Colors.black26),
+                      fontSize: 12, color: AppColors.subtext(context)),
                   filled: true,
-                  fillColor: const Color(0xFFF5F5F5),
+                  fillColor: AppColors.fieldBg(context),
                   border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(10),
-                      borderSide: BorderSide.none),
+                      borderSide: BorderSide(color: AppColors.subtext(context).withValues(alpha: 0.35), width: 1)),
+                  enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: BorderSide(color: AppColors.subtext(context).withValues(alpha: 0.35), width: 1)),
+                  focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: BorderSide(color: AppColors.subtext(context).withValues(alpha: 0.6), width: 1.5)),
                   contentPadding: const EdgeInsets.symmetric(
                       horizontal: 14, vertical: 12),
                 ),
@@ -1156,7 +1162,7 @@ class _UploadEditSheetState extends State<_UploadEditSheet> {
               // Year
               Text('Year',
                   style: GoogleFonts.dmMono(
-                      fontSize: 11, color: Colors.black54)),
+                      fontSize: 11, color: AppColors.subtext(context))),
               const SizedBox(height: 6),
               TextField(
                 controller: _yearCtrl,
@@ -1165,12 +1171,18 @@ class _UploadEditSheetState extends State<_UploadEditSheet> {
                 decoration: InputDecoration(
                   hintText: 'e.g. 2024',
                   hintStyle: GoogleFonts.dmMono(
-                      fontSize: 12, color: Colors.black26),
+                      fontSize: 12, color: AppColors.subtext(context)),
                   filled: true,
-                  fillColor: const Color(0xFFF5F5F5),
+                  fillColor: AppColors.fieldBg(context),
                   border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(10),
-                      borderSide: BorderSide.none),
+                      borderSide: BorderSide(color: AppColors.subtext(context).withValues(alpha: 0.35), width: 1)),
+                  enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: BorderSide(color: AppColors.subtext(context).withValues(alpha: 0.35), width: 1)),
+                  focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: BorderSide(color: AppColors.subtext(context).withValues(alpha: 0.6), width: 1.5)),
                   contentPadding: const EdgeInsets.symmetric(
                       horizontal: 14, vertical: 12),
                 ),
@@ -1180,7 +1192,7 @@ class _UploadEditSheetState extends State<_UploadEditSheet> {
               // Tags
               Text('Tags',
                   style: GoogleFonts.dmMono(
-                      fontSize: 11, color: Colors.black54)),
+                      fontSize: 11, color: AppColors.subtext(context))),
               const SizedBox(height: 6),
               Wrap(
                 spacing: 6,
@@ -1194,16 +1206,16 @@ class _UploadEditSheetState extends State<_UploadEditSheet> {
                       padding: const EdgeInsets.symmetric(
                           horizontal: 12, vertical: 6),
                       decoration: BoxDecoration(
-                        color: selected ? _dark : Colors.transparent,
+                        color: selected ? AppColors.chipBg(context) : Colors.transparent,
                         borderRadius: BorderRadius.circular(20),
                         border: Border.all(
-                            color: selected ? _dark : Colors.black38,
+                            color: selected ? AppColors.chipBg(context) : AppColors.border(context),
                             width: 1.5),
                       ),
                       child: Text(t,
                           style: GoogleFonts.dmMono(
                             fontSize: 11,
-                            color: selected ? Colors.white : _dark,
+                            color: selected ? Colors.white : AppColors.text(context),
                             fontWeight: selected
                                 ? FontWeight.bold
                                 : FontWeight.normal,
@@ -1224,12 +1236,18 @@ class _UploadEditSheetState extends State<_UploadEditSheet> {
                       decoration: InputDecoration(
                         hintText: 'Custom tag...',
                         hintStyle: GoogleFonts.dmMono(
-                            fontSize: 11, color: Colors.black26),
+                            fontSize: 11, color: AppColors.subtext(context)),
                         filled: true,
-                        fillColor: const Color(0xFFF5F5F5),
+                        fillColor: AppColors.fieldBg(context),
                         border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(10),
-                            borderSide: BorderSide.none),
+                            borderSide: BorderSide(color: AppColors.subtext(context).withValues(alpha: 0.35), width: 1)),
+                        enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(10),
+                            borderSide: BorderSide(color: AppColors.subtext(context).withValues(alpha: 0.35), width: 1)),
+                        focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(10),
+                            borderSide: BorderSide(color: AppColors.subtext(context).withValues(alpha: 0.6), width: 1.5)),
                         isDense: true,
                         contentPadding: const EdgeInsets.symmetric(
                             horizontal: 12, vertical: 10),
@@ -1243,7 +1261,7 @@ class _UploadEditSheetState extends State<_UploadEditSheet> {
                     child: Container(
                       padding: const EdgeInsets.all(10),
                       decoration: BoxDecoration(
-                          color: _dark,
+                          color: AppColors.chipBg(context),
                           borderRadius: BorderRadius.circular(10)),
                       child: const Icon(Icons.add,
                           color: Colors.white, size: 20),
@@ -1282,9 +1300,9 @@ class _UploadEditSheetState extends State<_UploadEditSheet> {
                   child: LinearProgressIndicator(
                     value: _uploadProgress > 0 ? _uploadProgress : null,
                     minHeight: 6,
-                    backgroundColor: Colors.black12,
+                    backgroundColor: AppColors.border(context),
                     valueColor:
-                        const AlwaysStoppedAnimation<Color>(_dark),
+                        AlwaysStoppedAnimation<Color>(AppColors.chipBg(context)),
                   ),
                 ),
                 const SizedBox(height: 6),
@@ -1293,7 +1311,7 @@ class _UploadEditSheetState extends State<_UploadEditSheet> {
                       ? 'Uploading... ${(_uploadProgress * 100).toStringAsFixed(0)}%'
                       : 'Uploading...',
                   style: GoogleFonts.dmMono(
-                      fontSize: 11, color: Colors.black54),
+                      fontSize: 11, color: AppColors.subtext(context)),
                 ),
               ],
 
@@ -1315,9 +1333,9 @@ class _UploadEditSheetState extends State<_UploadEditSheet> {
                           ? null
                           : () => Navigator.pop(context),
                       style: OutlinedButton.styleFrom(
-                        foregroundColor: Colors.black,
-                        side: const BorderSide(
-                            color: Colors.black, width: 2),
+                        foregroundColor: AppColors.text(context),
+                        side: BorderSide(
+                            color: AppColors.border(context), width: 2),
                         padding:
                             const EdgeInsets.symmetric(vertical: 16),
                         shape: RoundedRectangleBorder(
@@ -1351,9 +1369,9 @@ class _UploadEditSheetState extends State<_UploadEditSheet> {
                       ),
                       style: ElevatedButton.styleFrom(
                         backgroundColor:
-                            (!isEdit && !hasFile) ? Colors.black26 : _dark,
+                            (!isEdit && !hasFile) ? AppColors.border(context) : AppColors.chipBg(context),
                         foregroundColor: Colors.white,
-                        disabledBackgroundColor: Colors.black26,
+                        disabledBackgroundColor: AppColors.border(context),
                         padding:
                             const EdgeInsets.symmetric(vertical: 16),
                         shape: RoundedRectangleBorder(
@@ -1401,7 +1419,6 @@ class _CertificateViewerScreenState extends State<CertificateViewerScreen> {
   String? _error;
   bool _downloading = false;
 
-  static const _dark = Color(0xFF292929);
   static const _tan  = Color(0xFFD4B896);
 
   @override
@@ -1495,9 +1512,9 @@ class _CertificateViewerScreenState extends State<CertificateViewerScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: _dark,
+      backgroundColor: AppColors.chipBg(context),
       appBar: AppBar(
-        backgroundColor: _dark,
+        backgroundColor: AppColors.chipBg(context),
         foregroundColor: Colors.white,
         title: Text(
           widget.title,

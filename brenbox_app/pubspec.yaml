@@ -25,6 +25,7 @@ dependencies:
   path_provider: ^2.1.2
 
   google_sign_in: ^6.2.1
+  firebase_messaging: ^16.0.4
 
   flutter_local_notifications: ^17.2.4
   timezone: ^0.9.4
@@ -41,6 +42,7 @@ flutter:
 
   assets:
      - assets/images/BrenboxLogo.png
+     - assets/images/BrenboxLogoWhite.png
      - assets/images/Brenbox_Applogo.png
      - assets/images/google_icon.png
      - assets/images/

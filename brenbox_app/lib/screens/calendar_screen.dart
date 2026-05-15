@@ -1,4 +1,6 @@
+﻿import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -6,7 +8,9 @@ import 'package:intl/intl.dart';
 import '../tasks/edit_class_screen.dart';
 import '../tasks/edit_task_screen.dart';
 import '../tasks/edit_exam_screen.dart';
+import '../services/notification_service.dart';
 import 'subject_detail_screen.dart';
+import '../app_preferences.dart';
 
 class CalendarScreen extends StatefulWidget {
   const CalendarScreen({Key? key}) : super(key: key);
@@ -80,7 +84,8 @@ class _CalendarScreenState extends State<CalendarScreen> {
             });
 
           return semesterList;
-        });
+        })
+        .handleError((_) {});
   }
 
   void _previousMonth() {
@@ -183,7 +188,8 @@ class _CalendarScreenState extends State<CalendarScreen> {
           bool isUpcoming = hasEvents && checkDate.isAfter(today);
 
           return {'hasEvents': hasEvents, 'isUpcoming': isUpcoming};
-        });
+        })
+        .handleError((_) {});
   }
 
   List<DateTime> _getDaysInMonth(DateTime month) {
@@ -238,7 +244,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
     final daysInMonth = _getDaysInMonth(_currentMonth);
 
     return Scaffold(
-      backgroundColor: const Color(0xFFE5E7EB),
+      backgroundColor: AppColors.bg(context),
       body: SafeArea(
         child: SingleChildScrollView(
           child: Padding(
@@ -252,6 +258,9 @@ class _CalendarScreenState extends State<CalendarScreen> {
                 _buildCalendar(daysInMonth),
                 const SizedBox(height: 24),
                 _buildSelectedDateEvents(),
+                _buildInvitationsSection(),
+                _buildTimetableSharesSection(),
+                const SizedBox(height: 4),
                 const SizedBox(height: 24),
                 _buildSubjectsSection(),
                 const SizedBox(height: 24),
@@ -274,9 +283,9 @@ class _CalendarScreenState extends State<CalendarScreen> {
     return Container(
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.card(context),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.black, width: 2),
+        border: Border.all(color: AppColors.border(context), width: 2),
       ),
       child: Column(
         children: [
@@ -290,7 +299,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
                   vertical: 8,
                 ),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF292929),
+                  color: AppColors.chipBg(context),
                   borderRadius: BorderRadius.circular(16),
                 ),
                 child: Text(
@@ -310,14 +319,14 @@ class _CalendarScreenState extends State<CalendarScreen> {
                       width: 32,
                       height: 32,
                       decoration: BoxDecoration(
-                        color: Colors.white,
+                        color: AppColors.card(context),
                         shape: BoxShape.circle,
-                        border: Border.all(color: Colors.black, width: 2),
+                        border: Border.all(color: AppColors.border(context), width: 2),
                       ),
-                      child: const Icon(
+                      child: Icon(
                         Icons.chevron_left,
                         size: 20,
-                        color: Colors.black,
+                        color: AppColors.text(context),
                       ),
                     ),
                   ),
@@ -328,14 +337,14 @@ class _CalendarScreenState extends State<CalendarScreen> {
                       width: 32,
                       height: 32,
                       decoration: BoxDecoration(
-                        color: Colors.white,
+                        color: AppColors.card(context),
                         shape: BoxShape.circle,
-                        border: Border.all(color: Colors.black, width: 2),
+                        border: Border.all(color: AppColors.border(context), width: 2),
                       ),
-                      child: const Icon(
+                      child: Icon(
                         Icons.chevron_right,
                         size: 20,
-                        color: Colors.black,
+                        color: AppColors.text(context),
                       ),
                     ),
                   ),
@@ -412,7 +421,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
     Color? backgroundColor;
     Color? borderColor;
     double? borderWidth;
-    Color textColor = Colors.black;
+    Color textColor = AppColors.text(context);
 
     if (isToday) {
       backgroundColor = const Color(0xFFB90000);
@@ -424,13 +433,13 @@ class _CalendarScreenState extends State<CalendarScreen> {
         borderColor = const Color(0xFFB90000);
         borderWidth = 2;
       } else if (hasEvents) {
-        borderColor = Colors.black;
+        borderColor = AppColors.border(context);
         borderWidth = 2;
       }
     }
 
     if (!isCurrentMonth) {
-      textColor = Colors.grey.shade400;
+      textColor = AppColors.subtext(context);
     }
 
     return _AnimatedTapButton(
@@ -466,7 +475,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
           ),
           if (isSelected) ...[
             const SizedBox(height: 4),
-            CustomPaint(size: const Size(10, 8), painter: TrianglePainter()),
+            CustomPaint(size: const Size(10, 8), painter: TrianglePainter(color: AppColors.text(context))),
           ],
         ],
       ),
@@ -482,7 +491,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
         style: GoogleFonts.dmMono(
           fontSize: 11,
           fontWeight: FontWeight.bold,
-          color: Colors.black87,
+          color: AppColors.text(context),
         ),
       ),
     );
@@ -575,121 +584,137 @@ class _CalendarScreenState extends State<CalendarScreen> {
     String userId,
     DateTime date,
   ) {
-    return _firestore
+    // Use real-time snapshots for ALL three collections so that
+    // deleting a task or exam immediately removes it from the UI.
+    final timetableStream = _firestore
         .collection('timetable')
         .where('userId', isEqualTo: userId)
-        .snapshots()
-        .asyncMap((timetableSnapshot) async {
-          List<Map<String, dynamic>> allEvents = [];
+        .snapshots();
+    final tasksStream = _firestore
+        .collection('tasks')
+        .where('userId', isEqualTo: userId)
+        .snapshots();
+    final examsStream = _firestore
+        .collection('exams')
+        .where('userId', isEqualTo: userId)
+        .snapshots();
 
-          // Get timetable/classes
-          for (var doc in timetableSnapshot.docs) {
-            try {
-              final data = doc.data() as Map<String, dynamic>;
-              final timestamp = data['date'] as Timestamp?;
+    return _mergeCalendarStreams(
+      date,
+      timetableStream,
+      tasksStream,
+      examsStream,
+    );
+  }
 
-              if (timestamp != null) {
-                final eventDate = timestamp.toDate();
+  Stream<List<Map<String, dynamic>>> _mergeCalendarStreams(
+    DateTime date,
+    Stream<QuerySnapshot> timetableStream,
+    Stream<QuerySnapshot> tasksStream,
+    Stream<QuerySnapshot> examsStream,
+  ) {
+    QuerySnapshot? latestTimetable;
+    QuerySnapshot? latestTasks;
+    QuerySnapshot? latestExams;
 
-                if (eventDate.year == date.year &&
-                    eventDate.month == date.month &&
-                    eventDate.day == date.day) {
-                  allEvents.add({
-                    'id': doc.id,
-                    'className': data['className'] ?? 'Untitled',
-                    'startTime': data['startTime'] ?? '00:00',
-                    'endTime': data['endTime'] ?? '00:00',
-                    'room': data['room'] ?? '',
-                    'building': data['building'] ?? '',
-                    'lecturerName': data['lecturerName'] ?? '',
-                    'type': data['type'] ?? 'class',
-                    'date': timestamp,
-                  });
-                }
-              }
-            } catch (e) {
-              print('Error processing timetable document ${doc.id}: $e');
-              continue;
+    final controller = StreamController<List<Map<String, dynamic>>>.broadcast();
+
+    List<Map<String, dynamic>> buildEvents() {
+      final List<Map<String, dynamic>> allEvents = [];
+
+      for (var doc in (latestTimetable?.docs ?? [])) {
+        try {
+          final data = doc.data() as Map<String, dynamic>;
+          final timestamp = data['date'] as Timestamp?;
+          if (timestamp != null) {
+            final eventDate = timestamp.toDate();
+            if (eventDate.year == date.year &&
+                eventDate.month == date.month &&
+                eventDate.day == date.day) {
+              allEvents.add({
+                'id': doc.id,
+                'className': data['className'] ?? 'Untitled',
+                'startTime': data['startTime'] ?? '00:00',
+                'endTime': data['endTime'] ?? '00:00',
+                'room': data['room'] ?? '',
+                'building': data['building'] ?? '',
+                'lecturerName': data['lecturerName'] ?? '',
+                'type': data['type'] ?? 'class',
+                'date': timestamp,
+              });
             }
           }
+        } catch (_) {}
+      }
 
-          // Get tasks
-          final tasksSnapshot = await _firestore
-              .collection('tasks')
-              .where('userId', isEqualTo: userId)
-              .get();
-
-          for (var doc in tasksSnapshot.docs) {
-            try {
-              final data = doc.data() as Map<String, dynamic>;
-              final timestamp = data['dueDate'] as Timestamp?;
-
-              if (timestamp != null) {
-                final dueDate = timestamp.toDate();
-
-                if (dueDate.year == date.year &&
-                    dueDate.month == date.month &&
-                    dueDate.day == date.day) {
-                  allEvents.add({
-                    'id': doc.id,
-                    'type': 'task',
-                    'taskTitle': data['taskTitle'] ?? 'Untitled Task',
-                    'taskDetails': data['taskDetails'] ?? '',
-                    'subject': data['subject'] ?? '',
-                    'taskType': data['taskType'] ?? '',
-                    'dueDate': timestamp,
-                    'dueTime': DateFormat('HH:mm').format(dueDate),
-                    'completed': data['completed'] ?? false,
-                  });
-                }
-              }
-            } catch (e) {
-              print('Error processing task document ${doc.id}: $e');
-              continue;
+      for (var doc in (latestTasks?.docs ?? [])) {
+        try {
+          final data = doc.data() as Map<String, dynamic>;
+          final timestamp = data['dueDate'] as Timestamp?;
+          if (timestamp != null) {
+            final dueDate = timestamp.toDate();
+            if (dueDate.year == date.year &&
+                dueDate.month == date.month &&
+                dueDate.day == date.day) {
+              allEvents.add({
+                'id': doc.id,
+                'type': 'task',
+                'taskTitle': data['taskTitle'] ?? 'Untitled Task',
+                'taskDetails': data['taskDetails'] ?? '',
+                'subject': data['subject'] ?? '',
+                'taskType': data['taskType'] ?? '',
+                'dueDate': timestamp,
+                'dueTime': DateFormat('HH:mm').format(dueDate),
+                'completed': data['completed'] ?? false,
+              });
             }
           }
+        } catch (_) {}
+      }
 
-          // Get exams
-          final examsSnapshot = await _firestore
-              .collection('exams')
-              .where('userId', isEqualTo: userId)
-              .get();
-
-          for (var doc in examsSnapshot.docs) {
-            try {
-              final data = doc.data() as Map<String, dynamic>;
-              final timestamp = data['examDate'] as Timestamp?;
-
-              if (timestamp != null) {
-                final examDate = timestamp.toDate();
-
-                if (examDate.year == date.year &&
-                    examDate.month == date.month &&
-                    examDate.day == date.day) {
-                  allEvents.add({
-                    'id': doc.id,
-                    'eventType': 'exam', // Use this to identify it's an exam
-                    'type':
-                        data['type'] ??
-                        'Exam', // Exam type (Midterm, Final, etc.)
-                    'examName': data['examName'] ?? 'Untitled Exam',
-                    'subject': data['subject'] ?? '',
-                    'mode': data['mode'] ?? 'In Person',
-                    'venue': data['venue'] ?? '',
-                    'examDate': timestamp,
-                    'startTime': data['startTime'],
-                    'endTime': data['endTime'],
-                  });
-                }
-              }
-            } catch (e) {
-              print('Error processing exam document ${doc.id}: $e');
-              continue;
+      for (var doc in (latestExams?.docs ?? [])) {
+        try {
+          final data = doc.data() as Map<String, dynamic>;
+          final timestamp = data['examDate'] as Timestamp?;
+          if (timestamp != null) {
+            final examDate = timestamp.toDate();
+            if (examDate.year == date.year &&
+                examDate.month == date.month &&
+                examDate.day == date.day) {
+              allEvents.add({
+                'id': doc.id,
+                'eventType': 'exam',
+                'type': data['type'] ?? 'Exam',
+                'examName': data['examName'] ?? 'Untitled Exam',
+                'subject': data['subject'] ?? '',
+                'mode': data['mode'] ?? 'In Person',
+                'venue': data['venue'] ?? '',
+                'examDate': timestamp,
+                'startTime': data['startTime'],
+                'endTime': data['endTime'],
+              });
             }
           }
+        } catch (_) {}
+      }
 
-          return allEvents;
-        });
+      return allEvents;
+    }
+
+    final sub1 = timetableStream.listen((snap) {
+      latestTimetable = snap;
+      if (!controller.isClosed) controller.add(buildEvents());
+    }, onError: (_) {});
+    final sub2 = tasksStream.listen((snap) {
+      latestTasks = snap;
+      if (!controller.isClosed) controller.add(buildEvents());
+    }, onError: (_) {});
+    final sub3 = examsStream.listen((snap) {
+      latestExams = snap;
+      if (!controller.isClosed) controller.add(buildEvents());
+    }, onError: (_) {});
+
+    return controller.stream;
   }
 
   Widget _buildTaskCard(Map<String, dynamic> task) {
@@ -701,7 +726,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
         margin: const EdgeInsets.only(bottom: 12),
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: AppColors.card(context),
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
             color: isCompleted
@@ -801,7 +826,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
           margin: const EdgeInsets.only(bottom: 12),
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: AppColors.card(context),
             borderRadius: BorderRadius.circular(12),
             border: Border.all(color: const Color(0xFF9AB900), width: 2),
           ),
@@ -821,7 +846,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
           margin: const EdgeInsets.only(bottom: 12),
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: AppColors.card(context),
             borderRadius: BorderRadius.circular(12),
             border: Border.all(color: const Color(0xFF9AB900), width: 2),
           ),
@@ -902,7 +927,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
         margin: const EdgeInsets.only(bottom: 12),
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: AppColors.card(context),
           borderRadius: BorderRadius.circular(12),
           border: Border.all(color: const Color(0xFF9AB900), width: 2),
         ),
@@ -923,7 +948,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
         margin: const EdgeInsets.only(bottom: 12),
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: AppColors.card(context),
           borderRadius: BorderRadius.circular(12),
           border: Border.all(color: const Color(0xFFB90000), width: 2),
         ),
@@ -1005,21 +1030,21 @@ class _CalendarScreenState extends State<CalendarScreen> {
       width: double.infinity,
       padding: const EdgeInsets.all(32),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.card(context),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.black, width: 2),
+        border: Border.all(color: AppColors.border(context), width: 2),
       ),
       child: Column(
         children: [
-          const Icon(
+          Icon(
             Icons.event_note_outlined,
             size: 48,
-            color: Color(0xFF6B7280),
+            color: AppColors.subtext(context),
           ),
           const SizedBox(height: 12),
           Text(
             'No events scheduled',
-            style: GoogleFonts.dmMono(fontSize: 13, color: Colors.grey),
+            style: GoogleFonts.dmMono(fontSize: 13, color: AppColors.subtext(context)),
           ),
         ],
       ),
@@ -1052,9 +1077,9 @@ class _CalendarScreenState extends State<CalendarScreen> {
                     vertical: 12,
                   ),
                   decoration: BoxDecoration(
-                    color: Colors.white,
+                    color: AppColors.card(context),
                     borderRadius: BorderRadius.circular(24),
-                    border: Border.all(color: Colors.black, width: 2),
+                    border: Border.all(color: AppColors.border(context), width: 2),
                   ),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -1095,12 +1120,12 @@ class _CalendarScreenState extends State<CalendarScreen> {
                 decoration: BoxDecoration(
                   color: _subjectStatus == 'On-Going'
                       ? const Color(0xFF75E1D1)
-                      : Colors.white,
+                      : AppColors.card(context),
                   borderRadius: BorderRadius.circular(24),
                   border: Border.all(
                     color: _subjectStatus == 'On-Going'
                         ? const Color(0xFF006E5E)
-                        : Colors.black,
+                        : AppColors.border(context),
                     width: 2,
                   ),
                 ),
@@ -1111,7 +1136,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
                     fontWeight: FontWeight.bold,
                     color: _subjectStatus == 'On-Going'
                         ? const Color(0xFF006E5E)
-                        : Colors.black,
+                        : AppColors.text(context),
                   ),
                 ),
               ),
@@ -1131,12 +1156,12 @@ class _CalendarScreenState extends State<CalendarScreen> {
                 decoration: BoxDecoration(
                   color: _subjectStatus == 'Ended'
                       ? const Color(0xFF75E1D1)
-                      : Colors.white,
+                      : AppColors.card(context),
                   borderRadius: BorderRadius.circular(24),
                   border: Border.all(
                     color: _subjectStatus == 'Ended'
                         ? const Color(0xFF006E5E)
-                        : Colors.black,
+                        : AppColors.border(context),
                     width: 2,
                   ),
                 ),
@@ -1147,7 +1172,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
                     fontWeight: FontWeight.bold,
                     color: _subjectStatus == 'Ended'
                         ? const Color(0xFF006E5E)
-                        : Colors.black,
+                        : AppColors.text(context),
                   ),
                 ),
               ),
@@ -1202,13 +1227,13 @@ class _CalendarScreenState extends State<CalendarScreen> {
       backgroundColor: Colors.transparent,
       builder: (context) {
         return Container(
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          decoration: BoxDecoration(
+            color: AppColors.card(context),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
             border: Border(
-              top: BorderSide(color: Colors.black, width: 2),
-              left: BorderSide(color: Colors.black, width: 2),
-              right: BorderSide(color: Colors.black, width: 2),
+              top: BorderSide(color: AppColors.border(context), width: 2),
+              left: BorderSide(color: AppColors.border(context), width: 2),
+              right: BorderSide(color: AppColors.border(context), width: 2),
             ),
           ),
           child: SafeArea(
@@ -1220,7 +1245,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
                   width: 40,
                   height: 4,
                   decoration: BoxDecoration(
-                    color: Colors.grey.shade300,
+                    color: AppColors.border(context),
                     borderRadius: BorderRadius.circular(2),
                   ),
                 ),
@@ -1296,44 +1321,35 @@ class _CalendarScreenState extends State<CalendarScreen> {
         .collection('timetable')
         .where('userId', isEqualTo: userId)
         .snapshots()
-        .map((snapshot) {
+        .asyncMap((snapshot) async {
           final now = DateTime.now();
           final today = DateTime(now.year, now.month, now.day);
 
-          // Group by class name
-          Map<String, Map<String, dynamic>> subjectsMap = {};
+          // Step 1: Build subject map from timetable (classes)
+          // Track the latest date seen across classes + tasks + exams
+          final Map<String, Map<String, dynamic>> subjectsMap = {};
 
           for (var doc in snapshot.docs) {
             final data = doc.data();
             final className = data['className'] ?? 'Untitled';
             final timestamp = data['date'] as Timestamp?;
-
             if (timestamp == null) continue;
 
-            final eventDate = timestamp.toDate();
-            final eventDateOnly = DateTime(
-              eventDate.year,
-              eventDate.month,
-              eventDate.day,
-            );
+            final eventDateOnly = _dateOnly(timestamp.toDate());
 
             // Filter by semester
             if (_selectedSemester != 'All') {
               if (_selectedSemester == 'Non Semester') {
-                if (data['semester'] != null || data['academicYear'] != null) {
+                if (data['semester'] != null || data['academicYear'] != null)
                   continue;
-                }
               } else {
-                final semesterNum = int.tryParse(
+                final semNum = int.tryParse(
                   _selectedSemester.replaceAll('Semester ', ''),
                 );
-                if (semesterNum == null || data['semester'] != semesterNum) {
-                  continue;
-                }
+                if (semNum == null || data['semester'] != semNum) continue;
               }
             }
 
-            // Track the latest date for each subject
             if (!subjectsMap.containsKey(className)) {
               subjectsMap[className] = {
                 'className': className,
@@ -1342,70 +1358,286 @@ class _CalendarScreenState extends State<CalendarScreen> {
                 'latestDate': eventDateOnly,
               };
             } else {
-              final existingDate =
+              final existing =
                   subjectsMap[className]!['latestDate'] as DateTime;
-              if (eventDateOnly.isAfter(existingDate)) {
+              if (eventDateOnly.isAfter(existing)) {
                 subjectsMap[className]!['latestDate'] = eventDateOnly;
               }
             }
           }
 
-          // Filter by status (On-Going or Ended)
-          List<Map<String, dynamic>> filteredSubjects = subjectsMap.values
-              .where((subject) {
-                final latestDate = subject['latestDate'] as DateTime;
-                final isEnded = latestDate.isBefore(today);
+          // Step 2: Also check tasks for each subject name
+          // A subject is only "Ended" if ALL of classes, tasks, AND exams are in the past
+          if (subjectsMap.isNotEmpty) {
+            final subjectNames = subjectsMap.keys.toList();
 
-                return (_subjectStatus == 'On-Going' && !isEnded) ||
-                    (_subjectStatus == 'Ended' && isEnded);
-              })
-              .toList();
+            // Tasks — query by userId only (Firestore doesn't support 'in' with
+            // compound filters without an index), filter by subject name in Dart
+            final tasksSnap = await _firestore
+                .collection('tasks')
+                .where('userId', isEqualTo: userId)
+                .get();
 
-          // Sort alphabetically
-          filteredSubjects.sort(
+            for (var doc in tasksSnap.docs) {
+              final data = doc.data();
+              final subject = data['subject'] as String? ?? '';
+              final timestamp = data['dueDate'] as Timestamp?;
+              if (timestamp == null) continue;
+              if (!subjectsMap.containsKey(subject)) continue;
+
+              // Semester filter for tasks
+              if (_selectedSemester != 'All' &&
+                  _selectedSemester != 'Non Semester') {
+                final semNum = int.tryParse(
+                  _selectedSemester.replaceAll('Semester ', ''),
+                );
+                final tSem = subjectsMap[subject]?['semester'];
+                if (semNum != null && tSem != semNum) continue;
+              }
+
+              final dueDateOnly = _dateOnly(timestamp.toDate());
+              final existing = subjectsMap[subject]!['latestDate'] as DateTime;
+              if (dueDateOnly.isAfter(existing)) {
+                subjectsMap[subject]!['latestDate'] = dueDateOnly;
+              }
+            }
+
+            // Exams
+            final examsSnap = await _firestore
+                .collection('exams')
+                .where('userId', isEqualTo: userId)
+                .get();
+
+            for (var doc in examsSnap.docs) {
+              final data = doc.data();
+              final subject = data['subject'] as String? ?? '';
+              final timestamp = data['examDate'] as Timestamp?;
+              if (timestamp == null) continue;
+              if (!subjectsMap.containsKey(subject)) continue;
+
+              // Semester filter for exams
+              if (_selectedSemester != 'All' &&
+                  _selectedSemester != 'Non Semester') {
+                final semNum = int.tryParse(
+                  _selectedSemester.replaceAll('Semester ', ''),
+                );
+                final tSem = subjectsMap[subject]?['semester'];
+                if (semNum != null && tSem != semNum) continue;
+              }
+
+              // Use endTime if available, otherwise examDate, so exam is
+              // only considered "past" after the exam ends
+              final endTs = data['endTime'] as Timestamp?;
+              final effectiveTs = endTs ?? timestamp;
+              final examDateOnly = _dateOnly(effectiveTs.toDate());
+              final existing = subjectsMap[subject]!['latestDate'] as DateTime;
+              if (examDateOnly.isAfter(existing)) {
+                subjectsMap[subject]!['latestDate'] = examDateOnly;
+              }
+            }
+          }
+
+          // Step 3: Filter by On-Going / Ended
+          // Ended = latestDate (across classes + tasks + exams) is before today
+          final filtered = subjectsMap.values.where((subject) {
+            final latestDate = subject['latestDate'] as DateTime;
+            final isEnded = latestDate.isBefore(today);
+            return (_subjectStatus == 'On-Going' && !isEnded) ||
+                (_subjectStatus == 'Ended' && isEnded);
+          }).toList();
+
+          filtered.sort(
             (a, b) =>
                 (a['className'] as String).compareTo(b['className'] as String),
           );
 
-          return filteredSubjects;
-        });
+          return filtered;
+        })
+        .handleError((_) {});
   }
 
+  /// Returns midnight of the given date for clean date-only comparisons
+  DateTime _dateOnly(DateTime dt) => DateTime(dt.year, dt.month, dt.day);
+
   Widget _buildSubjectCard(Map<String, dynamic> subject) {
-    return _AnimatedTapButton(
-      onTap: () {
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => SubjectDetailScreen(
-              subjectName: subject['className'],
-              semester: subject['semester'],
-              academicYear: subject['academicYear'],
-            ),
-          ),
-        );
+    return GestureDetector(
+      onLongPress: () {
+        HapticFeedback.mediumImpact();
+        _confirmDeleteSubject(subject);
       },
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Colors.black, width: 2),
-        ),
-        child: Center(
-          child: Text(
-            subject['className'],
-            style: GoogleFonts.dmMono(
-              fontSize: 13,
-              fontWeight: FontWeight.bold,
+      child: _AnimatedTapButton(
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => SubjectDetailScreen(
+                subjectName: subject['className'],
+                semester: subject['semester'],
+                academicYear: subject['academicYear'],
+              ),
             ),
-            textAlign: TextAlign.center,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
+          );
+        },
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: AppColors.card(context),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppColors.border(context), width: 2),
+          ),
+          child: Center(
+            child: Text(
+              subject['className'],
+              style: GoogleFonts.dmMono(
+                fontSize: 13,
+                fontWeight: FontWeight.bold,
+              ),
+              textAlign: TextAlign.center,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
           ),
         ),
       ),
     );
+  }
+
+  void _confirmDeleteSubject(Map<String, dynamic> subject) {
+    final className = subject['className'] as String;
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.card(context),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: AppColors.border(context), width: 2),
+        ),
+        title: Text(
+          'Delete "$className"?',
+          style: GoogleFonts.dmMono(fontWeight: FontWeight.bold),
+        ),
+        content: Text(
+          'This will permanently delete all classes, tasks, and exams for this subject, and remove you from any associated study groups.',
+          style: GoogleFonts.dmMono(fontSize: 13, height: 1.5),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(
+              'Cancel',
+              style: GoogleFonts.dmMono(color: const Color(0xFF6B7280)),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              await _deleteSubject(subject);
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFB90000),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8)),
+            ),
+            child: Text('Delete', style: GoogleFonts.dmMono()),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _deleteSubject(Map<String, dynamic> subject) async {
+    final user = _auth.currentUser;
+    if (user == null) return;
+
+    final className   = subject['className'] as String;
+    final semester    = subject['semester'];
+    final academicYear = subject['academicYear'];
+    final messenger   = ScaffoldMessenger.of(context);
+
+    try {
+      // 1. Timetable — match on className + semester + academicYear
+      Query<Map<String, dynamic>> timetableQuery = _firestore
+          .collection('timetable')
+          .where('userId', isEqualTo: user.uid)
+          .where('className', isEqualTo: className);
+      if (semester != null) {
+        timetableQuery =
+            timetableQuery.where('semester', isEqualTo: semester);
+      }
+      if (academicYear != null) {
+        timetableQuery =
+            timetableQuery.where('academicYear', isEqualTo: academicYear);
+      }
+      final timetableSnap = await timetableQuery.get();
+
+      // Grab subjectId for study-group lookup
+      String? subjectId;
+      for (final doc in timetableSnap.docs) {
+        subjectId = doc.data()['subjectId'] as String?;
+        if (subjectId != null) break;
+      }
+
+      for (final doc in timetableSnap.docs) {
+        await NotificationService().cancelNotificationsForEvent(doc.id);
+        await doc.reference.delete();
+      }
+
+      // 2. Tasks — keyed by subject name only (no semester field on tasks)
+      final tasksSnap = await _firestore
+          .collection('tasks')
+          .where('userId', isEqualTo: user.uid)
+          .where('subject', isEqualTo: className)
+          .get();
+      for (final doc in tasksSnap.docs) {
+        await NotificationService().cancelNotificationsForEvent(doc.id);
+        await doc.reference.delete();
+      }
+
+      // 3. Exams — keyed by subject name only
+      final examsSnap = await _firestore
+          .collection('exams')
+          .where('userId', isEqualTo: user.uid)
+          .where('subject', isEqualTo: className)
+          .get();
+      for (final doc in examsSnap.docs) {
+        await NotificationService().cancelNotificationsForEvent(doc.id);
+        await doc.reference.delete();
+      }
+
+      // 4. Leave any study groups linked to this subject
+      if (subjectId != null) {
+        final groupsSnap = await _firestore
+            .collection('study_groups')
+            .where('subjectId', isEqualTo: subjectId)
+            .get();
+        for (final groupDoc in groupsSnap.docs) {
+          final memberIds =
+              List<String>.from(groupDoc.data()['memberIds'] ?? []);
+          if (memberIds.contains(user.uid)) {
+            await groupDoc.reference.update({
+              'memberIds': FieldValue.arrayRemove([user.uid]),
+            });
+          }
+        }
+      }
+
+      if (mounted) {
+        messenger.showSnackBar(SnackBar(
+          content:
+              Text('"$className" deleted', style: GoogleFonts.dmMono()),
+          backgroundColor: const Color(0xFFB90000),
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        messenger.showSnackBar(SnackBar(
+          content: Text('Failed to delete subject',
+              style: GoogleFonts.dmMono()),
+          backgroundColor: Colors.red.shade900,
+        ));
+      }
+    }
   }
 
   Widget _buildEmptySubjectsState() {
@@ -1413,19 +1645,19 @@ class _CalendarScreenState extends State<CalendarScreen> {
       width: double.infinity,
       padding: const EdgeInsets.all(32),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.card(context),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.black, width: 2),
+        border: Border.all(color: AppColors.border(context), width: 2),
       ),
       child: Column(
         children: [
-          const Icon(Icons.school_outlined, size: 48, color: Color(0xFF6B7280)),
+          Icon(Icons.school_outlined, size: 48, color: AppColors.subtext(context)),
           const SizedBox(height: 12),
           Text(
             _subjectStatus == 'On-Going'
                 ? 'No ongoing subjects'
                 : 'No ended subjects',
-            style: GoogleFonts.dmMono(fontSize: 13, color: Colors.grey),
+            style: GoogleFonts.dmMono(fontSize: 13, color: AppColors.subtext(context)),
           ),
         ],
       ),
@@ -1492,13 +1724,13 @@ class _CalendarScreenState extends State<CalendarScreen> {
             final isCompleted = task['completed'] ?? false;
 
             return Container(
-              decoration: const BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+              decoration: BoxDecoration(
+                color: AppColors.card(context),
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
                 border: Border(
-                  top: BorderSide(color: Colors.black, width: 2),
-                  left: BorderSide(color: Colors.black, width: 2),
-                  right: BorderSide(color: Colors.black, width: 2),
+                  top: BorderSide(color: AppColors.border(context), width: 2),
+                  left: BorderSide(color: AppColors.border(context), width: 2),
+                  right: BorderSide(color: AppColors.border(context), width: 2),
                 ),
               ),
               child: SafeArea(
@@ -1510,7 +1742,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
                       width: 40,
                       height: 4,
                       decoration: BoxDecoration(
-                        color: Colors.grey.shade300,
+                        color: AppColors.border(context),
                         borderRadius: BorderRadius.circular(2),
                       ),
                     ),
@@ -1572,9 +1804,9 @@ class _CalendarScreenState extends State<CalendarScreen> {
                               icon: const Icon(Icons.edit_outlined),
                               label: Text('Edit', style: GoogleFonts.dmMono()),
                               style: OutlinedButton.styleFrom(
-                                foregroundColor: Colors.black,
-                                side: const BorderSide(
-                                  color: Colors.black,
+                                foregroundColor: AppColors.text(context),
+                                side: BorderSide(
+                                  color: AppColors.border(context),
                                   width: 2,
                                 ),
                                 padding: const EdgeInsets.symmetric(
@@ -1681,12 +1913,12 @@ class _CalendarScreenState extends State<CalendarScreen> {
                       decoration: BoxDecoration(
                         color: !isCompleted
                             ? const Color(0xFF008BB9)
-                            : Colors.grey.shade200,
+                            : AppColors.fieldBg(context),
                         borderRadius: BorderRadius.circular(8),
                         border: Border.all(
                           color: !isCompleted
                               ? const Color(0xFF008BB9)
-                              : Colors.grey.shade400,
+                              : AppColors.border(context),
                           width: 2,
                         ),
                       ),
@@ -1698,7 +1930,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
                             fontWeight: FontWeight.bold,
                             color: !isCompleted
                                 ? Colors.white
-                                : Colors.grey.shade600,
+                                : AppColors.subtext(context),
                           ),
                         ),
                       ),
@@ -1726,12 +1958,12 @@ class _CalendarScreenState extends State<CalendarScreen> {
                       decoration: BoxDecoration(
                         color: isCompleted
                             ? const Color(0xFF34A853)
-                            : Colors.grey.shade200,
+                            : AppColors.fieldBg(context),
                         borderRadius: BorderRadius.circular(8),
                         border: Border.all(
                           color: isCompleted
                               ? const Color(0xFF34A853)
-                              : Colors.grey.shade400,
+                              : AppColors.border(context),
                           width: 2,
                         ),
                       ),
@@ -1743,7 +1975,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
                             fontWeight: FontWeight.bold,
                             color: isCompleted
                                 ? Colors.white
-                                : Colors.grey.shade600,
+                                : AppColors.subtext(context),
                           ),
                         ),
                       ),
@@ -1770,13 +2002,13 @@ class _CalendarScreenState extends State<CalendarScreen> {
       isScrollControlled: true,
       builder: (context) {
         return Container(
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          decoration: BoxDecoration(
+            color: AppColors.card(context),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
             border: Border(
-              top: BorderSide(color: Colors.black, width: 2),
-              left: BorderSide(color: Colors.black, width: 2),
-              right: BorderSide(color: Colors.black, width: 2),
+              top: BorderSide(color: AppColors.border(context), width: 2),
+              left: BorderSide(color: AppColors.border(context), width: 2),
+              right: BorderSide(color: AppColors.border(context), width: 2),
             ),
           ),
           child: SafeArea(
@@ -1788,7 +2020,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
                   width: 40,
                   height: 4,
                   decoration: BoxDecoration(
-                    color: Colors.grey.shade300,
+                    color: AppColors.border(context),
                     borderRadius: BorderRadius.circular(2),
                   ),
                 ),
@@ -1847,9 +2079,9 @@ class _CalendarScreenState extends State<CalendarScreen> {
                           icon: const Icon(Icons.edit_outlined),
                           label: Text('Edit', style: GoogleFonts.dmMono()),
                           style: OutlinedButton.styleFrom(
-                            foregroundColor: Colors.black,
-                            side: const BorderSide(
-                              color: Colors.black,
+                            foregroundColor: AppColors.text(context),
+                            side: BorderSide(
+                              color: AppColors.border(context),
                               width: 2,
                             ),
                             padding: const EdgeInsets.symmetric(vertical: 16),
@@ -1911,13 +2143,13 @@ class _CalendarScreenState extends State<CalendarScreen> {
       isScrollControlled: true,
       builder: (context) {
         return Container(
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          decoration: BoxDecoration(
+            color: AppColors.card(context),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
             border: Border(
-              top: BorderSide(color: Colors.black, width: 2),
-              left: BorderSide(color: Colors.black, width: 2),
-              right: BorderSide(color: Colors.black, width: 2),
+              top: BorderSide(color: AppColors.border(context), width: 2),
+              left: BorderSide(color: AppColors.border(context), width: 2),
+              right: BorderSide(color: AppColors.border(context), width: 2),
             ),
           ),
           child: SafeArea(
@@ -1929,7 +2161,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
                   width: 40,
                   height: 4,
                   decoration: BoxDecoration(
-                    color: Colors.grey.shade300,
+                    color: AppColors.border(context),
                     borderRadius: BorderRadius.circular(2),
                   ),
                 ),
@@ -1986,9 +2218,9 @@ class _CalendarScreenState extends State<CalendarScreen> {
                           icon: const Icon(Icons.edit_outlined),
                           label: Text('Edit', style: GoogleFonts.dmMono()),
                           style: OutlinedButton.styleFrom(
-                            foregroundColor: Colors.black,
-                            side: const BorderSide(
-                              color: Colors.black,
+                            foregroundColor: AppColors.text(context),
+                            side: BorderSide(
+                              color: AppColors.border(context),
                               width: 2,
                             ),
                             padding: const EdgeInsets.symmetric(vertical: 16),
@@ -2041,6 +2273,2301 @@ class _CalendarScreenState extends State<CalendarScreen> {
       },
     );
   }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // STUDY GROUP INVITATION SECTION  ← only new code below this line
+  // ══════════════════════════════════════════════════════════════════════════
+
+  Widget _buildInvitationsSection() {
+    final user = _auth.currentUser;
+    if (user == null) return const SizedBox();
+
+    return StreamBuilder<QuerySnapshot>(
+      stream: _firestore
+          .collection('group_invitations')
+          .where('inviteeId', isEqualTo: user.uid)
+          .where('status', isEqualTo: 'pending')
+          .snapshots()
+          .handleError((_) {}),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+          return const SizedBox();
+        }
+
+        final invites = snapshot.data!.docs;
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const SizedBox(height: 8),
+            Text(
+              'Group Invitations',
+              style: GoogleFonts.dmMono(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 12),
+            ...invites.map((doc) {
+              final data = doc.data() as Map<String, dynamic>;
+              final classes = List<Map<String, dynamic>>.from(
+                data['classes'] ?? [],
+              );
+              final tasks = List<Map<String, dynamic>>.from(
+                data['tasks'] ?? [],
+              );
+              final exams = List<Map<String, dynamic>>.from(
+                data['exams'] ?? [],
+              );
+
+              return Container(
+                margin: const EdgeInsets.only(bottom: 12),
+                decoration: BoxDecoration(
+                  color: AppColors.card(context),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: const Color(0xFF3859FF), width: 2),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // ── Header: group info + sender ──────────────────────
+                    Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 44,
+                            height: 44,
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFBFCAFF),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: const Icon(
+                              Icons.group,
+                              color: Color(0xFF3859FF),
+                              size: 24,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  data['groupName'] ?? 'Study Group',
+                                  style: GoogleFonts.dmMono(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  data['subject'] ?? '',
+                                  style: GoogleFonts.dmMono(
+                                    fontSize: 11,
+                                    color: const Color(0xFF3859FF),
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Row(
+                                  children: [
+                                    const Icon(
+                                      Icons.person_outline,
+                                      size: 12,
+                                      color: Color(0xFF6B7280),
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      'Invited by ${data['inviterUsername'] ?? 'Someone'}',
+                                      style: GoogleFonts.dmMono(
+                                        fontSize: 10,
+                                        color: const Color(0xFF6B7280),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    // ── Class schedule from sender ────────────────────────
+                    if (classes.isNotEmpty) ...[
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+                        child: Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF3F4FF),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(
+                              color: const Color(0xFF3859FF).withOpacity(0.3),
+                            ),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  const Icon(
+                                    Icons.calendar_today,
+                                    size: 12,
+                                    color: Color(0xFF3859FF),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    '${data['inviterUsername'] ?? 'Sender'}\'s schedule  •  ${classes.length} class${classes.length == 1 ? '' : 'es'}',
+                                    style: GoogleFonts.dmMono(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.bold,
+                                      color: const Color(0xFF3859FF),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              ...classes.map((cls) {
+                                final ts = cls['date'] as Timestamp?;
+                                final dateStr = ts != null
+                                    ? DateFormat('EEE, dd MMM').format(ts.toDate())
+                                    : '—';
+                                final start = cls['startTime'] ?? '';
+                                final end = cls['endTime'] ?? '';
+                                final room = cls['room'] ?? '';
+                                final building = cls['building'] ?? '';
+                                final loc = [room, building]
+                                    .where((s) => (s as String).isNotEmpty)
+                                    .join(', ');
+                                return Padding(
+                                  padding: const EdgeInsets.only(bottom: 5),
+                                  child: Row(
+                                    children: [
+                                      Container(
+                                        width: 5,
+                                        height: 5,
+                                        decoration: const BoxDecoration(
+                                          color: Color(0xFF3859FF),
+                                          shape: BoxShape.circle,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: Text(
+                                          '$dateStr  •  ${_formatTime(start)} – ${_formatTime(end)}'
+                                          '${loc.isNotEmpty ? '  •  $loc' : ''}',
+                                          style: GoogleFonts.dmMono(
+                                            fontSize: 10,
+                                            color: const Color(0xFF374151),
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              }),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                    ],
+
+                    // ── Tasks from sender ─────────────────────────────────
+                    if (tasks.isNotEmpty) ...[
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+                        child: Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFEBF5FF),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(
+                              color: const Color(0xFF008BB9).withOpacity(0.3),
+                            ),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  const Icon(Icons.task_alt, size: 12, color: Color(0xFF008BB9)),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    '${tasks.length} task${tasks.length == 1 ? '' : 's'}',
+                                    style: GoogleFonts.dmMono(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.bold,
+                                      color: const Color(0xFF008BB9),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              ...tasks.map((task) {
+                                final ts = task['dueDate'] as Timestamp?;
+                                final due = ts != null
+                                    ? DateFormat('EEE, dd MMM').format(ts.toDate())
+                                    : '—';
+                                return Padding(
+                                  padding: const EdgeInsets.only(bottom: 5),
+                                  child: Row(
+                                    children: [
+                                      Container(
+                                        width: 5,
+                                        height: 5,
+                                        decoration: const BoxDecoration(
+                                          color: Color(0xFF008BB9),
+                                          shape: BoxShape.circle,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: Text(
+                                          '${task['taskTitle'] ?? '—'}  •  Due $due',
+                                          style: GoogleFonts.dmMono(
+                                            fontSize: 10,
+                                            color: const Color(0xFF374151),
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              }),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                    ],
+
+                    // ── Exams from sender ─────────────────────────────────
+                    if (exams.isNotEmpty) ...[
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+                        child: Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFEFFE6),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(
+                              color: const Color(0xFF9AB900).withOpacity(0.3),
+                            ),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  const Icon(Icons.assignment_outlined, size: 12, color: Color(0xFF9AB900)),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    '${exams.length} exam${exams.length == 1 ? '' : 's'}',
+                                    style: GoogleFonts.dmMono(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.bold,
+                                      color: const Color(0xFF9AB900),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              ...exams.map((exam) {
+                                final ts = exam['examDate'] as Timestamp?;
+                                final dateStr = ts != null
+                                    ? DateFormat('EEE, dd MMM').format(ts.toDate())
+                                    : '—';
+                                // startTime/endTime are stored as Timestamps
+                                final startTs = exam['startTime'] as Timestamp?;
+                                final endTs = exam['endTime'] as Timestamp?;
+                                String timeStr = '';
+                                if (startTs != null && endTs != null) {
+                                  final s = startTs.toDate();
+                                  final e = endTs.toDate();
+                                  final sStr = '${s.hour.toString().padLeft(2,'0')}:${s.minute.toString().padLeft(2,'0')}';
+                                  final eStr = '${e.hour.toString().padLeft(2,'0')}:${e.minute.toString().padLeft(2,'0')}';
+                                  timeStr = '  •  ${_formatTime(sStr)} – ${_formatTime(eStr)}';
+                                }
+                                return Padding(
+                                  padding: const EdgeInsets.only(bottom: 5),
+                                  child: Row(
+                                    children: [
+                                      Container(
+                                        width: 5,
+                                        height: 5,
+                                        decoration: const BoxDecoration(
+                                          color: Color(0xFF9AB900),
+                                          shape: BoxShape.circle,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: Text(
+                                          '${exam['examName'] ?? '—'}  •  $dateStr$timeStr',
+                                          style: GoogleFonts.dmMono(
+                                            fontSize: 10,
+                                            color: const Color(0xFF374151),
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              }),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                    ],
+
+                    // ── Accept / Decline ──────────────────────────────────
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: _AnimatedTapButton(
+                              onTap: () => _acceptInvitation(doc),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 12,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF34A853),
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Center(
+                                  child: Text(
+                                    'Accept',
+                                    style: GoogleFonts.dmMono(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: _AnimatedTapButton(
+                              onTap: () => _declineInvitation(doc),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 12,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: AppColors.card(context),
+                                  borderRadius: BorderRadius.circular(10),
+                                  border: Border.all(
+                                    color: const Color(0xFFB90000),
+                                    width: 2,
+                                  ),
+                                ),
+                                child: Center(
+                                  child: Text(
+                                    'Decline',
+                                    style: GoogleFonts.dmMono(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.bold,
+                                      color: const Color(0xFFB90000),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }),
+            const SizedBox(height: 8),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _acceptInvitation(DocumentSnapshot doc) async {
+    final user = _auth.currentUser;
+    if (user == null) return;
+    final data = doc.data() as Map<String, dynamic>;
+    final groupId = data['groupId'] as String;
+    final groupName = data['groupName'] ?? 'group';
+    final inviterUsername = data['inviterUsername'] ?? 'Someone';
+    final incomingClasses = List<Map<String, dynamic>>.from(
+      data['classes'] ?? [],
+    );
+
+    // Load recipient's existing timetable for clash detection
+    final existingSnap = await _firestore
+        .collection('timetable')
+        .where('userId', isEqualTo: user.uid)
+        .get();
+
+    // Group existing classes by day key
+    final Map<String, List<Map<String, dynamic>>> existingByDay = {};
+    for (var d in existingSnap.docs) {
+      final dd = d.data();
+      final ts = dd['date'] as Timestamp?;
+      if (ts == null) continue;
+      final dayKey = DateFormat('yyyy-MM-dd').format(ts.toDate());
+      existingByDay.putIfAbsent(dayKey, () => []).add({
+        'id': d.id,
+        'className': dd['className'] ?? '',
+        'startTime': dd['startTime'] ?? '',
+        'endTime': dd['endTime'] ?? '',
+        'date': ts,
+      });
+    }
+
+    // Separate clashing vs non-clashing
+    final List<Map<String, dynamic>> noClash = [];
+    final List<Map<String, dynamic>> clashGroups = [];
+
+    for (final cls in incomingClasses) {
+      final ts = cls['date'] as Timestamp?;
+      if (ts == null) {
+        noClash.add(cls);
+        continue;
+      }
+      final dayKey = DateFormat('yyyy-MM-dd').format(ts.toDate());
+      final existing = existingByDay[dayKey] ?? [];
+      final inStart = _timeToMinutes(cls['startTime'] ?? '');
+      final inEnd = _timeToMinutes(cls['endTime'] ?? '');
+      final clashing = existing.where((ex) {
+        final s = _timeToMinutes(ex['startTime'] ?? '');
+        final e = _timeToMinutes(ex['endTime'] ?? '');
+        return inStart < e && inEnd > s;
+      }).toList();
+
+      if (clashing.isEmpty) {
+        noClash.add(cls);
+      } else {
+        clashGroups.add({'incoming': cls, 'existing': clashing});
+      }
+    }
+
+    if (clashGroups.isEmpty) {
+      // No clashes — _joinGroupAndMarkAccepted handles the preview internally
+      await _joinGroupAndMarkAccepted(
+        doc,
+        user,
+        groupId,
+        groupName,
+        incomingClasses,
+      );
+    } else {
+      // Has clashes — show resolution dialog first
+      final chosen = await _showClashDialog(
+        inviterUsername: inviterUsername,
+        groupName: groupName,
+        noClashClasses: noClash,
+        clashGroups: clashGroups,
+      );
+      if (chosen != null && mounted) {
+        await _joinGroupAndMarkAccepted(doc, user, groupId, groupName, chosen);
+      }
+    }
+  }
+
+  int _timeToMinutes(String time) {
+    try {
+      final p = time.split(':');
+      return int.parse(p[0]) * 60 + int.parse(p[1]);
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  Future<bool?> _showClassPreviewDialog({
+    required String inviterUsername,
+    required String groupName,
+    required List<Map<String, dynamic>> classesToAdd,
+  }) {
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.card(context),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+          side: BorderSide(color: AppColors.border(context), width: 2),
+        ),
+        title: Text(
+          'Join $groupName?',
+          style: GoogleFonts.dmMono(fontWeight: FontWeight.bold),
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Accepting adds ${classesToAdd.length} class${classesToAdd.length == 1 ? '' : 'es'} from $inviterUsername to your timetable:',
+                style: GoogleFonts.dmMono(
+                  fontSize: 12,
+                  color: const Color(0xFF6B7280),
+                ),
+              ),
+              const SizedBox(height: 12),
+              ...classesToAdd.map((cls) {
+                final ts = cls['date'] as Timestamp?;
+                final dateStr = ts != null
+                    ? DateFormat('EEE, dd MMM').format(ts.toDate())
+                    : '—';
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF3F4FF),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: const Color(0xFF3859FF).withOpacity(0.3),
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          cls['className'] ?? '',
+                          style: GoogleFonts.dmMono(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          '$dateStr  •  ${_formatTime(cls['startTime'] ?? '')} – ${_formatTime(cls['endTime'] ?? '')}',
+                          style: GoogleFonts.dmMono(
+                            fontSize: 11,
+                            color: const Color(0xFF6B7280),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(
+              'Cancel',
+              style: GoogleFonts.dmMono(color: const Color(0xFF6B7280)),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF34A853),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+            child: Text(
+              'Accept & Add Classes',
+              style: GoogleFonts.dmMono(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<List<Map<String, dynamic>>?> _showClashDialog({
+    required String inviterUsername,
+    required String groupName,
+    required List<Map<String, dynamic>> noClashClasses,
+    required List<Map<String, dynamic>> clashGroups,
+  }) {
+    final Map<int, String> selections = {
+      for (int i = 0; i < clashGroups.length; i++) i: 'incoming',
+    };
+
+    return showDialog<List<Map<String, dynamic>>>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setS) {
+          return AlertDialog(
+            backgroundColor: AppColors.card(context),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+              side: BorderSide(color: AppColors.border(context), width: 2),
+            ),
+            title: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Class Time Clash',
+                  style: GoogleFonts.dmMono(fontWeight: FontWeight.bold),
+                ),
+                Text(
+                  'Choose which class to keep for each clash',
+                  style: GoogleFonts.dmMono(
+                    fontSize: 11,
+                    color: const Color(0xFF6B7280),
+                  ),
+                ),
+              ],
+            ),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  ...clashGroups.asMap().entries.map((entry) {
+                    final i = entry.key;
+                    final group = entry.value;
+                    final incoming = group['incoming'] as Map<String, dynamic>;
+                    final existing =
+                        group['existing'] as List<Map<String, dynamic>>;
+                    final ts = incoming['date'] as Timestamp?;
+                    final dateStr = ts != null
+                        ? DateFormat('EEE, dd MMM').format(ts.toDate())
+                        : '—';
+
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (i > 0) const Divider(height: 24),
+                        Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFFF3F3),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: const Color(0xFFB90000).withOpacity(0.3),
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              const Icon(
+                                Icons.warning_amber,
+                                size: 14,
+                                color: Color(0xFFB90000),
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                'Clash on $dateStr',
+                                style: GoogleFonts.dmMono(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                  color: const Color(0xFFB90000),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+
+                        // New class option
+                        Text(
+                          'New class (from $inviterUsername):',
+                          style: GoogleFonts.dmMono(
+                            fontSize: 10,
+                            color: const Color(0xFF6B7280),
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        GestureDetector(
+                          onTap: () => setS(() => selections[i] = 'incoming'),
+                          child: Container(
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: selections[i] == 'incoming'
+                                  ? const Color(0xFF3859FF).withOpacity(0.08)
+                                  : AppColors.card(context),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                color: selections[i] == 'incoming'
+                                    ? const Color(0xFF3859FF)
+                                    : AppColors.border(context),
+                                width: selections[i] == 'incoming' ? 2 : 1,
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  selections[i] == 'incoming'
+                                      ? Icons.radio_button_checked
+                                      : Icons.radio_button_unchecked,
+                                  size: 18,
+                                  color: const Color(0xFF3859FF),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        incoming['className'] ?? '',
+                                        style: GoogleFonts.dmMono(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                      Text(
+                                        '${_formatTime(incoming['startTime'] ?? '')} – ${_formatTime(incoming['endTime'] ?? '')}',
+                                        style: GoogleFonts.dmMono(
+                                          fontSize: 10,
+                                          color: const Color(0xFF6B7280),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+
+                        // Existing class options
+                        Text(
+                          'Your current class:',
+                          style: GoogleFonts.dmMono(
+                            fontSize: 10,
+                            color: const Color(0xFF6B7280),
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        ...existing.map((ex) {
+                          final selKey = 'existing_${ex['id']}';
+                          return GestureDetector(
+                            onTap: () => setS(() => selections[i] = selKey),
+                            child: Container(
+                              margin: const EdgeInsets.only(bottom: 4),
+                              padding: const EdgeInsets.all(10),
+                              decoration: BoxDecoration(
+                                color: selections[i] == selKey
+                                    ? const Color(0xFF34A853).withOpacity(0.08)
+                                    : AppColors.card(context),
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(
+                                  color: selections[i] == selKey
+                                      ? const Color(0xFF34A853)
+                                      : AppColors.border(context),
+                                  width: selections[i] == selKey ? 2 : 1,
+                                ),
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    selections[i] == selKey
+                                        ? Icons.radio_button_checked
+                                        : Icons.radio_button_unchecked,
+                                    size: 18,
+                                    color: const Color(0xFF34A853),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          ex['className'] ?? '',
+                                          style: GoogleFonts.dmMono(
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                        Text(
+                                          '${_formatTime(ex['startTime'] ?? '')} – ${_formatTime(ex['endTime'] ?? '')}',
+                                          style: GoogleFonts.dmMono(
+                                            fontSize: 10,
+                                            color: const Color(0xFF6B7280),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        }),
+                        const SizedBox(height: 8),
+                      ],
+                    );
+                  }),
+
+                  // No-clash classes
+                  if (noClashClasses.isNotEmpty) ...[
+                    const Divider(height: 20),
+                    Text(
+                      'These will be added automatically (no clash):',
+                      style: GoogleFonts.dmMono(
+                        fontSize: 11,
+                        color: const Color(0xFF6B7280),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    ...noClashClasses.map((cls) {
+                      final ts = cls['date'] as Timestamp?;
+                      final dateStr = ts != null
+                          ? DateFormat('EEE, dd MMM').format(ts.toDate())
+                          : '—';
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 6),
+                        child: Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF0FFF4),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: const Color(0xFF34A853).withOpacity(0.3),
+                            ),
+                          ),
+                          child: Text(
+                            '${cls['className'] ?? ''}  •  $dateStr  •  ${_formatTime(cls['startTime'] ?? '')} – ${_formatTime(cls['endTime'] ?? '')}',
+                            style: GoogleFonts.dmMono(
+                              fontSize: 10,
+                              color: const Color(0xFF374151),
+                            ),
+                          ),
+                        ),
+                      );
+                    }),
+                  ],
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, null),
+                child: Text(
+                  'Cancel',
+                  style: GoogleFonts.dmMono(color: const Color(0xFF6B7280)),
+                ),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  final List<Map<String, dynamic>> finalList = [
+                    ...noClashClasses,
+                  ];
+                  for (int i = 0; i < clashGroups.length; i++) {
+                    if (selections[i] == 'incoming') {
+                      finalList.add(
+                        clashGroups[i]['incoming'] as Map<String, dynamic>,
+                      );
+                    }
+                    // If 'existing_*' chosen — skip the incoming class
+                  }
+                  Navigator.pop(ctx, finalList);
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF34A853),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+                child: Text(
+                  'Confirm & Join',
+                  style: GoogleFonts.dmMono(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Future<void> _joinGroupAndMarkAccepted(
+    DocumentSnapshot doc,
+    User user,
+    String groupId,
+    String groupName,
+    List<Map<String, dynamic>> classesToInsert,
+  ) async {
+    final userDoc = await _firestore.collection('users').doc(user.uid).get();
+    final username = userDoc.data()?['username'] ?? 'Unknown';
+
+    final inviteData = doc.data() as Map<String, dynamic>;
+    final subjectId = inviteData['subjectId'] as String?;
+
+    // ── Check which classes recipient already has by subjectId ──────────────
+    List<Map<String, dynamic>> newClasses = [];
+    List<Map<String, dynamic>> alreadyHasClasses = [];
+
+    if (subjectId != null && subjectId.isNotEmpty) {
+      final existingSnap = await _firestore
+          .collection('timetable')
+          .where('userId', isEqualTo: user.uid)
+          .where('subjectId', isEqualTo: subjectId)
+          .get();
+
+      // Build a set of "date+startTime+endTime" keys for fast lookup
+      final existingKeys = existingSnap.docs.map((d) {
+        final dd = d.data();
+        final ts = (dd['date'] as Timestamp?)?.millisecondsSinceEpoch ?? 0;
+        return '${ts}__${dd['startTime']}__${dd['endTime']}';
+      }).toSet();
+
+      for (final cls in classesToInsert) {
+        final ts = (cls['date'] as Timestamp?)?.millisecondsSinceEpoch ?? 0;
+        final key = '${ts}__${cls['startTime']}__${cls['endTime']}';
+        if (existingKeys.contains(key)) {
+          alreadyHasClasses.add(cls);
+        } else {
+          newClasses.add(cls);
+        }
+      }
+    } else {
+      // No subjectId — fall back to date+time dedup
+      final existingSnap = await _firestore
+          .collection('timetable')
+          .where('userId', isEqualTo: user.uid)
+          .get();
+      final existingKeys = existingSnap.docs.map((d) {
+        final dd = d.data();
+        final ts = (dd['date'] as Timestamp?)?.millisecondsSinceEpoch ?? 0;
+        return '${ts}__${dd['startTime']}__${dd['endTime']}';
+      }).toSet();
+
+      for (final cls in classesToInsert) {
+        final ts = (cls['date'] as Timestamp?)?.millisecondsSinceEpoch ?? 0;
+        final key = '${ts}__${cls['startTime']}__${cls['endTime']}';
+        if (existingKeys.contains(key)) {
+          alreadyHasClasses.add(cls);
+        } else {
+          newClasses.add(cls);
+        }
+      }
+    }
+
+    // ── Show preview with already-have vs new split ──────────────────────────
+    if (alreadyHasClasses.isNotEmpty || newClasses.isNotEmpty) {
+      final confirm = await _showJoinPreviewDialog(
+        groupName: groupName,
+        newClasses: newClasses,
+        alreadyHasClasses: alreadyHasClasses,
+      );
+      if (confirm != true) return;
+    }
+
+    // ── Join the group ───────────────────────────────────────────────────────
+    await _firestore.collection('study_groups').doc(groupId).update({
+      'memberIds': FieldValue.arrayUnion([user.uid]),
+      'members': FieldValue.arrayUnion([
+        {'uid': user.uid, 'username': username},
+      ]),
+    });
+
+    // ── Insert only the new (non-duplicate) classes ──────────────────────────
+    final batch = _firestore.batch();
+
+    for (final cls in newClasses) {
+      final ref = _firestore.collection('timetable').doc();
+      batch.set(ref, {
+        'userId': user.uid,
+        'className': cls['className'] ?? '',
+        'startTime': cls['startTime'] ?? '',
+        'endTime': cls['endTime'] ?? '',
+        'room': cls['room'] ?? '',
+        'building': cls['building'] ?? '',
+        'lecturerName': cls['lecturerName'] ?? '',
+        'date': cls['date'],
+        'semester': cls['semester'],
+        'academicYear': cls['academicYear'],
+        'type': 'class',
+        if (subjectId != null && subjectId.isNotEmpty) 'subjectId': subjectId,
+      });
+    }
+
+    // ── Insert tasks — skip duplicates with same title + due date ─────────────
+    final tasks = List<Map<String, dynamic>>.from(inviteData['tasks'] ?? []);
+    if (tasks.isNotEmpty) {
+      final existingTasksSnap = await _firestore
+          .collection('tasks')
+          .where('userId', isEqualTo: user.uid)
+          .get();
+      final existingTaskKeys = existingTasksSnap.docs.map((d) {
+        final dd = d.data();
+        return '${dd['taskTitle']}__${(dd['dueDate'] as Timestamp?)?.millisecondsSinceEpoch}';
+      }).toSet();
+      for (final task in tasks) {
+        final key =
+            '${task['taskTitle']}__${(task['dueDate'] as Timestamp?)?.millisecondsSinceEpoch}';
+        if (existingTaskKeys.contains(key)) continue;
+        batch.set(_firestore.collection('tasks').doc(), {
+          'userId': user.uid,
+          'taskTitle': task['taskTitle'] ?? '',
+          'taskDetails': task['taskDetails'] ?? '',
+          'taskType': task['taskType'] ?? '',
+          'subject': task['subject'] ?? '',
+          'dueDate': task['dueDate'],
+          'completed': false,
+        });
+      }
+    }
+
+    // ── Insert exams — skip duplicates with same name + exam date ─────────────
+    final exams = List<Map<String, dynamic>>.from(inviteData['exams'] ?? []);
+    if (exams.isNotEmpty) {
+      final existingExamsSnap = await _firestore
+          .collection('exams')
+          .where('userId', isEqualTo: user.uid)
+          .get();
+      final existingExamKeys = existingExamsSnap.docs.map((d) {
+        final dd = d.data();
+        return '${dd['examName']}__${(dd['examDate'] as Timestamp?)?.millisecondsSinceEpoch}';
+      }).toSet();
+      for (final exam in exams) {
+        final key =
+            '${exam['examName']}__${(exam['examDate'] as Timestamp?)?.millisecondsSinceEpoch}';
+        if (existingExamKeys.contains(key)) continue;
+        batch.set(_firestore.collection('exams').doc(), {
+          'userId': user.uid,
+          'examName': exam['examName'] ?? '',
+          'subject': exam['subject'] ?? '',
+          'type': exam['type'] ?? 'Exam',
+          'mode': exam['mode'] ?? 'In Person',
+          'venue': exam['venue'] ?? '',
+          'examDate': exam['examDate'],
+          'startTime': exam['startTime'],
+          'endTime': exam['endTime'],
+        });
+      }
+    }
+
+    await batch.commit();
+
+    // ── Mark invitation accepted ─────────────────────────────────────────────
+    await doc.reference.update({'status': 'accepted'});
+
+    if (mounted) {
+      final parts = <String>[];
+      if (newClasses.isNotEmpty)
+        parts.add('${newClasses.length} class${newClasses.length == 1 ? '' : 'es'}');
+      if (tasks.isNotEmpty)
+        parts.add('${tasks.length} task${tasks.length == 1 ? '' : 's'}');
+      if (exams.isNotEmpty)
+        parts.add('${exams.length} exam${exams.length == 1 ? '' : 's'}');
+      final summary = parts.isEmpty ? '' : ' (${parts.join(', ')} added)';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Joined $groupName!$summary', style: GoogleFonts.dmMono()),
+          backgroundColor: const Color(0xFF34A853),
+          duration: const Duration(seconds: 5),
+        ),
+      );
+    }
+  }
+
+  Future<bool?> _showJoinPreviewDialog({
+    required String groupName,
+    required List<Map<String, dynamic>> newClasses,
+    required List<Map<String, dynamic>> alreadyHasClasses,
+  }) {
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.card(context),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+          side: BorderSide(color: AppColors.border(context), width: 2),
+        ),
+        title: Text(
+          'Join $groupName?',
+          style: GoogleFonts.dmMono(fontWeight: FontWeight.bold),
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // ── Classes being added ──────────────────────────────────
+              if (newClasses.isNotEmpty) ...[
+                Row(
+                  children: [
+                    const Icon(
+                      Icons.add_circle_outline,
+                      size: 14,
+                      color: Color(0xFF34A853),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      '${newClasses.length} class${newClasses.length == 1 ? '' : 'es'} will be added',
+                      style: GoogleFonts.dmMono(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        color: const Color(0xFF34A853),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                ...newClasses.map(
+                  (cls) => _previewClassTile(
+                    cls,
+                    borderColor: const Color(0xFF34A853),
+                    bgColor: const Color(0xFFF0FFF4),
+                    icon: Icons.add_circle_outline,
+                    iconColor: const Color(0xFF34A853),
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ],
+
+              // ── Classes already in calendar ──────────────────────────
+              if (alreadyHasClasses.isNotEmpty) ...[
+                Row(
+                  children: [
+                    const Icon(
+                      Icons.check_circle_outline,
+                      size: 14,
+                      color: Color(0xFF6B7280),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      '${alreadyHasClasses.length} class${alreadyHasClasses.length == 1 ? '' : 'es'} already in your timetable',
+                      style: GoogleFonts.dmMono(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        color: const Color(0xFF6B7280),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'These will not be added again:',
+                  style: GoogleFonts.dmMono(
+                    fontSize: 11,
+                    color: const Color(0xFF9CA3AF),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                ...alreadyHasClasses.map(
+                  (cls) => _previewClassTile(
+                    cls,
+                    borderColor: AppColors.border(context),
+                    bgColor: AppColors.input(context),
+                    icon: Icons.check_circle_outline,
+                    iconColor: AppColors.subtext(context),
+                    dimmed: true,
+                  ),
+                ),
+              ],
+
+              if (newClasses.isEmpty && alreadyHasClasses.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF3F4FF),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: const Color(0xFF3859FF).withOpacity(0.3),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.info_outline,
+                        size: 16,
+                        color: Color(0xFF3859FF),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'You already have all these classes. You will still join the group.',
+                          style: GoogleFonts.dmMono(
+                            fontSize: 11,
+                            color: const Color(0xFF3859FF),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(
+              'Cancel',
+              style: GoogleFonts.dmMono(color: const Color(0xFF6B7280)),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF34A853),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+            child: Text(
+              newClasses.isEmpty ? 'Join Group' : 'Join & Add Classes',
+              style: GoogleFonts.dmMono(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _previewClassTile(
+    Map<String, dynamic> cls, {
+    required Color borderColor,
+    required Color bgColor,
+    required IconData icon,
+    required Color iconColor,
+    bool dimmed = false,
+  }) {
+    final ts = cls['date'] as Timestamp?;
+    final dateStr = ts != null
+        ? DateFormat('EEE, dd MMM').format(ts.toDate())
+        : '—';
+    final start = cls['startTime'] ?? '';
+    final end = cls['endTime'] ?? '';
+    final room = cls['room'] ?? '';
+    final building = cls['building'] ?? '';
+    final loc = [
+      room,
+      building,
+    ].where((s) => (s as String).isNotEmpty).join(', ');
+
+    return Opacity(
+      opacity: dimmed ? 0.6 : 1.0,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: bgColor,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: borderColor),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, size: 16, color: iconColor),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    cls['className'] ?? '',
+                    style: GoogleFonts.dmMono(
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    '$dateStr  •  ${_formatTime(start)} – ${_formatTime(end)}'
+                    '${loc.isNotEmpty ? '  •  $loc' : ''}',
+                    style: GoogleFonts.dmMono(
+                      fontSize: 10,
+                      color: const Color(0xFF6B7280),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+  // ════════════════════════════════════════════════════════════════════════
+  // TIMETABLE SHARE SECTION
+  // ════════════════════════════════════════════════════════════════════════
+
+  Widget _buildTimetableSharesSection() {
+    final user = _auth.currentUser;
+    if (user == null) return const SizedBox();
+
+    return StreamBuilder<QuerySnapshot>(
+      stream: _firestore
+          .collection('timetable_shares')
+          .where('recipientId', isEqualTo: user.uid)
+          .where('status', isEqualTo: 'pending')
+          .snapshots()
+          .handleError((_) {}),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+          return const SizedBox();
+        }
+        final shares = snapshot.data!.docs;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const SizedBox(height: 8),
+            Text(
+              'Shared Timetables',
+              style: GoogleFonts.dmMono(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 12),
+            ...shares.map((doc) => _buildShareCard(doc)),
+            const SizedBox(height: 8),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildShareCard(DocumentSnapshot doc) {
+    final data = doc.data() as Map<String, dynamic>;
+    final sender = data['senderUsername'] ?? 'Someone';
+    final subject = data['subject'] ?? '';
+    final classes = List<Map<String, dynamic>>.from(data['classes'] ?? []);
+    final tasks = List<Map<String, dynamic>>.from(data['tasks'] ?? []);
+    final exams = List<Map<String, dynamic>>.from(data['exams'] ?? []);
+    final ts = (data['createdAt'] as Timestamp?)?.toDate();
+    final total = classes.length + tasks.length + exams.length;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 14),
+      decoration: BoxDecoration(
+        color: AppColors.card(context),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFB90000), width: 2),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // ── Header ────────────────────────────────────────────────────────
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: const Color(0xFFB90000).withOpacity(0.05),
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(12),
+              ),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 46,
+                  height: 46,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFB90000).withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(
+                    Icons.calendar_month,
+                    color: Color(0xFFB90000),
+                    size: 26,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        subject,
+                        style: GoogleFonts.dmMono(
+                          fontSize: 15,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Row(
+                        children: [
+                          const Icon(
+                            Icons.person_outline,
+                            size: 13,
+                            color: Color(0xFF6B7280),
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            'Shared by $sender',
+                            style: GoogleFonts.dmMono(
+                              fontSize: 11,
+                              color: const Color(0xFF6B7280),
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (ts != null) ...[
+                        const SizedBox(height: 2),
+                        Row(
+                          children: [
+                            const Icon(
+                              Icons.access_time,
+                              size: 13,
+                              color: Color(0xFF9CA3AF),
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              DateFormat(
+                                'EEE, dd MMM yyyy  •  h:mm a',
+                              ).format(ts),
+                              style: GoogleFonts.dmMono(
+                                fontSize: 10,
+                                color: const Color(0xFF9CA3AF),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // ── Summary chips ──────────────────────────────────────────────────
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 6,
+              children: [
+                if (classes.isNotEmpty)
+                  _summaryChip(
+                    Icons.school_outlined,
+                    '${classes.length} Class${classes.length == 1 ? '' : 'es'}',
+                    const Color(0xFFB90000),
+                  ),
+                if (tasks.isNotEmpty)
+                  _summaryChip(
+                    Icons.task_alt,
+                    '${tasks.length} Task${tasks.length == 1 ? '' : 's'}',
+                    const Color(0xFF008BB9),
+                  ),
+                if (exams.isNotEmpty)
+                  _summaryChip(
+                    Icons.assignment_outlined,
+                    '${exams.length} Exam${exams.length == 1 ? '' : 's'}',
+                    const Color(0xFF9AB900),
+                  ),
+              ],
+            ),
+          ),
+
+          // ── Preview classes list ───────────────────────────────────────────
+          if (classes.isNotEmpty) ...[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+              child: Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF3F4FF),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: const Color(0xFFB90000).withOpacity(0.2),
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.calendar_today,
+                          size: 13,
+                          color: Color(0xFFB90000),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          'Class Schedule Preview',
+                          style: GoogleFonts.dmMono(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            color: const Color(0xFFB90000),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    ...classes.map((cls) {
+                      final dateTs = cls['date'] as Timestamp?;
+                      final dateStr = dateTs != null
+                          ? DateFormat(
+                              'EEE, dd MMM yyyy',
+                            ).format(dateTs.toDate())
+                          : '—';
+                      final start = cls['startTime'] ?? '';
+                      final end = cls['endTime'] ?? '';
+                      final room = cls['room'] ?? '';
+                      final building = cls['building'] ?? '';
+                      final loc = [
+                        room,
+                        building,
+                      ].where((s) => (s as String).isNotEmpty).join(', ');
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Container(
+                              margin: const EdgeInsets.only(top: 5),
+                              width: 6,
+                              height: 6,
+                              decoration: const BoxDecoration(
+                                color: Color(0xFFB90000),
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    cls['className'] ?? subject,
+                                    style: GoogleFonts.dmMono(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    '$dateStr${_formatTime(start)} – ${_formatTime(end)}'
+                                    '${loc.isNotEmpty ? '  •  $loc' : ''}',
+                                    style: GoogleFonts.dmMono(
+                                      fontSize: 10,
+                                      color: const Color(0xFF6B7280),
+                                      height: 1.4,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }),
+                  ],
+                ),
+              ),
+            ),
+          ],
+
+          // ── Tasks preview ──────────────────────────────────────────────────
+          if (tasks.isNotEmpty) ...[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+              child: Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE8F4FD),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: const Color(0xFF008BB9).withOpacity(0.3),
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.task_alt,
+                          size: 13,
+                          color: Color(0xFF008BB9),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          'Tasks',
+                          style: GoogleFonts.dmMono(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            color: const Color(0xFF008BB9),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    ...tasks.map((task) {
+                      final dueDateTs = task['dueDate'] as Timestamp?;
+                      final dateStr = dueDateTs != null
+                          ? DateFormat(
+                              'EEE, dd MMM yyyy',
+                            ).format(dueDateTs.toDate())
+                          : '—';
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 6),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Container(
+                              margin: const EdgeInsets.only(top: 5),
+                              width: 6,
+                              height: 6,
+                              decoration: const BoxDecoration(
+                                color: Color(0xFF008BB9),
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    task['taskTitle'] ?? '',
+                                    style: GoogleFonts.dmMono(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    '$dateStr  •  ${task['taskType'] ?? ''}',
+                                    style: GoogleFonts.dmMono(
+                                      fontSize: 10,
+                                      color: const Color(0xFF6B7280),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+          ],
+
+          // ── Exams preview ───────────────────────────────────────────────────
+          if (exams.isNotEmpty) ...[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+              child: Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFFBE6),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: const Color(0xFF9AB900).withOpacity(0.4),
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.assignment_outlined,
+                          size: 13,
+                          color: Color(0xFF9AB900),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          'Exams',
+                          style: GoogleFonts.dmMono(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            color: const Color(0xFF9AB900),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    ...exams.map((exam) {
+                      final examDateTs = exam['examDate'] as Timestamp?;
+                      final startTs = exam['startTime'] as Timestamp?;
+                      final endTs = exam['endTime'] as Timestamp?;
+                      final dateStr = examDateTs != null
+                          ? DateFormat(
+                              'EEE, dd MMM yyyy',
+                            ).format(examDateTs.toDate())
+                          : '—';
+                      final timeStr = startTs != null && endTs != null
+                          ? '${DateFormat('h:mm a').format(startTs.toDate())} – ${DateFormat('h:mm a').format(endTs.toDate())}'
+                          : '';
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 6),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Container(
+                              margin: const EdgeInsets.only(top: 5),
+                              width: 6,
+                              height: 6,
+                              decoration: const BoxDecoration(
+                                color: Color(0xFF9AB900),
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    exam['examName'] ?? '',
+                                    style: GoogleFonts.dmMono(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    '$dateStr${timeStr.isNotEmpty ? '  •  $timeStr' : ''}  •  ${exam['type'] ?? ''}',
+                                    style: GoogleFonts.dmMono(
+                                      fontSize: 10,
+                                      color: const Color(0xFF6B7280),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+          ],
+
+          // ── Accept / Decline ───────────────────────────────────────────────
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                Expanded(
+                  child: _AnimatedTapButton(
+                    onTap: () => _acceptTimetableShare(doc),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 13),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF34A853),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Center(
+                        child: Text(
+                          'Accept & Add to Timetable',
+                          style: GoogleFonts.dmMono(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                _AnimatedTapButton(
+                  onTap: () => _declineTimetableShare(doc),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      vertical: 13,
+                      horizontal: 16,
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppColors.card(context),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                        color: const Color(0xFFB90000),
+                        width: 2,
+                      ),
+                    ),
+                    child: Text(
+                      'Decline',
+                      style: GoogleFonts.dmMono(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        color: const Color(0xFFB90000),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _summaryChip(IconData icon, String label, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color.withOpacity(0.3)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 13, color: color),
+          const SizedBox(width: 5),
+          Text(
+            label,
+            style: GoogleFonts.dmMono(
+              fontSize: 11,
+              fontWeight: FontWeight.bold,
+              color: color,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _acceptTimetableShare(DocumentSnapshot doc) async {
+    final user = _auth.currentUser;
+    if (user == null) return;
+    final data = doc.data() as Map<String, dynamic>;
+    final classes = List<Map<String, dynamic>>.from(data['classes'] ?? []);
+    final tasks = List<Map<String, dynamic>>.from(data['tasks'] ?? []);
+    final exams = List<Map<String, dynamic>>.from(data['exams'] ?? []);
+    final subject = data['subject'] ?? '';
+    final sender = data['senderUsername'] ?? 'Someone';
+
+    // Load recipient's existing timetable for clash detection
+    final existingSnap = await _firestore
+        .collection('timetable')
+        .where('userId', isEqualTo: user.uid)
+        .get();
+
+    // Build day → existing classes map
+    final Map<String, List<Map<String, dynamic>>> existingByDay = {};
+    for (var d in existingSnap.docs) {
+      final dd = d.data();
+      final ts = dd['date'] as Timestamp?;
+      if (ts == null) continue;
+      final key = DateFormat('yyyy-MM-dd').format(ts.toDate());
+      existingByDay.putIfAbsent(key, () => []).add({
+        'id': d.id,
+        'className': dd['className'] ?? '',
+        'startTime': dd['startTime'] ?? '',
+        'endTime': dd['endTime'] ?? '',
+        'date': ts,
+      });
+    }
+
+    // Separate no-clash from clashing
+    final List<Map<String, dynamic>> noClash = [];
+    final List<Map<String, dynamic>> clashGroups = [];
+
+    for (final cls in classes) {
+      final ts = cls['date'] as Timestamp?;
+      if (ts == null) {
+        noClash.add(cls);
+        continue;
+      }
+      final key = DateFormat('yyyy-MM-dd').format(ts.toDate());
+      final existing = existingByDay[key] ?? [];
+      final inStart = _timeToMinutes(cls['startTime'] ?? '');
+      final inEnd = _timeToMinutes(cls['endTime'] ?? '');
+
+      // Check exact duplicate first — same class name same day same time
+      final isDuplicate = existing.any(
+        (ex) =>
+            ex['className'] == cls['className'] &&
+            ex['startTime'] == cls['startTime'] &&
+            ex['endTime'] == cls['endTime'],
+      );
+      if (isDuplicate) continue; // silently skip duplicates
+
+      final clashing = existing.where((ex) {
+        final s = _timeToMinutes(ex['startTime'] ?? '');
+        final e = _timeToMinutes(ex['endTime'] ?? '');
+        return inStart < e && inEnd > s;
+      }).toList();
+
+      if (clashing.isEmpty) {
+        noClash.add(cls);
+      } else {
+        clashGroups.add({'incoming': cls, 'existing': clashing});
+      }
+    }
+
+    if (classes.isEmpty) {
+      // No classes to insert — just insert tasks/exams and mark accepted
+      await _insertClassesAndMarkAccepted(doc, user, [], tasks, exams, sender);
+      return;
+    }
+
+    if (clashGroups.isEmpty) {
+      // No clashes — show preview and confirm
+      final confirm = await _showTimetablePreviewDialog(
+        sender: sender,
+        subject: subject,
+        classesToAdd: noClash,
+      );
+      if (confirm == true) {
+        await _insertClassesAndMarkAccepted(
+          doc,
+          user,
+          noClash,
+          tasks,
+          exams,
+          sender,
+        );
+      }
+    } else {
+      // Has clashes — show clash resolution dialog
+      final chosen = await _showClashDialog(
+        inviterUsername: sender,
+        groupName: subject,
+        noClashClasses: noClash,
+        clashGroups: clashGroups,
+      );
+      if (chosen != null) {
+        await _insertClassesAndMarkAccepted(
+          doc,
+          user,
+          chosen,
+          tasks,
+          exams,
+          sender,
+        );
+      }
+    }
+  }
+
+  Future<bool?> _showTimetablePreviewDialog({
+    required String sender,
+    required String subject,
+    required List<Map<String, dynamic>> classesToAdd,
+  }) {
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.card(context),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+          side: BorderSide(color: AppColors.border(context), width: 2),
+        ),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Add to Timetable?',
+              style: GoogleFonts.dmMono(
+                fontSize: 17,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 3),
+            Text(
+              'From $sender  •  $subject',
+              style: GoogleFonts.dmMono(
+                fontSize: 11,
+                color: const Color(0xFF6B7280),
+              ),
+            ),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'The following ${classesToAdd.length} class${classesToAdd.length == 1 ? '' : 'es'} will be added to your timetable:',
+                style: GoogleFonts.dmMono(
+                  fontSize: 12,
+                  color: const Color(0xFF6B7280),
+                ),
+              ),
+              const SizedBox(height: 12),
+              ...classesToAdd.map((cls) {
+                final ts = cls['date'] as Timestamp?;
+                final dateStr = ts != null
+                    ? DateFormat('EEE, dd MMM yyyy').format(ts.toDate())
+                    : '—';
+                final room = cls['room'] ?? '';
+                final building = cls['building'] ?? '';
+                final loc = [
+                  room,
+                  building,
+                ].where((s) => (s as String).isNotEmpty).join(', ');
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF9FAFB),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                        color: const Color(0xFFB90000).withOpacity(0.3),
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Container(
+                              width: 32,
+                              height: 32,
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFB90000),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: const Icon(
+                                Icons.school_outlined,
+                                color: Colors.white,
+                                size: 16,
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                cls['className'] ?? subject,
+                                style: GoogleFonts.dmMono(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            const Icon(
+                              Icons.calendar_today,
+                              size: 12,
+                              color: Color(0xFF6B7280),
+                            ),
+                            const SizedBox(width: 5),
+                            Text(
+                              dateStr,
+                              style: GoogleFonts.dmMono(
+                                fontSize: 11,
+                                color: const Color(0xFF6B7280),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 3),
+                        Row(
+                          children: [
+                            const Icon(
+                              Icons.access_time,
+                              size: 12,
+                              color: Color(0xFF6B7280),
+                            ),
+                            const SizedBox(width: 5),
+                            Text(
+                              '${_formatTime(cls['startTime'] ?? '')} – ${_formatTime(cls['endTime'] ?? '')}'
+                              '${loc.isNotEmpty ? '  •  $loc' : ''}',
+                              style: GoogleFonts.dmMono(
+                                fontSize: 11,
+                                color: const Color(0xFF6B7280),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(
+              'Cancel',
+              style: GoogleFonts.dmMono(
+                fontSize: 13,
+                color: const Color(0xFF6B7280),
+              ),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF34A853),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+            child: Text(
+              'Add to Timetable',
+              style: GoogleFonts.dmMono(
+                fontSize: 13,
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _insertClassesAndMarkAccepted(
+    DocumentSnapshot doc,
+    User user,
+    List<Map<String, dynamic>> classes,
+    List<Map<String, dynamic>> tasks,
+    List<Map<String, dynamic>> exams,
+    String sender,
+  ) async {
+    final batch = _firestore.batch();
+
+    // Insert timetable classes
+    for (final cls in classes) {
+      final ref = _firestore.collection('timetable').doc();
+      batch.set(ref, {
+        'userId': user.uid,
+        'className': cls['className'] ?? '',
+        'startTime': cls['startTime'] ?? '',
+        'endTime': cls['endTime'] ?? '',
+        'room': cls['room'] ?? '',
+        'building': cls['building'] ?? '',
+        'lecturerName': cls['lecturerName'] ?? '',
+        'date': cls['date'],
+        'semester': cls['semester'],
+        'academicYear': cls['academicYear'],
+        'type': 'class',
+      });
+    }
+
+    // Insert tasks — skip duplicates with same title and due date
+    final existingTasksSnap = await _firestore
+        .collection('tasks')
+        .where('userId', isEqualTo: user.uid)
+        .get();
+    final existingTaskKeys = existingTasksSnap.docs.map((d) {
+      final dd = d.data();
+      return '${dd['taskTitle']}__${(dd['dueDate'] as Timestamp?)?.millisecondsSinceEpoch}';
+    }).toSet();
+
+    for (final task in tasks) {
+      final dueDateTs = task['dueDate'] as Timestamp?;
+      final key = '${task['taskTitle']}__${dueDateTs?.millisecondsSinceEpoch}';
+      if (existingTaskKeys.contains(key)) continue; // skip duplicate
+      final ref = _firestore.collection('tasks').doc();
+      batch.set(ref, {
+        'userId': user.uid,
+        'taskTitle': task['taskTitle'] ?? '',
+        'taskDetails': task['taskDetails'] ?? '',
+        'taskType': task['taskType'] ?? '',
+        'subject': task['subject'] ?? '',
+        'dueDate': task['dueDate'],
+        'completed': false,
+      });
+    }
+
+    // Insert exams — skip duplicates with same name and exam date
+    final existingExamsSnap = await _firestore
+        .collection('exams')
+        .where('userId', isEqualTo: user.uid)
+        .get();
+    final existingExamKeys = existingExamsSnap.docs.map((d) {
+      final dd = d.data();
+      return '${dd['examName']}__${(dd['examDate'] as Timestamp?)?.millisecondsSinceEpoch}';
+    }).toSet();
+
+    for (final exam in exams) {
+      final examDateTs = exam['examDate'] as Timestamp?;
+      final key = '${exam['examName']}__${examDateTs?.millisecondsSinceEpoch}';
+      if (existingExamKeys.contains(key)) continue; // skip duplicate
+      final ref = _firestore.collection('exams').doc();
+      batch.set(ref, {
+        'userId': user.uid,
+        'examName': exam['examName'] ?? '',
+        'subject': exam['subject'] ?? '',
+        'type': exam['type'] ?? 'Exam',
+        'mode': exam['mode'] ?? 'In Person',
+        'venue': exam['venue'] ?? '',
+        'examDate': exam['examDate'],
+        'startTime': exam['startTime'],
+        'endTime': exam['endTime'],
+      });
+    }
+
+    await batch.commit();
+    await doc.reference.update({'status': 'accepted'});
+
+    if (mounted) {
+      final parts = <String>[];
+      if (classes.isNotEmpty)
+        parts.add('${classes.length} class${classes.length == 1 ? '' : 'es'}');
+      if (tasks.isNotEmpty)
+        parts.add('${tasks.length} task${tasks.length == 1 ? '' : 's'}');
+      if (exams.isNotEmpty)
+        parts.add('${exams.length} exam${exams.length == 1 ? '' : 's'}');
+      final summary = parts.isEmpty ? '' : ' (${parts.join(', ')})';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Timetable from $sender accepted!$summary',
+            style: GoogleFonts.dmMono(),
+          ),
+          backgroundColor: const Color(0xFF34A853),
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    }
+  }
+
+  Future<void> _declineTimetableShare(DocumentSnapshot doc) async {
+    await doc.reference.update({'status': 'declined'});
+    if (mounted) {
+      final data = doc.data() as Map<String, dynamic>;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Timetable from ${data['senderUsername'] ?? 'Someone'} declined.',
+            style: GoogleFonts.dmMono(),
+          ),
+          backgroundColor: const Color(0xFF6B7280),
+        ),
+      );
+    }
+  }
+
+  Future<void> _declineInvitation(DocumentSnapshot doc) async {
+    await doc.reference.update({'status': 'declined'});
+    if (mounted) {
+      final data = doc.data() as Map<String, dynamic>;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Invitation to ${data['groupName'] ?? 'group'} declined.',
+            style: GoogleFonts.dmMono(),
+          ),
+          backgroundColor: const Color(0xFF6B7280),
+        ),
+      );
+    }
+  }
 }
 
 class _AnimatedTapButton extends StatefulWidget {
@@ -2078,10 +4605,13 @@ class _AnimatedTapButtonState extends State<_AnimatedTapButton> {
 }
 
 class TrianglePainter extends CustomPainter {
+  final Color color;
+  const TrianglePainter({required this.color});
+
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
-      ..color = Colors.black
+      ..color = color
       ..style = PaintingStyle.fill;
 
     final path = Path()

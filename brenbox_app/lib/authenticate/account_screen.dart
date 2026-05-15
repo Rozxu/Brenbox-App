@@ -6,6 +6,9 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../screens/notification_settings_screen.dart';
 import '../services/notification_service.dart';
 import '../services/notification_scheduler.dart';
+import '../app_preferences.dart';
+
+// ignore_for_file: use_build_context_synchronously
 
 class AccountScreen extends StatefulWidget {
   final VoidCallback? onBackPressed;
@@ -24,6 +27,8 @@ class _AccountScreenState extends State<AccountScreen> {
   String _email = '';
   bool _notificationsEnabled = true;
   bool _isLoading = true;
+  double _fontScale = kDefaultFontScale;
+  bool _isDarkMode = false;
 
   @override
   void initState() {
@@ -37,12 +42,18 @@ class _AccountScreenState extends State<AccountScreen> {
 
     try {
       final doc = await _firestore.collection('users').doc(user.uid).get();
+      final scale   = (doc.data()?['fontScale'] as num?)?.toDouble() ?? kDefaultFontScale;
+      final darkMode = doc.data()?['darkMode'] as bool? ?? false;
       setState(() {
-        _username = doc.data()?['username'] ?? 'User';
-        _email = user.email ?? '';
-        _notificationsEnabled = doc.data()?['notificationsEnabled'] ?? true;
-        _isLoading = false;
+        _username              = doc.data()?['username'] ?? 'User';
+        _email                 = user.email ?? '';
+        _notificationsEnabled  = doc.data()?['notificationsEnabled'] ?? true;
+        _fontScale             = scale;
+        _isDarkMode            = darkMode;
+        _isLoading             = false;
       });
+      fontScaleNotifier.value  = scale;
+      darkModeNotifier.value   = darkMode;
     } catch (e) {
       print('Error loading user data: $e');
       setState(() {
@@ -55,25 +66,31 @@ class _AccountScreenState extends State<AccountScreen> {
     final shouldLogout = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        backgroundColor: Colors.white,
+        backgroundColor: AppColors.card(context),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(12),
-          side: const BorderSide(color: Colors.black, width: 2),
+          side: BorderSide(color: AppColors.border(context), width: 2),
         ),
         title: Text(
           'Log Out',
-          style: GoogleFonts.dmMono(fontWeight: FontWeight.bold),
+          style: GoogleFonts.dmMono(
+            fontWeight: FontWeight.bold,
+            color: AppColors.text(context),
+          ),
         ),
         content: Text(
           'Are you sure you want to log out?',
-          style: GoogleFonts.dmMono(fontSize: 13),
+          style: GoogleFonts.dmMono(
+            fontSize: 13,
+            color: AppColors.text(context),
+          ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
             child: Text(
               'Cancel',
-              style: GoogleFonts.dmMono(color: Colors.black),
+              style: GoogleFonts.dmMono(color: AppColors.text(context)),
             ),
           ),
           ElevatedButton(
@@ -117,10 +134,26 @@ class _AccountScreenState extends State<AccountScreen> {
     }
   }
 
+  Future<void> _updateFontScale(double scale) async {
+    setState(() => _fontScale = scale);
+    fontScaleNotifier.value = scale;
+    final user = _auth.currentUser;
+    if (user == null) return;
+    await _firestore.collection('users').doc(user.uid).update({'fontScale': scale});
+  }
+
+  Future<void> _updateDarkMode(bool value) async {
+    setState(() => _isDarkMode = value);
+    darkModeNotifier.value = value;
+    final user = _auth.currentUser;
+    if (user == null) return;
+    await _firestore.collection('users').doc(user.uid).update({'darkMode': value});
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFE5E7EB),
+      backgroundColor: AppColors.bg(context),
       body: SafeArea(
         child: SingleChildScrollView(
           child: Padding(
@@ -162,8 +195,8 @@ class _AccountScreenState extends State<AccountScreen> {
             child: Container(
               width: 42,
               height: 42,
-              decoration: const BoxDecoration(
-                color: Color.fromARGB(255, 40, 40, 40),
+              decoration: BoxDecoration(
+                color: AppColors.chipBg(context),
                 shape: BoxShape.circle,
               ),
               child: const Icon(
@@ -179,6 +212,7 @@ class _AccountScreenState extends State<AccountScreen> {
           style: GoogleFonts.dmMono(
             fontSize: 24,
             fontWeight: FontWeight.bold,
+            color: AppColors.text(context),
           ),
         ),
       ],
@@ -190,9 +224,9 @@ class _AccountScreenState extends State<AccountScreen> {
       width: double.infinity,
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.card(context),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.black, width: 2),
+        border: Border.all(color: AppColors.border(context), width: 2),
       ),
       child: Column(
         children: [
@@ -200,14 +234,14 @@ class _AccountScreenState extends State<AccountScreen> {
             width: 80,
             height: 80,
             decoration: BoxDecoration(
-              color: const Color(0xFFE5E7EB),
+              color: AppColors.fieldBg(context),
               shape: BoxShape.circle,
-              border: Border.all(color: Colors.black, width: 2),
+              border: Border.all(color: AppColors.border(context), width: 2),
             ),
-            child: const Icon(
+            child: Icon(
               Icons.person,
               size: 40,
-              color: Color(0xFF6B7280),
+              color: AppColors.subtext(context),
             ),
           ),
           const SizedBox(height: 16),
@@ -216,6 +250,7 @@ class _AccountScreenState extends State<AccountScreen> {
             style: GoogleFonts.dmMono(
               fontSize: 18,
               fontWeight: FontWeight.bold,
+              color: AppColors.text(context),
             ),
           ),
           const SizedBox(height: 4),
@@ -223,7 +258,7 @@ class _AccountScreenState extends State<AccountScreen> {
             _email,
             style: GoogleFonts.dmMono(
               fontSize: 12,
-              color: const Color(0xFF6B7280),
+              color: AppColors.subtext(context),
             ),
           ),
         ],
@@ -252,6 +287,10 @@ class _AccountScreenState extends State<AccountScreen> {
         const SizedBox(height: 12),
         _buildNotificationMenuItem(),
         const SizedBox(height: 12),
+        _buildDarkModeItem(),
+        const SizedBox(height: 12),
+        _buildFontSizeSlider(),
+        const SizedBox(height: 12),
         _buildMenuItem(
           icon: Icons.info_outline,
           title: 'About',
@@ -266,6 +305,57 @@ class _AccountScreenState extends State<AccountScreen> {
     );
   }
 
+  Widget _buildDarkModeItem() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: AppColors.card(context),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.border(context), width: 2),
+      ),
+      child: Row(
+        children: [
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 450),
+            transitionBuilder: (child, anim) => RotationTransition(
+              turns: Tween<double>(begin: 0.5, end: 1.0).animate(
+                CurvedAnimation(parent: anim, curve: Curves.easeInOut),
+              ),
+              child: FadeTransition(opacity: anim, child: child),
+            ),
+            child: Icon(
+              _isDarkMode ? Icons.nightlight_round : Icons.wb_sunny_rounded,
+              key: ValueKey<bool>(_isDarkMode),
+              color: _isDarkMode
+                  ? const Color(0xFF9CA3AF)
+                  : const Color(0xFFFBBC05),
+              size: 24,
+            ),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Text(
+              'Dark Mode',
+              style: GoogleFonts.dmMono(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                color: AppColors.text(context),
+              ),
+            ),
+          ),
+          Switch(
+            value: _isDarkMode,
+            onChanged: _updateDarkMode,
+            activeThumbColor: Colors.white,
+            activeTrackColor: const Color(0xFF34A853).withValues(alpha: 0.8),
+            inactiveThumbColor: Colors.white,
+            inactiveTrackColor: const Color(0xFFE5E7EB),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildMenuItem({
     required IconData icon,
     required String title,
@@ -276,13 +366,13 @@ class _AccountScreenState extends State<AccountScreen> {
       child: Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: AppColors.card(context),
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Colors.black, width: 2),
+          border: Border.all(color: AppColors.border(context), width: 2),
         ),
         child: Row(
           children: [
-            Icon(icon, size: 24, color: Colors.black),
+            Icon(icon, size: 24, color: AppColors.text(context)),
             const SizedBox(width: 16),
             Expanded(
               child: Text(
@@ -290,13 +380,14 @@ class _AccountScreenState extends State<AccountScreen> {
                 style: GoogleFonts.dmMono(
                   fontSize: 14,
                   fontWeight: FontWeight.bold,
+                  color: AppColors.text(context),
                 ),
               ),
             ),
-            const Icon(
+            Icon(
               Icons.arrow_forward_ios,
               size: 16,
-              color: Color(0xFF6B7280),
+              color: AppColors.subtext(context),
             ),
           ],
         ),
@@ -308,14 +399,14 @@ Widget _buildNotificationMenuItem() {
   return Container(
     padding: const EdgeInsets.all(16),
     decoration: BoxDecoration(
-      color: Colors.white,
+      color: AppColors.card(context),
       borderRadius: BorderRadius.circular(12),
-      border: Border.all(color: Colors.black, width: 2),
+      border: Border.all(color: AppColors.border(context), width: 2),
     ),
     child: Row(
       children: [
-        const Icon(Icons.notifications_outlined,
-            size: 24, color: Colors.black),
+        Icon(Icons.notifications_outlined,
+            size: 24, color: AppColors.text(context)),
         const SizedBox(width: 16),
         Expanded(
           child: Text(
@@ -323,23 +414,9 @@ Widget _buildNotificationMenuItem() {
             style: GoogleFonts.dmMono(
               fontSize: 14,
               fontWeight: FontWeight.bold,
+              color: AppColors.text(context),
             ),
           ),
-        ),
-        // Master on/off toggle
-        Switch(
-          value: _notificationsEnabled,
-          onChanged: (v) async {
-            await _toggleNotifications(v);
-            // Reschedule or cancel all
-            if (v) {
-              await NotificationScheduler().rescheduleAllNotifications();
-            } else {
-              await NotificationService().cancelAllNotifications();
-            }
-          },
-          activeColor: const Color(0xFF34A853),
-          activeTrackColor: const Color(0xFF34A853).withOpacity(0.5),
         ),
         // Arrow to open detailed settings
         if (_notificationsEnabled)
@@ -352,19 +429,82 @@ Widget _buildNotificationMenuItem() {
                 ),
               );
             },
-            child: const Padding(
-              padding: EdgeInsets.only(left: 8),
+            child: Padding(
+              padding: const EdgeInsets.only(right: 8),
               child: Icon(
                 Icons.tune,
                 size: 20,
-                color: Color(0xFF6B7280),
+                color: AppColors.subtext(context),
               ),
             ),
           ),
+        // Master on/off toggle
+        Switch(
+          value: _notificationsEnabled,
+          onChanged: (v) async {
+            await _toggleNotifications(v);
+            if (v) {
+              await NotificationScheduler().rescheduleAllNotifications();
+            } else {
+              await NotificationService().cancelAllNotifications();
+            }
+          },
+          activeThumbColor: Colors.white,
+          activeTrackColor: const Color(0xFF34A853).withValues(alpha: 0.8),
+          inactiveThumbColor: Colors.white,
+        ),
       ],
     ),
   );
 }
+
+  Widget _buildFontSizeSlider() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.card(context),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.border(context), width: 2),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.text_fields, size: 24, color: AppColors.text(context)),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Text(
+                  'Font Size',
+                  style: GoogleFonts.dmMono(
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.text(context),
+                  ),
+                ),
+              ),
+              Text(
+                '${scaleToSliderPos(_fontScale).round()}',
+                style: GoogleFonts.dmMono(
+                  fontSize: 13,
+                  color: AppColors.subtext(context),
+                ),
+              ),
+            ],
+          ),
+          Slider(
+            value: scaleToSliderPos(_fontScale),
+            min: 0,
+            max: 100,
+            activeColor: AppColors.sliderActive(context),
+            inactiveColor: AppColors.sliderInactive(context),
+            onChanged: (pos) => _updateFontScale(sliderPosToScale(pos)),
+            onChangeEnd: (pos) => _updateFontScale(sliderPosToScale(pos)),
+          ),
+        ],
+      ),
+    );
+  }
 
   Widget _buildLogoutButton() {
     return _AnimatedTapButton(
@@ -512,12 +652,12 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFE5E7EB),
+      backgroundColor: AppColors.bg(context),
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.black),
+          icon: Icon(Icons.arrow_back, color: AppColors.text(context)),
           onPressed: () => Navigator.pop(context),
         ),
         title: Text(
@@ -525,7 +665,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           style: GoogleFonts.dmMono(
             fontSize: 20,
             fontWeight: FontWeight.bold,
-            color: Colors.black,
+            color: AppColors.text(context),
           ),
         ),
       ),
@@ -571,7 +711,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 style: GoogleFonts.dmMono(
                   fontSize: 14,
                   fontWeight: FontWeight.bold,
-                  color: const Color(0xFF6B7280),
+                  color: AppColors.subtext(context),
                 ),
               ),
               const SizedBox(height: 16),
@@ -663,6 +803,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       style: GoogleFonts.dmMono(
         fontSize: 13,
         fontWeight: FontWeight.bold,
+        color: AppColors.text(context),
       ),
     );
   }
@@ -676,24 +817,24 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     return TextFormField(
       controller: controller,
       keyboardType: keyboardType,
-      style: GoogleFonts.dmMono(fontSize: 14),
+      style: GoogleFonts.dmMono(fontSize: 14, color: AppColors.text(context)),
       validator: validator,
       decoration: InputDecoration(
         hintText: hint,
-        hintStyle: GoogleFonts.dmMono(fontSize: 14, color: Colors.grey),
+        hintStyle: GoogleFonts.dmMono(fontSize: 14, color: AppColors.subtext(context)),
         filled: true,
-        fillColor: Colors.white,
+        fillColor: AppColors.input(context),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: Colors.black, width: 2),
+          borderSide: BorderSide(color: AppColors.border(context), width: 2),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: Colors.black, width: 2),
+          borderSide: BorderSide(color: AppColors.border(context), width: 2),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: Colors.black, width: 2),
+          borderSide: BorderSide(color: AppColors.border(context), width: 2),
         ),
         errorBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
@@ -718,32 +859,32 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     return TextFormField(
       controller: controller,
       obscureText: obscureText,
-      style: GoogleFonts.dmMono(fontSize: 14),
+      style: GoogleFonts.dmMono(fontSize: 14, color: AppColors.text(context)),
       validator: validator,
       decoration: InputDecoration(
         hintText: hint,
-        hintStyle: GoogleFonts.dmMono(fontSize: 14, color: Colors.grey),
+        hintStyle: GoogleFonts.dmMono(fontSize: 14, color: AppColors.subtext(context)),
         filled: true,
-        fillColor: Colors.white,
+        fillColor: AppColors.input(context),
         suffixIcon: IconButton(
           icon: Icon(
             obscureText ? Icons.visibility_off : Icons.visibility,
             size: 20,
-            color: const Color(0xFF6B7280),
+            color: AppColors.subtext(context),
           ),
           onPressed: onToggle,
         ),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: Colors.black, width: 2),
+          borderSide: BorderSide(color: AppColors.border(context), width: 2),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: Colors.black, width: 2),
+          borderSide: BorderSide(color: AppColors.border(context), width: 2),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: Colors.black, width: 2),
+          borderSide: BorderSide(color: AppColors.border(context), width: 2),
         ),
         errorBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
@@ -766,12 +907,12 @@ class AboutScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFE5E7EB),
+      backgroundColor: AppColors.bg(context),
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.black),
+          icon: Icon(Icons.arrow_back, color: AppColors.text(context)),
           onPressed: () => Navigator.pop(context),
         ),
         title: Text(
@@ -779,7 +920,7 @@ class AboutScreen extends StatelessWidget {
           style: GoogleFonts.dmMono(
             fontSize: 20,
             fontWeight: FontWeight.bold,
-            color: Colors.black,
+            color: AppColors.text(context),
           ),
         ),
       ),
@@ -792,9 +933,9 @@ class AboutScreen extends StatelessWidget {
               width: double.infinity,
               padding: const EdgeInsets.all(24),
               decoration: BoxDecoration(
-                color: Colors.white,
+                color: AppColors.card(context),
                 borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: Colors.black, width: 2),
+                border: Border.all(color: AppColors.border(context), width: 2),
               ),
               child: Column(
                 children: [
@@ -802,7 +943,7 @@ class AboutScreen extends StatelessWidget {
                     width: 80,
                     height: 80,
                     decoration: BoxDecoration(
-                      color: const Color(0xFF6B7280),
+                      color: AppColors.subtext(context),
                       borderRadius: BorderRadius.circular(16),
                     ),
                     child: const Icon(
@@ -817,6 +958,7 @@ class AboutScreen extends StatelessWidget {
                     style: GoogleFonts.dmMono(
                       fontSize: 24,
                       fontWeight: FontWeight.bold,
+                      color: AppColors.text(context),
                     ),
                   ),
                   const SizedBox(height: 8),
@@ -824,20 +966,18 @@ class AboutScreen extends StatelessWidget {
                     'Version 0.5.0',
                     style: GoogleFonts.dmMono(
                       fontSize: 12,
-                      color: const Color(0xFF6B7280),
+                      color: AppColors.subtext(context),
                     ),
                   ),
                 ],
               ),
             ),
             const SizedBox(height: 24),
-            _buildInfoSection(
-              'About BrenBox',
+            _buildInfoSection(context, 'About BrenBox',
               'BrenBox is a comprehensive timetable and task management application designed to help students organize their academic life. Keep track of classes, assignments, exams, and deadlines all in one place.',
             ),
             const SizedBox(height: 16),
-            _buildInfoSection(
-              'Features',
+            _buildInfoSection(context, 'Features',
               '• Weekly timetable view\n'
                   '• Task management with reminders\n'
                   '• Exam scheduling\n'
@@ -846,13 +986,11 @@ class AboutScreen extends StatelessWidget {
                   '• Event indicators',
             ),
             const SizedBox(height: 16),
-            _buildInfoSection(
-              'Developer',
+            _buildInfoSection(context, 'Developer',
               'Developed as a student project to enhance academic productivity and organization.',
             ),
             const SizedBox(height: 16),
-            _buildInfoSection(
-              'Contact',
+            _buildInfoSection(context, 'Contact',
               'For feedback and support, please contact through the email: support@brenbox.com',
             ),
           ],
@@ -861,14 +999,14 @@ class AboutScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildInfoSection(String title, String content) {
+  Widget _buildInfoSection(BuildContext context, String title, String content) {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.card(context),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.black, width: 2),
+        border: Border.all(color: AppColors.border(context), width: 2),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -878,6 +1016,7 @@ class AboutScreen extends StatelessWidget {
             style: GoogleFonts.dmMono(
               fontSize: 14,
               fontWeight: FontWeight.bold,
+              color: AppColors.text(context),
             ),
           ),
           const SizedBox(height: 12),
@@ -885,7 +1024,7 @@ class AboutScreen extends StatelessWidget {
             content,
             style: GoogleFonts.dmMono(
               fontSize: 12,
-              color: const Color(0xFF6B7280),
+              color: AppColors.subtext(context),
               height: 1.5,
             ),
           ),

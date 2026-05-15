@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'notification_service.dart';
@@ -472,5 +473,198 @@ class NotificationScheduler {
     if (room.isEmpty && building.isEmpty) return '';
     if (room.isNotEmpty && building.isNotEmpty) return ' at $room, $building';
     return ' at ${room.isNotEmpty ? room : building}';
+  }
+
+  // ── INVITE LISTENERS ────────────────────────────────────────────────────────
+
+  List<StreamSubscription<QuerySnapshot>> _inviteListeners = [];
+
+  Future<void> startInviteListeners(String userId) async {
+    await stopInviteListeners();
+
+    bool groupInviteFirst = true;
+    bool timetableInviteFirst = true;
+
+    final groupInviteSub = _firestore
+        .collection('group_invitations')
+        .where('inviteeId', isEqualTo: userId)
+        .where('status', isEqualTo: 'pending')
+        .snapshots()
+        .listen((snap) {
+      if (groupInviteFirst) { groupInviteFirst = false; return; }
+      for (var change in snap.docChanges) {
+        if (change.type != DocumentChangeType.added) continue;
+        final data = change.doc.data()!;
+        final groupName   = data['groupName']   as String? ?? 'a group';
+        final inviterName = data['inviterName'] as String? ?? 'Someone';
+        _notificationService.showInviteNotification(
+          userId:  userId,
+          title:   'Group Invitation',
+          body:    '$inviterName invited you to join "$groupName"',
+          type:    'group_invite',
+          eventId: change.doc.id,
+        );
+      }
+    }, onError: (_) {});
+
+    final timetableShareSub = _firestore
+        .collection('timetable_shares')
+        .where('recipientId', isEqualTo: userId)
+        .where('status', isEqualTo: 'pending')
+        .snapshots()
+        .listen((snap) {
+      if (timetableInviteFirst) { timetableInviteFirst = false; return; }
+      for (var change in snap.docChanges) {
+        if (change.type != DocumentChangeType.added) continue;
+        final data       = change.doc.data()!;
+        final senderName = data['senderName'] as String? ?? 'Someone';
+        _notificationService.showInviteNotification(
+          userId:  userId,
+          title:   'Timetable Share',
+          body:    '$senderName shared his/her timetable with you',
+          type:    'timetable_invite',
+          eventId: change.doc.id,
+        );
+      }
+    }, onError: (_) {});
+
+    _inviteListeners = [groupInviteSub, timetableShareSub];
+  }
+
+  Future<void> stopInviteListeners() async {
+    for (final s in _inviteListeners) { s.cancel(); }
+    _inviteListeners = [];
+  }
+
+  // ── GROUP ACTIVITY LISTENERS ─────────────────────────────────────────────
+
+  StreamSubscription<QuerySnapshot>? _groupsListener;
+  List<StreamSubscription<QuerySnapshot>> _groupActivityListeners = [];
+
+  Future<void> startGroupActivityListeners(String userId) async {
+    await stopGroupActivityListeners();
+
+    bool groupsFirst = true;
+
+    _groupsListener = _firestore
+        .collection('study_groups')
+        .where('memberIds', arrayContains: userId)
+        .snapshots()
+        .listen((snap) {
+      if (groupsFirst) {
+        groupsFirst = false;
+        for (var doc in snap.docs) {
+          final d = doc.data();
+          _listenToGroupSubcollections(
+            userId, doc.id,
+            d['name']    as String? ?? '',
+            d['subject'] as String? ?? '',
+          );
+        }
+        return;
+      }
+      for (var change in snap.docChanges) {
+        if (change.type != DocumentChangeType.added) continue;
+        final d = change.doc.data();
+        if (d == null) continue;
+        _listenToGroupSubcollections(
+          userId, change.doc.id,
+          d['name']    as String? ?? '',
+          d['subject'] as String? ?? '',
+        );
+      }
+    }, onError: (_) {});
+  }
+
+  void _listenToGroupSubcollections(
+    String userId, String groupId, String groupName, String subject,
+  ) {
+    bool messagesFirst   = true;
+    bool milestonesFirst = true;
+    bool updatesFirst    = true;
+    bool notesFirst      = true;
+
+    final base = _firestore.collection('study_groups').doc(groupId);
+
+    final messagesSub = base.collection('messages').snapshots().listen((snap) {
+      if (messagesFirst) { messagesFirst = false; return; }
+      for (var change in snap.docChanges) {
+        if (change.type != DocumentChangeType.added) continue;
+        final d = change.doc.data()!;
+        if ((d['senderId'] as String? ?? '') == userId) continue;
+        final sender = d['senderUsername'] as String? ?? 'Someone';
+        final text   = d['text']           as String? ?? '';
+        _notificationService.showGroupActivityNotification(
+          userId: userId, groupId: groupId, groupName: groupName,
+          subject: subject,
+          title: '$groupName — $sender',
+          body:  text.isNotEmpty ? text : 'Sent a message',
+          type:  'group_chat', tab: 0,
+        );
+      }
+    }, onError: (_) {});
+
+    final milestonesSub = base.collection('milestones').snapshots().listen((snap) {
+      if (milestonesFirst) { milestonesFirst = false; return; }
+      for (var change in snap.docChanges) {
+        if (change.type != DocumentChangeType.added) continue;
+        final d = change.doc.data()!;
+        if ((d['createdBy'] as String? ?? '') == userId) continue;
+        final who   = d['createdByUsername'] as String? ?? 'Someone';
+        final title = d['title']             as String? ?? 'a task';
+        _notificationService.showGroupActivityNotification(
+          userId: userId, groupId: groupId, groupName: groupName,
+          subject: subject,
+          title: '$groupName — New Task',
+          body:  '$who added "$title"',
+          type:  'group_milestone', tab: 1,
+        );
+      }
+    }, onError: (_) {});
+
+    final updatesSub = base.collection('updates').snapshots().listen((snap) {
+      if (updatesFirst) { updatesFirst = false; return; }
+      for (var change in snap.docChanges) {
+        if (change.type != DocumentChangeType.added) continue;
+        final d = change.doc.data()!;
+        if ((d['postedBy'] as String? ?? '') == userId) continue;
+        final who     = d['postedByUsername'] as String? ?? 'Someone';
+        final content = d['content']          as String? ?? '';
+        _notificationService.showGroupActivityNotification(
+          userId: userId, groupId: groupId, groupName: groupName,
+          subject: subject,
+          title: '$groupName — New Update',
+          body:  '$who: ${content.isNotEmpty ? content : 'posted an update'}',
+          type:  'group_update', tab: 2,
+        );
+      }
+    }, onError: (_) {});
+
+    final notesSub = base.collection('notes').snapshots().listen((snap) {
+      if (notesFirst) { notesFirst = false; return; }
+      for (var change in snap.docChanges) {
+        if (change.type != DocumentChangeType.added) continue;
+        final d = change.doc.data()!;
+        if ((d['authorId'] as String? ?? '') == userId) continue;
+        final who   = d['authorUsername'] as String? ?? 'Someone';
+        final title = d['title']          as String? ?? 'a note';
+        _notificationService.showGroupActivityNotification(
+          userId: userId, groupId: groupId, groupName: groupName,
+          subject: subject,
+          title: '$groupName — New Note',
+          body:  '$who added "$title"',
+          type:  'group_note', tab: 3,
+        );
+      }
+    }, onError: (_) {});
+
+    _groupActivityListeners.addAll([messagesSub, milestonesSub, updatesSub, notesSub]);
+  }
+
+  Future<void> stopGroupActivityListeners() async {
+    await _groupsListener?.cancel();
+    _groupsListener = null;
+    for (final s in _groupActivityListeners) { s.cancel(); }
+    _groupActivityListeners = [];
   }
 }
