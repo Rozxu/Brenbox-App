@@ -17,11 +17,12 @@ class NotificationService {
 
   static GlobalKey<NavigatorState>? _navigatorKey;
 
-  static const String _classChannelId  = 'class_channel';
-  static const String _taskChannelId   = 'task_channel';
-  static const String _examChannelId   = 'exam_channel';
-  static const String _inviteChannelId = 'invite_channel';
-  static const String _groupChannelId  = 'group_channel';
+  static const String _classChannelId     = 'class_channel';
+  static const String _taskChannelId      = 'task_channel';
+  static const String _examChannelId      = 'exam_channel';
+  static const String _inviteChannelId    = 'invite_channel';
+  static const String _groupChannelId     = 'group_channel';
+  static const String _studyPlanChannelId = 'study_plan_channel';
 
   void setNavigatorKey(GlobalKey<NavigatorState> key) => _navigatorKey = key;
 
@@ -157,6 +158,12 @@ class NotificationService {
       description: 'Notifications for study group activity',
       importance: Importance.high,
     );
+    const AndroidNotificationChannel studyPlanChannel = AndroidNotificationChannel(
+      _studyPlanChannelId,
+      'Study Plan Notifications',
+      description: 'Daily reminders to complete study plans before exams',
+      importance: Importance.high,
+    );
 
     final AndroidFlutterLocalNotificationsPlugin? androidPlugin =
         _plugin.resolvePlatformSpecificImplementation<
@@ -167,6 +174,7 @@ class NotificationService {
       await androidPlugin.createNotificationChannel(examChannel);
       await androidPlugin.createNotificationChannel(inviteChannel);
       await androidPlugin.createNotificationChannel(groupChannel);
+      await androidPlugin.createNotificationChannel(studyPlanChannel);
     }
   }
 
@@ -218,6 +226,26 @@ class NotificationService {
           '/home',
           (route) => false,
           arguments: {'groupId': groupId, 'tab': tab},
+        );
+      }
+    } else if (payload.startsWith('study_plan:')) {
+      // format: study_plan:{planId}:{historyDocId}
+      final rest = payload.substring('study_plan:'.length);
+      final colonIdx = rest.indexOf(':');
+      if (colonIdx == -1) return;
+      final planId       = rest.substring(0, colonIdx);
+      final historyDocId = rest.substring(colonIdx + 1);
+      try {
+        await FirebaseFirestore.instance
+            .collection('notification_history')
+            .doc(historyDocId)
+            .update({'isRead': true});
+      } catch (_) {}
+      if (_navigatorKey?.currentState != null) {
+        _navigatorKey!.currentState!.pushNamedAndRemoveUntil(
+          '/home',
+          (route) => false,
+          arguments: {'planId': planId},
         );
       }
     } else if (payload.startsWith('calendar:')) {
@@ -314,6 +342,11 @@ class NotificationService {
 
     final data = message.data;
     final type = data['type'] as String? ?? '';
+
+    // Don't show a notification to the user who triggered it
+    final senderId  = data['senderId'] as String? ?? '';
+    final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    if (senderId.isNotEmpty && senderId == currentUid) return;
 
     final String channelId;
     final String channelName;
@@ -447,7 +480,15 @@ class NotificationService {
       if (existing.exists) {
         // Re-register the local alarm anyway in case it was lost (app reinstall /
         // OS cleared alarms) — but DON'T add another notification_history row.
-        await _registerLocalAlarm(id, title, body, scheduledTime, type, existing.data()?['historyDocId'] as String?);
+        final ed = existing.data()!;
+        final existingHistoryId = ed['historyDocId'] as String?;
+        final existingEventId   = ed['eventId']     as String?;
+        final String? reregPayload = (ed['type'] == 'study_plan' &&
+                existingEventId != null &&
+                existingHistoryId != null)
+            ? 'study_plan:$existingEventId:$existingHistoryId'
+            : existingHistoryId;
+        await _registerLocalAlarm(id, title, body, scheduledTime, type, reregPayload);
         return false;
       }
     } catch (e) {
@@ -484,7 +525,10 @@ class NotificationService {
     });
 
     // 5. Register the local alarm
-    await _registerLocalAlarm(id, title, body, scheduledTime, type, docRef.id);
+    final String notifPayload = type == 'study_plan'
+        ? 'study_plan:$eventId:${docRef.id}'
+        : docRef.id;
+    await _registerLocalAlarm(id, title, body, scheduledTime, type, notifPayload);
 
     print('[Scheduled] "$title" at $scheduledTime (key: $dedupeKey)');
     return true;
@@ -508,7 +552,9 @@ class NotificationService {
         ? _classChannelId
         : type == 'exam'
             ? _examChannelId
-            : _taskChannelId;
+            : type == 'study_plan'
+                ? _studyPlanChannelId
+                : _taskChannelId;
 
     final tz.TZDateTime tzScheduled = _toTZDateTime(scheduledTime);
 
@@ -535,10 +581,32 @@ class NotificationService {
 
   String _getChannelName(String type) {
     switch (type) {
-      case 'class': return 'Class Notifications';
-      case 'exam':  return 'Exam Notifications';
-      default:      return 'Task Notifications';
+      case 'class':       return 'Class Notifications';
+      case 'exam':        return 'Exam Notifications';
+      case 'study_plan':  return 'Study Plan Notifications';
+      default:            return 'Task Notifications';
     }
+  }
+
+  // ── STUDY PLAN SETTINGS CONFIRMATION ──────────────────────────────────────
+
+  /// Fires an immediate local notification confirming study plan reminders are
+  /// configured. Shown right after the user saves notification settings so they
+  /// know the system is working without having to wait until the scheduled time.
+  Future<void> showStudyPlanSettingsConfirmation({required String timeLabel}) async {
+    const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
+      _studyPlanChannelId,
+      'Study Plan Notifications',
+      importance: Importance.high,
+      priority: Priority.high,
+    );
+    await _plugin.show(
+      999998,
+      '📖 Study Plan Notifications Active!',
+      'Your daily study plan reminders are set for $timeLabel. '
+      'You\'ll receive motivational progress updates for each active plan.',
+      const NotificationDetails(android: androidDetails),
+    );
   }
 
   // ── CANCEL ─────────────────────────────────────────────────────────────────

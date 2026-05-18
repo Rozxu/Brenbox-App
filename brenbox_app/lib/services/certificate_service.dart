@@ -5,6 +5,7 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 class CertificateService {
   final _auth = FirebaseAuth.instance;
@@ -168,35 +169,46 @@ class CertificateService {
     }
   }
 
-  // ── Save PDF to device downloads folder ──────────────────────────────────
+  // ── Save file to Download/Brenbox/{subfolder}/ ───────────────────────────
+  // Android: /storage/emulated/0/Download/Brenbox/<subfolder>/
+  // iOS:     <AppDocuments>/Brenbox/<subfolder>/
+  //
+  // Returns null if permission is denied, the saved path on success.
   Future<String?> savePdfToDevice({
     required String storagePath,
     required String fileName,
+    String subfolder = 'PDFs',
   }) async {
     try {
+      // Request storage permission on Android (system dialog, same as notifications).
+      if (Platform.isAndroid) {
+        final status = await Permission.storage.request();
+        if (status.isPermanentlyDenied) {
+          await openAppSettings();
+          return null;
+        }
+        if (!status.isGranted) return null;
+      }
+
       final bytes = await downloadCertificateBytes(storagePath);
       if (bytes == null) return null;
 
-      Directory? dir;
+      final Directory dir;
       if (Platform.isAndroid) {
-        // Try external storage Downloads first, fall back to app docs
-        dir = Directory('/storage/emulated/0/Download');
-        if (!await dir.exists()) {
-          dir = await getApplicationDocumentsDirectory();
-        }
-      } else if (Platform.isIOS) {
-        dir = await getApplicationDocumentsDirectory();
+        final downloads = Directory('/storage/emulated/0/Download');
+        final base = await downloads.exists()
+            ? downloads
+            : await getApplicationDocumentsDirectory();
+        dir = Directory('${base.path}/Brenbox/$subfolder');
       } else {
-        dir = await getApplicationDocumentsDirectory();
+        final appDocs = await getApplicationDocumentsDirectory();
+        dir = Directory('${appDocs.path}/Brenbox/$subfolder');
       }
+      if (!await dir.exists()) await dir.create(recursive: true);
 
-      // Sanitise filename
       final safe = fileName.replaceAll(RegExp(r'[^\w\-.]'), '_');
-      final saveName = safe.endsWith('.pdf') ? safe : '$safe.pdf';
-      final filePath = '${dir.path}/$saveName';
-
-      final file = File(filePath);
-      await file.writeAsBytes(bytes);
+      final filePath = '${dir.path}/$safe';
+      await File(filePath).writeAsBytes(bytes);
       return filePath;
     } catch (_) {
       return null;

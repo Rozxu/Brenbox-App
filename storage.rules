@@ -1,0 +1,54 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // ── CERTIFICATES ─────────────────────────────────────────────────────────
+    match /certificates/{userId}/{allPaths=**} {
+      allow read, write: if request.auth != null
+                         && request.auth.uid == userId;
+    }
+
+    // ── GROUP CHAT FILES  (/group_files/{groupId}/...) ───────────────────────
+    // PDF/DOC/TXT files and images sent in the group chat or attached to notes.
+    match /group_files/{groupId}/{allPaths=**} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null
+        && request.resource.size < 20 * 1024 * 1024
+        && (
+             request.resource.contentType.matches('application/pdf')
+          || request.resource.contentType.matches('application/msword')
+          || request.resource.contentType.matches(
+               'application/vnd.openxmlformats-officedocument.*')
+          || request.resource.contentType.matches('text/plain')
+          || request.resource.contentType.matches('image/jpeg')
+          || request.resource.contentType.matches('image/png')
+          || request.resource.contentType.matches('image/gif')
+          || request.resource.contentType.matches('image/webp')
+          || request.resource.contentType.matches('image/heic')
+          || request.resource.contentType.matches('image/heif')
+        );
+    }
+
+    // ── GROUP UPDATE FILES  (/group_updates/{groupId}/...) ───────────────────
+    // Files and images uploaded in the Updates tab.
+    match /group_updates/{groupId}/{allPaths=**} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null
+        && request.resource.size < 20 * 1024 * 1024
+        && (
+             request.resource.contentType.matches('application/pdf')
+          || request.resource.contentType.matches('application/msword')
+          || request.resource.contentType.matches(
+               'application/vnd.openxmlformats-officedocument.*')
+          || request.resource.contentType.matches('text/plain')
+          || request.resource.contentType.matches('image/jpeg')
+          || request.resource.contentType.matches('image/png')
+          || request.resource.contentType.matches('image/gif')
+          || request.resource.contentType.matches('image/webp')
+          || request.resource.contentType.matches('image/heic')
+          || request.resource.contentType.matches('image/heif')
+        );
+    }
+
+  }
+}

@@ -47,6 +47,11 @@ class _NotificationSettingsScreenState
   bool _exam10MinBefore = true;
   bool _examOnTime = true;
 
+  // ── STUDY PLAN ─────────────────────────────────────────────────────────────
+  bool _studyPlanEnabled = true;
+  int _studyPlanReminderHour = 20;
+  int _studyPlanReminderMin = 0;
+
   static const List<int> _dayOptions = [1, 2, 3];
 
   @override
@@ -94,6 +99,10 @@ class _NotificationSettingsScreenState
         _exam30MinBefore = s['exam30MinBefore'] ?? true;
         _exam10MinBefore = s['exam10MinBefore'] ?? true;
         _examOnTime = s['examOnTime'] ?? true;
+
+        _studyPlanEnabled      = s['studyPlanEnabled']      ?? true;
+        _studyPlanReminderHour = s['studyPlanReminderHour'] ?? 20;
+        _studyPlanReminderMin  = s['studyPlanReminderMin']  ?? 0;
       });
     }
 
@@ -128,6 +137,9 @@ class _NotificationSettingsScreenState
       'exam30MinBefore': _exam30MinBefore,
       'exam10MinBefore': _exam10MinBefore,
       'examOnTime': _examOnTime,
+      'studyPlanEnabled':      _studyPlanEnabled,
+      'studyPlanReminderHour': _studyPlanReminderHour,
+      'studyPlanReminderMin':  _studyPlanReminderMin,
     };
 
     await _firestore
@@ -135,7 +147,9 @@ class _NotificationSettingsScreenState
         .doc(user.uid)
         .update({'notificationSettings': settings});
 
-    await NotificationScheduler().rescheduleAllNotifications(forceFull: true);
+    // Fire-and-forget — rescheduling hits Firestore many times per event;
+    // don't block the UI waiting for it.
+    NotificationScheduler().rescheduleAllNotifications(forceFull: true);
 
     setState(() {
       _isSaving = false;
@@ -222,6 +236,22 @@ class _NotificationSettingsScreenState
       _change(() {
         _classReminderHour = picked.hour;
         _classReminderMin = picked.minute;
+      });
+    }
+  }
+
+  Future<void> _pickStudyPlanReminderTime() async {
+    final picked = await showDialog<TimeOfDay>(
+      context: context,
+      builder: (_) => _CustomTimePickerDialog(
+        initialTime: TimeOfDay(
+            hour: _studyPlanReminderHour, minute: _studyPlanReminderMin),
+      ),
+    );
+    if (picked != null && mounted) {
+      _change(() {
+        _studyPlanReminderHour = picked.hour;
+        _studyPlanReminderMin  = picked.minute;
       });
     }
   }
@@ -436,6 +466,77 @@ class _NotificationSettingsScreenState
                         (v) => _change(() => _examOnTime = v),
                       ),
                     ],
+                    const SizedBox(height: 16),
+
+                    // ══ STUDY PLAN ═══════════════════════════════════════
+                    _sectionHeader(
+                      '📖 Study Plan Notifications',
+                      _studyPlanEnabled,
+                      (v) => _change(() => _studyPlanEnabled = v),
+                      const Color(0xFF00BCD4),
+                    ),
+                    if (_studyPlanEnabled) ...[
+                      const SizedBox(height: 10),
+                      // Daily reminder time picker
+                      Container(
+                        margin: const EdgeInsets.only(bottom: 8),
+                        padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+                        decoration: BoxDecoration(
+                          color: AppColors.card(context),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                              color: AppColors.border(context).withValues(alpha: 0.2),
+                              width: 1),
+                        ),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text('Daily reminder time',
+                                      style: GoogleFonts.dmMono(fontSize: 12)),
+                                  const SizedBox(height: 2),
+                                  Text('Fires every day until the exam',
+                                      style: GoogleFonts.dmMono(fontSize: 10, color: AppColors.subtext(context))),
+                                ],
+                              ),
+                            ),
+                            GestureDetector(
+                              onTap: _pickStudyPlanReminderTime,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 12, vertical: 7),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF00BCD4).withValues(alpha: 0.08),
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(
+                                      color: const Color(0xFF00BCD4), width: 1.5),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const Icon(Icons.access_time,
+                                        size: 14, color: Color(0xFF00BCD4)),
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      _fmt12(_studyPlanReminderHour, _studyPlanReminderMin),
+                                      style: GoogleFonts.dmMono(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.bold,
+                                        color: const Color(0xFF00BCD4),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 6),
+                                    const Icon(Icons.edit, size: 12, color: Color(0xFF00BCD4)),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 8),
                   ],
                 ),
@@ -600,6 +701,7 @@ class _NotificationSettingsScreenState
       }).toList(),
     );
   }
+
 }
 
 // =============================================================================

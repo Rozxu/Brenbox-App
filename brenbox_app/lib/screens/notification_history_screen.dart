@@ -5,6 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import 'study_group_screen.dart';
+import 'study_plan_screen.dart';
 import '../app_preferences.dart';
 
 class NotificationHistoryScreen extends StatefulWidget {
@@ -288,6 +289,7 @@ class _NotificationCard extends StatelessWidget {
       case 'group_milestone':  return const Color(0xFF0369A1);
       case 'group_update':     return const Color(0xFF15803D);
       case 'group_note':       return const Color(0xFFB45309);
+      case 'study_plan':       return const Color(0xFF00BCD4);
       default:                 return const Color(0xFF6B7280);
     }
   }
@@ -305,6 +307,7 @@ class _NotificationCard extends StatelessWidget {
       case 'group_milestone':  return Icons.check_box_outlined;
       case 'group_update':     return Icons.campaign_outlined;
       case 'group_note':       return Icons.sticky_note_2_outlined;
+      case 'study_plan':       return Icons.checklist_rounded;
       default:                 return Icons.notifications_outlined;
     }
   }
@@ -322,6 +325,7 @@ class _NotificationCard extends StatelessWidget {
       case 'group_milestone':  return 'TASK';
       case 'group_update':     return 'UPDATE';
       case 'group_note':       return 'NOTE';
+      case 'study_plan':       return 'PLAN';
       default:                 return 'INFO';
     }
   }
@@ -337,7 +341,29 @@ class _NotificationCard extends StatelessWidget {
 
     if (!context.mounted) return;
 
-    if (_isGroupActivityType) {
+    if (type == 'study_plan') {
+      if (eventId == null) return;
+      final planDoc = await firestore.collection('study_plans').doc(eventId).get();
+      if (!context.mounted) return;
+      if (!planDoc.exists) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Study plan no longer exists.',
+              style: GoogleFonts.dmMono(fontSize: 12)),
+          backgroundColor: const Color(0xFF6B7280),
+        ));
+        return;
+      }
+      Navigator.pop(context);
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => StudyPlanDetailScreen(
+            planId: eventId!,
+            data: planDoc.data()!,
+          ),
+        ),
+      );
+    } else if (_isGroupActivityType) {
       if (groupId == null) return;
       // Check if group still exists
       final groupDoc = await firestore.collection('study_groups').doc(groupId).get();

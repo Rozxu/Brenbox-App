@@ -75,6 +75,9 @@ exports.onGroupMessage = functions.firestore
       const gSubject = g.subject || "";
       const sender   = data.senderId;
 
+      // Guard: if senderId is missing, skip — we cannot safely filter the sender
+      if (!sender) return;
+
       const uname    = data.senderUsername || "Someone";
       let title, body, notifType;
       const label = groupLabel(gName, gSubject);
@@ -87,8 +90,16 @@ exports.onGroupMessage = functions.firestore
           title = `New Poll in ${label}`;
           body  = `${uname} created a poll: ${data.pollQuestion || ""}`;
           notifType = "group_poll"; break;
+        case "image":
+          title = `New Message in ${label}`;
+          body  = `${uname}: image📸`;
+          notifType = "group_chat"; break;
+        case "file":
+          title = `New Message in ${label}`;
+          body  = `${uname}: ${data.fileName || "file"}`;
+          notifType = "group_chat"; break;
         default: {
-          const text = (data.text || "").trim() || data.fileName || "Sent a message";
+          const text = (data.text || "").trim() || "Sent a message";
           title = `New Message in ${label}`;
           body  = `${uname}: ${text}`;
           notifType = "group_chat";
@@ -105,6 +116,7 @@ exports.onGroupMessage = functions.firestore
         await sendFcm(token, title, body, {
           type: notifType, groupId, tab: "0", historyDocId,
           channelId: "group_channel",
+          senderId: sender,
         });
       }
     });

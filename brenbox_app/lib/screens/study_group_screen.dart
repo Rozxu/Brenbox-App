@@ -1,13 +1,18 @@
 ﻿import 'dart:async';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_storage/firebase_storage.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:flutter_pdfview/flutter_pdfview.dart';
+import 'package:image/image.dart' as img;
+import 'package:cached_network_image/cached_network_image.dart';
 import '../services/certificate_service.dart';
 import '../app_preferences.dart';
 
@@ -166,6 +171,7 @@ class _GroupPdfViewerScreenState extends State<_GroupPdfViewerScreen> {
       final savedPath = await _certSvc.savePdfToDevice(
         storagePath: widget.storagePath,
         fileName:    widget.fileName,
+        subfolder:   'PDFs',
       );
       if (!mounted) return;
       if (savedPath != null) {
@@ -321,6 +327,163 @@ class _GroupPdfViewerScreenState extends State<_GroupPdfViewerScreen> {
                     if (mounted) setState(() => _totalPages = pages ?? 0);
                   },
                 ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// IMAGE VIEWER SCREEN
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _GroupImageViewerScreen extends StatefulWidget {
+  final String title;
+  final String imageUrl;
+  final String storagePath;
+  final String fileName;
+
+  const _GroupImageViewerScreen({
+    required this.title,
+    required this.imageUrl,
+    required this.storagePath,
+    required this.fileName,
+  });
+
+  @override
+  State<_GroupImageViewerScreen> createState() =>
+      _GroupImageViewerScreenState();
+}
+
+class _GroupImageViewerScreenState extends State<_GroupImageViewerScreen> {
+  bool _downloading = false;
+
+  Future<void> _downloadToDevice() async {
+    setState(() => _downloading = true);
+    try {
+      final savedPath = await CertificateService().savePdfToDevice(
+        storagePath: widget.storagePath,
+        fileName:    widget.fileName,
+        subfolder:   'Images',
+      );
+      if (!mounted) return;
+      if (savedPath != null) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Saved to Downloads/Brenbox/Images!',
+                  style: GoogleFonts.dmMono(
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white)),
+              Text(savedPath,
+                  style: GoogleFonts.dmMono(fontSize: 10, color: Colors.white70),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis),
+            ],
+          ),
+          backgroundColor: _kGreen,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          duration: const Duration(seconds: 4),
+        ));
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Download failed. Please try again.',
+              style: GoogleFonts.dmMono(fontSize: 12)),
+          backgroundColor: _kRed,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ));
+      }
+    } finally {
+      if (mounted) setState(() => _downloading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        foregroundColor: Colors.white,
+        elevation: 0,
+        leading: GestureDetector(
+          onTap: () => Navigator.pop(context),
+          child: Container(
+            margin: const EdgeInsets.only(left: 12),
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.22),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(Icons.arrow_back, color: Colors.white, size: 20),
+          ),
+        ),
+        title: Text(widget.title,
+            style: GoogleFonts.dmMono(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                color: Colors.white),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis),
+        actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: 12),
+            child: _downloading
+                ? const Padding(
+                    padding: EdgeInsets.all(14),
+                    child: SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                          color: Colors.white, strokeWidth: 2),
+                    ),
+                  )
+                : GestureDetector(
+                    onTap: _downloadToDevice,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 7),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: Colors.white38),
+                      ),
+                      child: Row(mainAxisSize: MainAxisSize.min, children: [
+                        const Icon(Icons.download_outlined,
+                            color: Colors.white, size: 16),
+                        const SizedBox(width: 5),
+                        Text('Save',
+                            style: GoogleFonts.dmMono(
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white)),
+                      ]),
+                    ),
+                  ),
+          ),
+        ],
+      ),
+      body: InteractiveViewer(
+        minScale: 0.5,
+        maxScale: 5.0,
+        child: Center(
+          child: CachedNetworkImage(
+            imageUrl: widget.imageUrl,
+            fit: BoxFit.contain,
+            placeholder: (_, __) => const Center(
+              child: CircularProgressIndicator(color: Colors.white),
+            ),
+            errorWidget: (_, __, ___) => const Center(
+              child: Icon(Icons.broken_image_outlined,
+                  color: Colors.white54, size: 64),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -548,14 +711,20 @@ class _StudyGroupScreenState extends State<StudyGroupScreen>
                                 },
                                 child: Container(
                                   padding: const EdgeInsets.symmetric(
-                                      horizontal: 10, vertical: 5),
+                                      horizontal: 12, vertical: 6),
                                   decoration: BoxDecoration(
-                                    color: _kRed.withOpacity(0.08),
-                                    borderRadius: BorderRadius.circular(8),
-                                    border: Border.all(color: _kRed.withOpacity(0.4)),
+                                    color: _kRed.withOpacity(0.18),
+                                    borderRadius: BorderRadius.circular(20),
+                                    border: Border.all(color: _kRed),
                                   ),
-                                  child: Text('Kick', style: GoogleFonts.dmMono(
-                                      fontSize: 11, fontWeight: FontWeight.bold, color: _kRed)),
+                                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                                    Icon(Icons.person_remove_outlined, size: 16,
+                                        color: AppColors.isDark(context) ? const Color(0xFFFF6B6B) : _kRed),
+                                    const SizedBox(width: 5),
+                                    Text('Kick', style: GoogleFonts.dmMono(
+                                        fontSize: 13, fontWeight: FontWeight.bold,
+                                        color: AppColors.isDark(context) ? const Color(0xFFFF6B6B) : _kRed)),
+                                  ]),
                                 ),
                               )
                             : null,
@@ -846,6 +1015,60 @@ class _ChatTabState extends State<_ChatTab> {
         'type':           'file',
         'fileName':       picked.name,
         'fileUrl':        url,
+        'storagePath':    path,
+        'fileSizeKB':     sizeKB,
+        'senderId':       user.uid,
+        'senderUsername': await _uname,
+        'createdAt':      FieldValue.serverTimestamp(),
+      });
+      _scrollToBottom();
+    } finally {
+      if (mounted) ScaffoldMessenger.of(context).clearSnackBars();
+    }
+  }
+
+  Future<void> _sendImage() async {
+    final user = _auth.currentUser;
+    if (user == null) return;
+
+    // image_picker routes through the native Android/iOS image pipeline,
+    // which automatically applies EXIF rotation before returning bytes.
+    final xfile = await ImagePicker().pickImage(
+      source: ImageSource.gallery,
+      imageQuality: 88,
+    );
+    if (xfile == null) return;
+    Uint8List bytes = await xfile.readAsBytes();
+
+    // On web the native pipeline doesn't run, so fix EXIF orientation manually.
+    // Skip this on mobile — image_picker already handled it; re-encoding here
+    // would decode the whole photo on the main thread and freeze the UI.
+    if (kIsWeb) {
+      final decoded = img.decodeImage(bytes);
+      if (decoded != null) {
+        bytes = Uint8List.fromList(
+            img.encodeJpg(img.bakeOrientation(decoded), quality: 88));
+      }
+    }
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('Uploading image…'),
+              duration: Duration(seconds: 60)));
+    }
+    try {
+      final ts   = DateTime.now().millisecondsSinceEpoch;
+      final name = xfile.name.isNotEmpty ? xfile.name : 'image.jpg';
+      final path = 'group_files/${widget.groupId}/${ts}_$name';
+      final ref  = CertificateService.storageRef(path);
+      await ref.putData(bytes, SettableMetadata(contentType: 'image/jpeg'));
+      final url    = await ref.getDownloadURL();
+      final sizeKB = (bytes.lengthInBytes / 1024).toStringAsFixed(0);
+      await _msgs.add({
+        'type':           'image',
+        'fileName':       name,
+        'imageUrl':       url,
         'storagePath':    path,
         'fileSizeKB':     sizeKB,
         'senderId':       user.uid,
@@ -1354,6 +1577,8 @@ class _ChatTabState extends State<_ChatTab> {
 
               if (msgType == 'file') {
                 items.add(_buildFileMsg(doc, data, isMe));
+              } else if (msgType == 'image') {
+                items.add(_buildImageMsg(doc, data, isMe));
               } else if (msgType == 'event') {
                 items.add(_buildEventMsg(doc, data, myUid));
               } else if (msgType == 'poll') {
@@ -1382,6 +1607,8 @@ class _ChatTabState extends State<_ChatTab> {
             8, 10, 8, MediaQuery.of(context).padding.bottom + 10),
         child: Row(children: [
           _inputBtn(Icons.attach_file, _sendFile, tooltip: 'Attach file'),
+          _inputBtn(Icons.image_outlined, _sendImage,
+              color: _kBlue, tooltip: 'Send image'),
           _inputBtn(Icons.event_outlined, _scheduleEvent,
               color: _kGreen, tooltip: 'Schedule event'),
           _inputBtn(Icons.poll_outlined, _createPoll,
@@ -1624,6 +1851,110 @@ class _ChatTabState extends State<_ChatTab> {
                     ]),
                   ),
                 ]),
+              ),
+            ),
+            if (ts != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 4, left: 6, right: 6),
+                child: Text(DateFormat('h:mm a').format(ts),
+                    style: GoogleFonts.dmMono(
+                        fontSize: 10, color: AppColors.subtext(context))),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildImageMsg(
+      DocumentSnapshot doc, Map<String, dynamic> data, bool isMe) {
+    final myUid    = _auth.currentUser?.uid ?? '';
+    final canAct   = isMe || myUid == _groupCreatedBy;
+    final uname    = data['senderUsername'] as String? ?? 'Unknown';
+    final fileName = data['fileName'] as String? ?? 'image.jpg';
+    final imageUrl = data['imageUrl'] as String? ?? '';
+    final sp       = data['storagePath'] as String? ?? '';
+    final ts       = (data['createdAt'] as Timestamp?)?.toDate();
+
+    return Align(
+      alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+      child: Container(
+        margin: EdgeInsets.only(
+            bottom: 10, left: isMe ? 60 : 0, right: isMe ? 0 : 60),
+        child: Column(
+          crossAxisAlignment:
+              isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+          children: [
+            if (!isMe)
+              Padding(
+                padding: const EdgeInsets.only(left: 6, bottom: 3),
+                child: Text(uname,
+                    style: GoogleFonts.dmMono(
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.isDark(context)
+                            ? const Color(0xFF82B4FF)
+                            : _kBlue)),
+              ),
+            GestureDetector(
+              onTap: imageUrl.isEmpty
+                  ? null
+                  : () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => _GroupImageViewerScreen(
+                            title: fileName,
+                            imageUrl: imageUrl,
+                            storagePath: sp,
+                            fileName: fileName,
+                          ),
+                        ),
+                      ),
+              onLongPress: canAct
+                  ? () {
+                      HapticFeedback.mediumImpact();
+                      _showDeleteSheet(doc);
+                    }
+                  : null,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(14),
+                child: imageUrl.isEmpty
+                    ? Container(
+                        width: 220,
+                        height: 150,
+                        color: AppColors.card(context),
+                        child: const Center(
+                            child: Icon(Icons.broken_image_outlined, size: 40)),
+                      )
+                    : CachedNetworkImage(
+                        imageUrl: imageUrl,
+                        width: 220,
+                        fit: BoxFit.cover,
+                        placeholder: (_, __) => Container(
+                          width: 220,
+                          height: 150,
+                          decoration: BoxDecoration(
+                            color: isMe
+                                ? _kBlue.withValues(alpha: 0.1)
+                                : AppColors.card(context),
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                          child: const Center(
+                            child: CircularProgressIndicator(
+                                color: _kBlue, strokeWidth: 2),
+                          ),
+                        ),
+                        errorWidget: (_, __, ___) => Container(
+                          width: 220,
+                          height: 150,
+                          decoration: BoxDecoration(
+                            color: AppColors.card(context),
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                          child: const Center(
+                              child: Icon(Icons.broken_image_outlined, size: 40)),
+                        ),
+                      ),
               ),
             ),
             if (ts != null)

@@ -1466,6 +1466,7 @@ class _CertificateViewerScreenState extends State<CertificateViewerScreen> {
       final savedPath = await widget.service.savePdfToDevice(
         storagePath: widget.storagePath,
         fileName:    widget.fileName,
+        subfolder:   'Certificates',
       );
 
       if (!mounted) return;

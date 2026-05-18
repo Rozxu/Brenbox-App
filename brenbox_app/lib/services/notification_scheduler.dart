@@ -12,9 +12,10 @@ class NotificationScheduler {
   final _firestore = FirebaseFirestore.instance;
   final _notificationService = NotificationService();
 
-  static const int _classBaseId = 1000;
-  static const int _taskBaseId  = 5000;
-  static const int _examBaseId  = 9000;
+  static const int _classBaseId     = 1000;
+  static const int _taskBaseId      = 5000;
+  static const int _examBaseId      = 9000;
+  static const int _studyPlanBaseId = 100000;
 
   // ── PUBLIC API ──────────────────────────────────────────────────────────────
 
@@ -46,6 +47,7 @@ class NotificationScheduler {
     await _scheduleClassNotifications(user.uid, settings);
     await _scheduleTaskNotifications(user.uid, settings);
     await _scheduleExamNotifications(user.uid, settings);
+    await _scheduleStudyPlanNotifications(user.uid, settings);
     await _notificationService.purgeOldData(user.uid);
   }
 
@@ -67,6 +69,7 @@ class NotificationScheduler {
     await _scheduleClassNotifications(user.uid, settings);
     await _scheduleTaskNotifications(user.uid, settings);
     await _scheduleExamNotifications(user.uid, settings);
+    await _scheduleStudyPlanNotifications(user.uid, settings);
 
     // Purge AFTER — never delete a dedupe key before we have used it
     await _notificationService.purgeOldData(user.uid);
@@ -87,12 +90,15 @@ class NotificationScheduler {
     'taskHourBefore':    true,
     'task10MinBefore':   true,
     'taskDueNow':        true,
-    'examEnabled':       true,
-    'examDays':          [3, 2, 1],
-    'examHourBefore':    true,
-    'exam30MinBefore':   true,
-    'exam10MinBefore':   true,
-    'examOnTime':        true,
+    'examEnabled':             true,
+    'examDays':                [3, 2, 1],
+    'examHourBefore':          true,
+    'exam30MinBefore':         true,
+    'exam10MinBefore':         true,
+    'examOnTime':              true,
+    'studyPlanEnabled':        true,
+    'studyPlanReminderHour':   20,
+    'studyPlanReminderMin':    0,
   };
 
   // ── CLASS NOTIFICATIONS ─────────────────────────────────────────────────────
@@ -410,6 +416,138 @@ class NotificationScheduler {
     }
   }
 
+  // ── STUDY PLAN NOTIFICATIONS ────────────────────────────────────────────────
+
+  Future<void> _scheduleStudyPlanNotifications(
+    String userId,
+    Map<String, dynamic> settings,
+  ) async {
+    if (!(settings['studyPlanEnabled'] ?? true)) return;
+
+    final int reminderHour = settings['studyPlanReminderHour'] ?? 20;
+    final int reminderMin  = settings['studyPlanReminderMin']  ?? 0;
+    final now   = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+
+    final snapshot = await _firestore
+        .collection('study_plans')
+        .where('userId', isEqualTo: userId)
+        .get();
+
+    for (final doc in snapshot.docs) {
+      try {
+        final data      = doc.data();
+        final checklist = (data['checklist'] as List<dynamic>? ?? [])
+            .map((e) => Map<String, dynamic>.from(e as Map))
+            .toList();
+        final total     = checklist.length;
+        final doneCount = checklist.where((e) => e['done'] == true).length;
+        if (total > 0 && doneCount == total) continue; // already complete — skip
+
+        final dueDateTs = data['dueDate'] as Timestamp?;
+        if (dueDateTs == null) continue;
+        final dueDate = dueDateTs.toDate();
+        final examDay = DateTime(dueDate.year, dueDate.month, dueDate.day);
+        if (examDay.isBefore(today)) continue; // exam already passed
+
+        final planName  = data['planName'] ?? 'Study Plan';
+        final examType  = data['examType'] ?? 'Exam';
+        final examName  = data['examName'] ?? '';
+        final examLabel = examName.isNotEmpty ? examName : examType;
+        final remaining = total - doneCount;
+        final pct       = total > 0 ? (doneCount / total * 100).round() : 0;
+
+        final baseId = (doc.id.hashCode.abs() % 40000) + _studyPlanBaseId;
+
+        // Daily rolling reminder — fires every day at reminder time for up to 7
+        // days. Message tone scales with progress so each notification feels
+        // personal rather than generic.
+        for (int i = 0; i < 7; i++) {
+          final fireDay = today.add(Duration(days: i));
+          if (!fireDay.isBefore(examDay)) break; // stop on exam day
+          final fireTime = DateTime(
+              fireDay.year, fireDay.month, fireDay.day, reminderHour, reminderMin);
+          if (fireTime.isBefore(now)) continue;
+
+          final daysLeft = examDay.difference(fireDay).inDays;
+          final dateKey  = '${fireDay.year}'
+              '${fireDay.month.toString().padLeft(2, '0')}'
+              '${fireDay.day.toString().padLeft(2, '0')}';
+
+          final _Msg msg = _studyPlanMessage(
+            planName:  planName,
+            examLabel: examLabel,
+            doneCount: doneCount,
+            total:     total,
+            pct:       pct,
+            remaining: remaining,
+            daysLeft:  daysLeft,
+          );
+
+          await _trySchedule(
+            dedupeKey:     '${doc.id}_sp_$dateKey',
+            id:            baseId + i,
+            title:         msg.title,
+            body:          msg.body,
+            scheduledTime: fireTime,
+            type:          'study_plan',
+            eventId:       doc.id,
+            userId:        userId,
+          );
+        }
+      } catch (_) {}
+    }
+  }
+
+  _Msg _studyPlanMessage({
+    required String planName,
+    required String examLabel,
+    required int doneCount,
+    required int total,
+    required int pct,
+    required int remaining,
+    required int daysLeft,
+  }) {
+    final daysText = daysLeft == 1 ? 'tomorrow' : 'in $daysLeft days';
+
+    if (pct == 0) {
+      return _Msg(
+        title: '📖 Time to Start — $examLabel $daysText!',
+        body:  'Your study plan "$planName" hasn\'t been started yet. '
+               'Tackle the first item today — small steps lead to big wins! 💪',
+      );
+    } else if (pct < 25) {
+      return _Msg(
+        title: '📖 Keep Going — $examLabel $daysText!',
+        body:  'You\'ve completed $doneCount of $total items in "$planName". '
+               'You\'re on your way! A little progress every day adds up. 🔥',
+      );
+    } else if (pct < 50) {
+      return _Msg(
+        title: '✏️ Building Momentum — $examLabel $daysText!',
+        body:  '$pct% done on "$planName" ($doneCount/$total). '
+               'You\'re making real progress — don\'t slow down now! 💡',
+      );
+    } else if (pct < 75) {
+      return _Msg(
+        title: '💪 Halfway There — $examLabel $daysText!',
+        body:  'Over halfway done on "$planName"! $remaining item${remaining == 1 ? '' : 's'} left. '
+               'The finish line is in sight — stay focused! 🎯',
+      );
+    } else if (pct < 100) {
+      return _Msg(
+        title: '🔥 Almost Done — $examLabel $daysText!',
+        body:  'So close! Only $remaining item${remaining == 1 ? '' : 's'} left in "$planName". '
+               'Crush it and head into your $examLabel with full confidence! 🚀',
+      );
+    } else {
+      return _Msg(
+        title: '✅ Study Plan Complete!',
+        body:  '"$planName" is fully done. You are ready for your $examLabel $daysText. Go get it! 🏆',
+      );
+    }
+  }
+
   // ── HELPERS ─────────────────────────────────────────────────────────────────
 
   Future<void> _trySchedule({
@@ -592,13 +730,17 @@ class NotificationScheduler {
         if (change.type != DocumentChangeType.added) continue;
         final d = change.doc.data()!;
         if ((d['senderId'] as String? ?? '') == userId) continue;
-        final sender = d['senderUsername'] as String? ?? 'Someone';
-        final text   = d['text']           as String? ?? '';
+        final sender  = d['senderUsername'] as String? ?? 'Someone';
+        final msgType = d['type']           as String? ?? 'text';
+        final text    = d['text']           as String? ?? '';
+        final body    = msgType == 'image'
+            ? 'image📸'
+            : (text.isNotEmpty ? text : 'Sent a message');
         _notificationService.showGroupActivityNotification(
           userId: userId, groupId: groupId, groupName: groupName,
           subject: subject,
           title: '$groupName — $sender',
-          body:  text.isNotEmpty ? text : 'Sent a message',
+          body:  body,
           type:  'group_chat', tab: 0,
         );
       }
@@ -667,4 +809,10 @@ class NotificationScheduler {
     for (final s in _groupActivityListeners) { s.cancel(); }
     _groupActivityListeners = [];
   }
+}
+
+class _Msg {
+  final String title;
+  final String body;
+  const _Msg({required this.title, required this.body});
 }

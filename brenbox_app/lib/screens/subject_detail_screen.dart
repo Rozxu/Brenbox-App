@@ -7,6 +7,7 @@ import '../tasks/edit_class_screen.dart';
 import '../tasks/edit_task_screen.dart';
 import '../tasks/edit_exam_screen.dart';
 import 'study_group_screen.dart';
+import 'study_plan_screen.dart';
 import '../app_preferences.dart';
 
 // Save this file as: lib/screens/subject_detail_screen.dart
@@ -427,7 +428,7 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
   void _showSnack(String msg, {bool isError = false}) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(msg, style: GoogleFonts.dmMono()),
+        content: Text(msg, style: GoogleFonts.dmMono(color: Colors.white)),
         backgroundColor: isError ? _red : _green,
       ),
     );
@@ -1686,6 +1687,8 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
                       _buildStudyGroupsSection(),
                       const SizedBox(height: 24),
                       _buildUpcomingEvents(),
+                      const SizedBox(height: 24),
+                      _buildStudyPlanSection(),
                       const SizedBox(height: 32),
                     ],
                   ),
@@ -1894,16 +1897,19 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
                               vertical: 6,
                             ),
                             decoration: BoxDecoration(
-                              color: _blue.withOpacity(0.1),
-                              borderRadius: BorderRadius.circular(8),
+                              color: _blue.withOpacity(0.2),
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(color: _blue),
                             ),
                             child: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                const Icon(
+                                Icon(
                                   Icons.person_add_outlined,
                                   size: 14,
-                                  color: _blue,
+                                  color: AppColors.isDark(context)
+                                      ? const Color(0xFF82B4FF)
+                                      : _blue,
                                 ),
                                 const SizedBox(width: 4),
                                 Text(
@@ -1911,7 +1917,9 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
                                   style: GoogleFonts.dmMono(
                                     fontSize: 10,
                                     fontWeight: FontWeight.bold,
-                                    color: _blue,
+                                    color: AppColors.isDark(context)
+                                        ? const Color(0xFF82B4FF)
+                                        : _blue,
                                   ),
                                 ),
                               ],
@@ -1920,6 +1928,453 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
                         ),
                         const SizedBox(width: 8),
                         Icon(Icons.chevron_right, color: AppColors.subtext(context)),
+                      ],
+                    ),
+                  ),
+                );
+              }).toList(),
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // STUDY PLAN SECTION
+  // ══════════════════════════════════════════════════════════════════════════
+
+  Future<void> _openAddStudyPlan() async {
+    final user = _auth.currentUser;
+    if (user == null) return;
+
+    // Fetch upcoming exams for this subject
+    final snap = await _firestore
+        .collection('exams')
+        .where('userId', isEqualTo: user.uid)
+        .where('subject', isEqualTo: widget.subjectName)
+        .get();
+
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final exams = snap.docs
+        .where((d) {
+          // Use endTime if available so finished same-day exams are excluded.
+          final endTs = d.data()['endTime'] as Timestamp?;
+          if (endTs != null) return endTs.toDate().isAfter(now);
+          // Fallback: date-only — include today and future.
+          final ts = d.data()['examDate'] as Timestamp?;
+          if (ts == null) return false;
+          final examDay = DateTime(ts.toDate().year, ts.toDate().month, ts.toDate().day);
+          return !examDay.isBefore(today);
+        })
+        .toList()
+      ..sort((a, b) {
+        final ta = (a.data()['examDate'] as Timestamp).toDate();
+        final tb = (b.data()['examDate'] as Timestamp).toDate();
+        return ta.compareTo(tb);
+      });
+
+    if (!mounted) return;
+
+    if (exams.isEmpty) {
+      _showSnack('No upcoming exams for this subject. Add an exam first.', isError: true);
+      return;
+    }
+
+    if (exams.length == 1) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => AddStudyPlanScreen(
+            subjectName: widget.subjectName,
+            exam: exams.first.data(),
+            examId: exams.first.id,
+          ),
+        ),
+      );
+      return;
+    }
+
+    // Multiple exams — let user pick
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        decoration: BoxDecoration(
+          color: AppColors.card(context),
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+          border: Border(
+            top: BorderSide(color: AppColors.border(context), width: 2),
+            left: BorderSide(color: AppColors.border(context), width: 2),
+            right: BorderSide(color: AppColors.border(context), width: 2),
+          ),
+        ),
+        padding: const EdgeInsets.fromLTRB(24, 20, 24, 32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Select an Exam',
+              style: GoogleFonts.dmMono(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: AppColors.text(context),
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Which exam is this study plan for?',
+              style: GoogleFonts.dmMono(fontSize: 12, color: AppColors.subtext(context)),
+            ),
+            const SizedBox(height: 16),
+            ...exams.map((doc) {
+              final data = doc.data();
+              final examDate = (data['examDate'] as Timestamp).toDate();
+              final examType = (data['type'] ?? 'EXAM').toString().toUpperCase();
+              return GestureDetector(
+                onTap: () {
+                  Navigator.pop(ctx);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => AddStudyPlanScreen(
+                        subjectName: widget.subjectName,
+                        exam: data,
+                        examId: doc.id,
+                      ),
+                    ),
+                  );
+                },
+                child: Container(
+                  margin: const EdgeInsets.only(bottom: 10),
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: AppColors.bg(context),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFF9AB900), width: 1.5),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF9AB900),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          examType,
+                          style: GoogleFonts.dmMono(
+                            fontSize: 9,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          data['examName'] ?? 'Untitled',
+                          style: GoogleFonts.dmMono(
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.text(context),
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      Text(
+                        DateFormat('dd MMM').format(examDate),
+                        style: GoogleFonts.dmMono(
+                          fontSize: 11,
+                          color: AppColors.subtext(context),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStudyPlanSection() {
+    final user = _auth.currentUser;
+    if (user == null) return const SizedBox();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // ── Header ───────────────────────────────────────────
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              'Study Plans',
+              style: GoogleFonts.dmMono(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: AppColors.text(context),
+              ),
+            ),
+            GestureDetector(
+              onTap: _openAddStudyPlan,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                decoration: BoxDecoration(
+                  color: _red,
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.add, color: Colors.white, size: 16),
+                    const SizedBox(width: 4),
+                    Text(
+                      'New Plan',
+                      style: GoogleFonts.dmMono(
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+
+        // ── Plans list ───────────────────────────────────────
+        StreamBuilder<QuerySnapshot>(
+          stream: _firestore
+              .collection('study_plans')
+              .where('userId', isEqualTo: user.uid)
+              .where('subjectName', isEqualTo: widget.subjectName)
+              .snapshots(),
+          builder: (context, snap) {
+            if (snap.connectionState == ConnectionState.waiting) {
+              return const Padding(
+                padding: EdgeInsets.symmetric(vertical: 20),
+                child: Center(child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFFB90000))),
+              );
+            }
+            final docs = snap.data?.docs ?? [];
+            if (docs.isEmpty) {
+              return Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(vertical: 28),
+                decoration: BoxDecoration(
+                  color: AppColors.card(context),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: AppColors.border(context), width: 2),
+                ),
+                child: Column(
+                  children: [
+                    Icon(Icons.checklist_rounded, size: 36, color: AppColors.subtext(context)),
+                    const SizedBox(height: 10),
+                    Text(
+                      'No study plans yet',
+                      style: GoogleFonts.dmMono(
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.subtext(context),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Tap New Plan to create one linked to an exam',
+                      style: GoogleFonts.dmMono(fontSize: 11, color: AppColors.subtext(context)),
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
+                ),
+              );
+            }
+
+            final sorted = docs.toList()
+              ..sort((a, b) {
+                final ta = (a.data() as Map)['dueDate'];
+                final tb = (b.data() as Map)['dueDate'];
+                if (ta == null) return 1;
+                if (tb == null) return -1;
+                return (ta as Timestamp).compareTo(tb as Timestamp);
+              });
+
+            return Column(
+              children: sorted.map((doc) {
+                final data      = doc.data() as Map<String, dynamic>;
+                final checklist = (data['checklist'] as List<dynamic>? ?? [])
+                    .map((e) => Map<String, dynamic>.from(e as Map))
+                    .toList();
+                final doneCount  = checklist.where((e) => e['done'] == true).length;
+                final total      = checklist.length;
+                final progress   = total > 0 ? doneCount / total : 0.0;
+                final isComplete = total > 0 && doneCount == total;
+                final dueDate   = (data['dueDate'] as Timestamp?)?.toDate();
+                const accent    = Color(0xFF00BCD4);
+                const doneColor = Color(0xFF2ECC71);
+                final ringColor = isComplete ? doneColor : accent;
+                final pct       = (progress * 100).round();
+                final preview   = checklist.take(2).toList();
+                final examType  = (data['examType'] ?? 'EXAM') as String;
+                final examName  = (data['examName'] ?? '') as String;
+
+                return GestureDetector(
+                  onTap: () => Navigator.push(context, MaterialPageRoute(
+                    builder: (_) => StudyPlanDetailScreen(planId: doc.id, data: data),
+                  )),
+                  child: Container(
+                    margin: const EdgeInsets.only(bottom: 12),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: AppColors.card(context),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: AppColors.border(context), width: 2),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              // Plan name
+                              Text(
+                                data['planName'] ?? 'Study Plan',
+                                style: GoogleFonts.dmMono(fontSize: 14, fontWeight: FontWeight.bold, color: AppColors.text(context)),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              if (examName.isNotEmpty) ...[
+                                const SizedBox(height: 2),
+                                Text(
+                                  examName,
+                                  style: GoogleFonts.dmMono(fontSize: 11, color: AppColors.subtext(context)),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ],
+                              const SizedBox(height: 6),
+                              // Badge row: status + exam type + date
+                              Wrap(
+                                spacing: 5,
+                                runSpacing: 4,
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                    decoration: BoxDecoration(
+                                      color: isComplete ? doneColor : const Color(0xFFCC0000),
+                                      borderRadius: BorderRadius.circular(6),
+                                      border: Border.all(color: isComplete ? doneColor : const Color(0xFFCC0000), width: 1.5),
+                                    ),
+                                    child: Text(
+                                      isComplete ? 'COMPLETE' : 'INCOMPLETE',
+                                      style: GoogleFonts.dmMono(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.white),
+                                    ),
+                                  ),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFFEFFE6),
+                                      borderRadius: BorderRadius.circular(6),
+                                      border: Border.all(color: const Color(0xFF9AB900), width: 1.5),
+                                    ),
+                                    child: Text(
+                                      examType,
+                                      style: GoogleFonts.dmMono(fontSize: 9, fontWeight: FontWeight.bold, color: const Color(0xFF9AB900)),
+                                    ),
+                                  ),
+                                  if (dueDate != null)
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFFFEFFE6),
+                                        borderRadius: BorderRadius.circular(6),
+                                        border: Border.all(color: const Color(0xFF9AB900), width: 1.5),
+                                      ),
+                                      child: Text(
+                                        DateFormat('dd MMM yyyy').format(dueDate),
+                                        style: GoogleFonts.dmMono(fontSize: 9, fontWeight: FontWeight.bold, color: const Color(0xFF9AB900)),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                              const SizedBox(height: 10),
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(4),
+                                child: LinearProgressIndicator(
+                                  value: progress,
+                                  minHeight: 5,
+                                  backgroundColor: ringColor.withValues(alpha: 0.18),
+                                  valueColor: AlwaysStoppedAnimation<Color>(ringColor),
+                                ),
+                              ),
+                              const SizedBox(height: 10),
+                              Divider(color: AppColors.border(context), height: 1),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        SizedBox(
+                          width: 78, height: 78,
+                          child: Stack(
+                            alignment: Alignment.center,
+                            children: [
+                              CircularProgressIndicator(value: 1.0, strokeWidth: 7, strokeCap: StrokeCap.round, color: ringColor.withValues(alpha: 0.18)),
+                              CircularProgressIndicator(value: progress, strokeWidth: 7, strokeCap: StrokeCap.round, color: ringColor),
+                              Text('$pct%', style: GoogleFonts.dmMono(fontSize: 12, fontWeight: FontWeight.bold, color: ringColor)),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                        const SizedBox(height: 8),
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  ...preview.map((item) {
+                                    final d = item['done'] == true;
+                                    return Padding(
+                                      padding: const EdgeInsets.only(bottom: 5),
+                                      child: Row(children: [
+                                        Icon(d ? Icons.check_circle_rounded : Icons.radio_button_unchecked,
+                                          size: 13, color: d ? doneColor : AppColors.subtext(context)),
+                                        const SizedBox(width: 6),
+                                        Expanded(child: Text(
+                                          item['text'] ?? '',
+                                          style: GoogleFonts.dmMono(fontSize: 12,
+                                            color: d ? AppColors.subtext(context) : AppColors.text(context),
+                                            decoration: d ? TextDecoration.lineThrough : null),
+                                          maxLines: 1, overflow: TextOverflow.ellipsis,
+                                        )),
+                                      ]),
+                                    );
+                                  }),
+                                  if (checklist.length > 2)
+                                    Text('+${checklist.length - 2} more',
+                                      style: GoogleFonts.dmMono(fontSize: 10, color: AppColors.subtext(context))),
+                                ],
+                              ),
+                            ),
+                            if (!isComplete) ...[
+                              const SizedBox(width: 8),
+                              StudyPlanCountdownBanner(dueDate: dueDate, accentColor: ringColor, compact: true),
+                            ],
+                          ],
+                        ),
                       ],
                     ),
                   ),
@@ -2008,7 +2463,7 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
           style: GoogleFonts.dmMono(
             fontSize: 16,
             fontWeight: FontWeight.bold,
-            color: AppColors.text(context),
+            color: _blue,
           ),
           textAlign: TextAlign.center,
         ),
@@ -2440,7 +2895,8 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
             try {
               final data = doc.data();
               final ts = data['dueDate'] as Timestamp?;
-              if (ts != null) {
+              final isCompleted = data['completed'] == true;
+              if (ts != null && !isCompleted) {
                 final dd = ts.toDate();
                 final dOnly = DateTime(dd.year, dd.month, dd.day);
                 if (!dOnly.isBefore(today)) {
@@ -2453,7 +2909,7 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
                     'taskType': data['taskType'] ?? '',
                     'dueDate': ts,
                     'dueTime': DateFormat('HH:mm').format(dd),
-                    'completed': data['completed'] ?? false,
+                    'completed': false,
                     'sortDate': dd,
                   });
                 }
@@ -2468,25 +2924,35 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
           for (var doc in examsSnap.docs) {
             try {
               final data = doc.data();
-              final ts = data['examDate'] as Timestamp?;
-              if (ts != null) {
-                final ed = ts.toDate();
+              final endTs = data['endTime'] as Timestamp?;
+              final examTs = data['examDate'] as Timestamp?;
+              bool isUpcoming;
+              DateTime sortDate;
+              if (endTs != null) {
+                isUpcoming = endTs.toDate().isAfter(now);
+                sortDate = examTs != null ? examTs.toDate() : endTs.toDate();
+              } else if (examTs != null) {
+                final ed = examTs.toDate();
                 final eOnly = DateTime(ed.year, ed.month, ed.day);
-                if (!eOnly.isBefore(today)) {
-                  events.add({
-                    'id': doc.id,
-                    'eventType': 'exam',
-                    'type': data['type'] ?? 'Exam',
-                    'examName': data['examName'] ?? 'Untitled Exam',
-                    'subject': data['subject'] ?? '',
-                    'mode': data['mode'] ?? 'In Person',
-                    'venue': data['venue'] ?? '',
-                    'examDate': ts,
-                    'startTime': data['startTime'],
-                    'endTime': data['endTime'],
-                    'sortDate': ed,
-                  });
-                }
+                isUpcoming = !eOnly.isBefore(today);
+                sortDate = ed;
+              } else {
+                continue;
+              }
+              if (isUpcoming) {
+                events.add({
+                  'id': doc.id,
+                  'eventType': 'exam',
+                  'type': data['type'] ?? 'Exam',
+                  'examName': data['examName'] ?? 'Untitled Exam',
+                  'subject': data['subject'] ?? '',
+                  'mode': data['mode'] ?? 'In Person',
+                  'venue': data['venue'] ?? '',
+                  'examDate': examTs,
+                  'startTime': data['startTime'],
+                  'endTime': data['endTime'],
+                  'sortDate': sortDate,
+                });
               }
             } catch (_) {}
           }
@@ -2878,7 +3344,6 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
       isScrollControlled: true,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setModal) {
-          final isCompleted = task['completed'] ?? false;
           return _detailSheet(
             children: [
               Text(
@@ -3193,12 +3658,7 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
 class _AnimatedTapButton extends StatefulWidget {
   final Widget child;
   final VoidCallback onTap;
-  final Duration duration;
-  const _AnimatedTapButton({
-    required this.child,
-    required this.onTap,
-    this.duration = const Duration(milliseconds: 100),
-  });
+  const _AnimatedTapButton({required this.child, required this.onTap});
   @override
   State<_AnimatedTapButton> createState() => _AnimatedTapButtonState();
 }
@@ -3214,7 +3674,7 @@ class _AnimatedTapButtonState extends State<_AnimatedTapButton> {
       onTap: widget.onTap,
       child: AnimatedScale(
         scale: _isTapped ? 0.95 : 1.0,
-        duration: widget.duration,
+        duration: const Duration(milliseconds: 100),
         child: widget.child,
       ),
     );

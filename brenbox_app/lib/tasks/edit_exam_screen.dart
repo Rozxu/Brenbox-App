@@ -364,7 +364,27 @@ class _EditExamScreenState extends State<EditExamScreen> {
         'updatedAt': Timestamp.now(),
       });
 
-      await NotificationScheduler().rescheduleAllNotifications();
+      // Propagate exam changes to all linked study plans. Fire-and-forget.
+      final examId = widget.examData['id'] as String?;
+      if (examId != null && examId.isNotEmpty) {
+        FirebaseFirestore.instance
+            .collection('study_plans')
+            .where('userId', isEqualTo: user.uid)
+            .where('examId', isEqualTo: examId)
+            .get()
+            .then((snap) {
+          for (final planDoc in snap.docs) {
+            planDoc.reference.update({
+              'dueDate':  Timestamp.fromDate(startDateTime),
+              'examName': _examNameController.text.trim(),
+              'examType': (_selectedType ?? 'EXAM').toUpperCase(),
+            });
+          }
+        });
+      }
+
+      // Reschedule notifications in background — don't block the UI.
+      NotificationScheduler().rescheduleAllNotifications();
 
       if (!mounted) return;
 

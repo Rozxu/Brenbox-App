@@ -551,30 +551,34 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   final _formKey = GlobalKey<FormState>();
 
   late TextEditingController _usernameController;
-  late TextEditingController _emailController;
   late TextEditingController _currentPasswordController;
   late TextEditingController _newPasswordController;
   late TextEditingController _confirmPasswordController;
 
   bool _isLoading = false;
+  bool _isDeleting = false;
   bool _obscureCurrentPassword = true;
   bool _obscureNewPassword = true;
   bool _obscureConfirmPassword = true;
+
+  bool get _hasChanges =>
+      _usernameController.text.trim() != widget.username ||
+      _newPasswordController.text.isNotEmpty;
 
   @override
   void initState() {
     super.initState();
     _usernameController = TextEditingController(text: widget.username);
-    _emailController = TextEditingController(text: widget.email);
     _currentPasswordController = TextEditingController();
     _newPasswordController = TextEditingController();
     _confirmPasswordController = TextEditingController();
+    _usernameController.addListener(() => setState(() {}));
+    _newPasswordController.addListener(() => setState(() {}));
   }
 
   @override
   void dispose() {
     _usernameController.dispose();
-    _emailController.dispose();
     _currentPasswordController.dispose();
     _newPasswordController.dispose();
     _confirmPasswordController.dispose();
@@ -597,11 +601,6 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         });
       }
 
-      // Update email
-      if (_emailController.text.trim() != widget.email) {
-        await user.verifyBeforeUpdateEmail(_emailController.text.trim());
-      }
-
       // Update password if provided
       if (_newPasswordController.text.isNotEmpty) {
         final credential = EmailAuthProvider.credential(
@@ -613,39 +612,186 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       }
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Profile updated successfully',
-              style: GoogleFonts.dmMono(),
-            ),
-            backgroundColor: const Color(0xFF34A853),
-          ),
-        );
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Profile updated successfully', style: GoogleFonts.dmMono()),
+          backgroundColor: const Color(0xFF34A853),
+        ));
         Navigator.pop(context);
       }
     } on FirebaseAuthException catch (e) {
       String message = 'An error occurred';
-      if (e.code == 'wrong-password') {
+      if (e.code == 'wrong-password' || e.code == 'invalid-credential') {
         message = 'Current password is incorrect';
       } else if (e.code == 'weak-password') {
         message = 'New password is too weak';
-      } else if (e.code == 'email-already-in-use') {
-        message = 'Email is already in use';
       }
-
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(message, style: GoogleFonts.dmMono()),
-            backgroundColor: const Color(0xFFB90000),
-          ),
-        );
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(message, style: GoogleFonts.dmMono()),
+          backgroundColor: const Color(0xFFB90000),
+        ));
       }
     } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  // Deletes documents from a collection where [field] == [uid], in batches of 100
+  Future<void> _deleteCollectionByUser(String collection, String field, String uid) async {
+    QuerySnapshot snapshot;
+    do {
+      snapshot = await _firestore
+          .collection(collection)
+          .where(field, isEqualTo: uid)
+          .limit(100)
+          .get();
+      if (snapshot.docs.isEmpty) break;
+      final batch = _firestore.batch();
+      for (final doc in snapshot.docs) {
+        batch.delete(doc.reference);
       }
+      await batch.commit();
+    } while (snapshot.docs.length == 100);
+  }
+
+  Future<void> _deleteAccount() async {
+    // ── First confirmation ──
+    final first = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.card(ctx),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: AppColors.border(ctx), width: 2),
+        ),
+        title: Text('Delete Account',
+            style: GoogleFonts.dmMono(
+                fontWeight: FontWeight.bold, color: AppColors.text(ctx))),
+        content: Text(
+          'Are you sure you want to delete your account?\n\nAll your classes, tasks, exams, grades, certificates, and study group data will be permanently deleted.',
+          style: GoogleFonts.dmMono(fontSize: 13, color: AppColors.subtext(ctx), height: 1.5),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text('Cancel', style: GoogleFonts.dmMono(color: AppColors.subtext(ctx))),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFB90000),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            child: Text('Continue', style: GoogleFonts.dmMono(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+    if (first != true) return;
+
+    // ── Second confirmation ──
+    final second = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.card(ctx),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: const BorderSide(color: Color(0xFFB90000), width: 2),
+        ),
+        title: Row(children: [
+          const Icon(Icons.warning_amber_rounded, color: Color(0xFFB90000), size: 22),
+          const SizedBox(width: 8),
+          Text('Final Warning',
+              style: GoogleFonts.dmMono(
+                  fontWeight: FontWeight.bold, color: const Color(0xFFB90000))),
+        ]),
+        content: Text(
+          'This action is permanent and cannot be undone.\n\nYour account and every piece of data associated with it will be deleted forever. Are you absolutely sure?',
+          style: GoogleFonts.dmMono(fontSize: 13, color: AppColors.subtext(ctx), height: 1.5),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text('No, Keep My Account',
+                style: GoogleFonts.dmMono(color: AppColors.subtext(ctx))),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFB90000),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            child: Text('Yes, Delete Forever', style: GoogleFonts.dmMono(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+    if (second != true) return;
+
+    setState(() => _isDeleting = true);
+
+    final user = _auth.currentUser;
+    if (user == null) return;
+    final uid = user.uid;
+
+    try {
+      // Delete all user-owned collections
+      await _deleteCollectionByUser('tasks', 'userId', uid);
+      await _deleteCollectionByUser('timetable', 'userId', uid);
+      await _deleteCollectionByUser('exams', 'userId', uid);
+      await _deleteCollectionByUser('grade_results', 'userId', uid);
+      await _deleteCollectionByUser('notification_history', 'userId', uid);
+      await _deleteCollectionByUser('scheduled_notifications', 'userId', uid);
+
+      // Delete grade settings (keyed by uid)
+      await _firestore.collection('grade_settings').doc(uid).delete().catchError((_) {});
+
+      // Leave or delete study groups
+      final groups = await _firestore
+          .collection('study_groups')
+          .where('memberIds', arrayContains: uid)
+          .get();
+      for (final group in groups.docs) {
+        final data = group.data();
+        final members = List<String>.from(data['memberIds'] ?? []);
+        if (data['createdBy'] == uid && members.length <= 1) {
+          await group.reference.delete();
+        } else {
+          members.remove(uid);
+          await group.reference.update({'memberIds': members});
+        }
+      }
+
+      // Delete user Firestore document
+      await _firestore.collection('users').doc(uid).delete();
+
+      // Delete Firebase Auth account
+      await user.delete();
+
+      if (mounted) Navigator.pushReplacementNamed(context, '/login');
+    } on FirebaseAuthException catch (e) {
+      if (e.code == 'requires-recent-login') {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(
+              'Please log out and log back in, then try deleting your account again.',
+              style: GoogleFonts.dmMono(),
+            ),
+            backgroundColor: const Color(0xFFB90000),
+            duration: const Duration(seconds: 5),
+          ));
+        }
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Failed to delete account. Please try again.',
+              style: GoogleFonts.dmMono()),
+          backgroundColor: const Color(0xFFB90000),
+        ));
+      }
+    } finally {
+      if (mounted) setState(() => _isDeleting = false);
     }
   }
 
@@ -688,23 +834,6 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                   return null;
                 },
               ),
-              const SizedBox(height: 16),
-              _buildLabel('Email'),
-              const SizedBox(height: 8),
-              _buildTextField(
-                controller: _emailController,
-                hint: 'Enter email',
-                keyboardType: TextInputType.emailAddress,
-                validator: (value) {
-                  if (value == null || value.trim().isEmpty) {
-                    return 'Email is required';
-                  }
-                  if (!value.contains('@')) {
-                    return 'Enter a valid email';
-                  }
-                  return null;
-                },
-              ),
               const SizedBox(height: 24),
               Text(
                 'Change Password (Optional)',
@@ -732,13 +861,17 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 controller: _newPasswordController,
                 hint: 'Enter new password',
                 obscureText: _obscureNewPassword,
+                maxLength: 25,
                 onToggle: () {
                   setState(() => _obscureNewPassword = !_obscureNewPassword);
                 },
                 validator: (value) {
-                  if (value != null && value.isNotEmpty && value.length < 6) {
-                    return 'Password must be at least 6 characters';
-                  }
+                  if (value == null || value.isEmpty) return null;
+                  if (value.length < 6) { return 'Password must be at least 6 characters'; }
+                  if (value.length > 25) { return 'Password must be at most 25 characters'; }
+                  if (!RegExp(r'[A-Z]').hasMatch(value)) { return 'Must contain at least 1 uppercase letter'; }
+                  if (!RegExp(r'[0-9]').hasMatch(value)) { return 'Must contain at least 1 number'; }
+                  if (!RegExp(r'[^a-zA-Z0-9]').hasMatch(value)) { return 'Must contain at least 1 symbol (e.g. !@#\$)'; }
                   return null;
                 },
               ),
@@ -749,6 +882,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 controller: _confirmPasswordController,
                 hint: 'Confirm new password',
                 obscureText: _obscureConfirmPassword,
+                maxLength: 25,
                 onToggle: () {
                   setState(() => _obscureConfirmPassword = !_obscureConfirmPassword);
                 },
@@ -761,35 +895,87 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 },
               ),
               const SizedBox(height: 32),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: _isLoading ? null : _saveChanges,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF6B7280),
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
+              // Save Changes — only active when something has changed
+              IgnorePointer(
+                ignoring: _isLoading || !_hasChanges,
+                child: AnimatedOpacity(
+                  opacity: (_isLoading || !_hasChanges) ? 0.4 : 1.0,
+                  duration: const Duration(milliseconds: 200),
+                  child: _AnimatedTapButton(
+                    onTap: _saveChanges,
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF6B7280),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: _isLoading
+                          ? const Center(
+                              child: SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
+                              ),
+                            )
+                          : Text(
+                              'Save Changes',
+                              textAlign: TextAlign.center,
+                              style: GoogleFonts.dmMono(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
                     ),
                   ),
-                  child: _isLoading
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
-                          ),
-                        )
-                      : Text(
-                          'Save Changes',
-                          style: GoogleFonts.dmMono(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
                 ),
               ),
+              const SizedBox(height: 32),
+              // Delete Account
+              IgnorePointer(
+                ignoring: _isLoading || _isDeleting,
+                child: _AnimatedTapButton(
+                  onTap: _deleteAccount,
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFB90000),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: _isDeleting
+                        ? const Center(
+                            child: SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            ),
+                          )
+                        : Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              const Icon(Icons.delete_forever_outlined,
+                                  color: Colors.white, size: 20),
+                              const SizedBox(width: 8),
+                              Text(
+                                'Delete User Account',
+                                style: GoogleFonts.dmMono(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 24),
             ],
           ),
         ),
@@ -855,14 +1041,17 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     required bool obscureText,
     required VoidCallback onToggle,
     String? Function(String?)? validator,
+    int? maxLength,
   }) {
     return TextFormField(
       controller: controller,
       obscureText: obscureText,
+      maxLength: maxLength,
       style: GoogleFonts.dmMono(fontSize: 14, color: AppColors.text(context)),
       validator: validator,
       decoration: InputDecoration(
         hintText: hint,
+        counterText: maxLength != null ? '' : null,
         hintStyle: GoogleFonts.dmMono(fontSize: 14, color: AppColors.subtext(context)),
         filled: true,
         fillColor: AppColors.input(context),

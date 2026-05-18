@@ -270,6 +270,7 @@ class _SignupScreenState extends State<SignupScreen> {
       obscureText: isPassword
           ? (isConfirm ? !_confirmPasswordVisible : !_passwordVisible)
           : false,
+      maxLength: isPassword ? 25 : null,
       style: GoogleFonts.dmMono(),
 
       // ✅ FIELD-SPECIFIC ERROR MESSAGES
@@ -288,8 +289,22 @@ class _SignupScreenState extends State<SignupScreen> {
           return 'Username must be at least 3 characters';
         }
 
-        if (isPassword && value.length < 6) {
-          return 'Password must be at least 6 characters';
+        if (isPassword && !isConfirm) {
+          if (value.length < 6) {
+            return 'Password must be at least 6 characters';
+          }
+          if (value.length > 25) {
+            return 'Password must be at most 25 characters';
+          }
+          if (!RegExp(r'[A-Z]').hasMatch(value)) {
+            return 'Must contain at least 1 uppercase letter';
+          }
+          if (!RegExp(r'[0-9]').hasMatch(value)) {
+            return 'Must contain at least 1 number';
+          }
+          if (!RegExp(r'[^a-zA-Z0-9]').hasMatch(value)) {
+            return 'Must contain at least 1 symbol (e.g. !@#\$)';
+          }
         }
 
         if (isConfirm && value != _passwordController.text) {
@@ -301,6 +316,7 @@ class _SignupScreenState extends State<SignupScreen> {
 
       decoration: InputDecoration(
         contentPadding: const EdgeInsets.symmetric(vertical: 16),
+        counterText: isPassword ? '' : null,
         errorStyle: GoogleFonts.dmMono(fontSize: 11),
         enabledBorder: UnderlineInputBorder(
           borderSide: BorderSide(color: AppColors.border(context)),
