@@ -108,8 +108,12 @@ class _AddStudyPlanScreenState extends State<AddStudyPlanScreen> {
 
   void _snack(String msg, {bool error = false}) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(msg, style: GoogleFonts.dmMono()),
+      content: Text(msg,
+          style: GoogleFonts.dmMono(fontWeight: FontWeight.bold, color: Colors.white)),
       backgroundColor: error ? _red : _green,
+      behavior: SnackBarBehavior.floating,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      duration: const Duration(seconds: 3),
     ));
   }
 
@@ -386,14 +390,17 @@ class _StudyPlanDetailScreenState extends State<StudyPlanDetailScreen> {
   }
 
   Future<void> _delete() async {
-    final confirmed = await confirmDeleteDialog(
+    bool deleted = false;
+    await confirmAndDeleteDialog(
       context,
       title: 'Delete Study Plan',
       message: 'Are you sure you want to delete this study plan? This cannot be undone.',
+      onDelete: () async {
+        await _firestore.collection('study_plans').doc(widget.planId).delete();
+        deleted = true;
+      },
     );
-    if (!confirmed) return;
-    await _firestore.collection('study_plans').doc(widget.planId).delete();
-    if (mounted) Navigator.pop(context);
+    if (deleted && mounted) Navigator.pop(context);
   }
 
   @override
@@ -695,8 +702,12 @@ class _EditStudyPlanScreenState extends State<EditStudyPlanScreen> {
 
   void _snack(String msg, {bool error = false}) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(msg, style: GoogleFonts.dmMono()),
+      content: Text(msg,
+          style: GoogleFonts.dmMono(fontWeight: FontWeight.bold, color: Colors.white)),
       backgroundColor: error ? _red : _green,
+      behavior: SnackBarBehavior.floating,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      duration: const Duration(seconds: 3),
     ));
   }
 

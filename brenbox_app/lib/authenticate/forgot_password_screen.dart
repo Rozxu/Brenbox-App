@@ -332,9 +332,12 @@ class PasswordResetEmailSentScreen extends StatelessWidget {
                           SnackBar(
                             content: Text(
                               'Email sent again!',
-                              style: GoogleFonts.dmMono(),
+                              style: GoogleFonts.dmMono(fontWeight: FontWeight.bold, color: Colors.white),
                             ),
-                            backgroundColor: Colors.green,
+                            backgroundColor: const Color(0xFF34A853),
+                            behavior: SnackBarBehavior.floating,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                            duration: const Duration(seconds: 3),
                           ),
                         );
                       }
@@ -344,9 +347,12 @@ class PasswordResetEmailSentScreen extends StatelessWidget {
                           SnackBar(
                             content: Text(
                               'Error sending email',
-                              style: GoogleFonts.dmMono(),
+                              style: GoogleFonts.dmMono(fontWeight: FontWeight.bold, color: Colors.white),
                             ),
-                            backgroundColor: Colors.red,
+                            backgroundColor: const Color(0xFFB90000),
+                            behavior: SnackBarBehavior.floating,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                            duration: const Duration(seconds: 3),
                           ),
                         );
                       }

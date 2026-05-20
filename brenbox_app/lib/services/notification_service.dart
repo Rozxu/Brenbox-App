@@ -17,12 +17,13 @@ class NotificationService {
 
   static GlobalKey<NavigatorState>? _navigatorKey;
 
-  static const String _classChannelId     = 'class_channel';
-  static const String _taskChannelId      = 'task_channel';
-  static const String _examChannelId      = 'exam_channel';
-  static const String _inviteChannelId    = 'invite_channel';
-  static const String _groupChannelId     = 'group_channel';
-  static const String _studyPlanChannelId = 'study_plan_channel';
+  static const String _classChannelId      = 'class_channel';
+  static const String _taskChannelId       = 'task_channel';
+  static const String _examChannelId       = 'exam_channel';
+  static const String _inviteChannelId     = 'invite_channel';
+  static const String _groupChannelId      = 'group_channel';
+  static const String _studyPlanChannelId  = 'study_plan_channel';
+  static const String _groupEventChannelId = 'group_event_channel';
 
   void setNavigatorKey(GlobalKey<NavigatorState> key) => _navigatorKey = key;
 
@@ -47,8 +48,7 @@ class NotificationService {
       onDidReceiveBackgroundNotificationResponse: _onBackgroundNotificationResponse,
     );
 
-    await _createNotificationChannels();
-    await _requestPermissions();
+    await Future.wait([_createNotificationChannels(), _requestPermissions()]);
   }
 
   // ── TIMEZONE ────────────────────────────────────────────────────────────────
@@ -164,6 +164,12 @@ class NotificationService {
       description: 'Daily reminders to complete study plans before exams',
       importance: Importance.high,
     );
+    const AndroidNotificationChannel groupEventChannel = AndroidNotificationChannel(
+      _groupEventChannelId,
+      'Group Event Notifications',
+      description: 'Reminders for upcoming group events',
+      importance: Importance.high,
+    );
 
     final AndroidFlutterLocalNotificationsPlugin? androidPlugin =
         _plugin.resolvePlatformSpecificImplementation<
@@ -175,6 +181,7 @@ class NotificationService {
       await androidPlugin.createNotificationChannel(inviteChannel);
       await androidPlugin.createNotificationChannel(groupChannel);
       await androidPlugin.createNotificationChannel(studyPlanChannel);
+      await androidPlugin.createNotificationChannel(groupEventChannel);
     }
   }
 
@@ -478,28 +485,63 @@ class NotificationService {
     try {
       final existing = await dedupeDoc.get();
       if (existing.exists) {
-        // Re-register the local alarm anyway in case it was lost (app reinstall /
-        // OS cleared alarms) — but DON'T add another notification_history row.
+        // Re-register the local alarm in case it was lost (app reinstall /
+        // OS cleared alarms) — but DON'T add another notification_history row
+        // UNLESS the previous one was purged (purgeOldData deletes docs > 7d).
         final ed = existing.data()!;
         final existingHistoryId = ed['historyDocId'] as String?;
         final existingEventId   = ed['eventId']     as String?;
+
+        // Verify the history doc still exists. purgeOldData deletes docs older
+        // than 7 days, which can leave the dedupe record pointing at nothing.
+        // If the doc is gone, recreate it so the bell feed stays populated.
+        String? resolvedHistoryId = existingHistoryId;
+        if (existingHistoryId != null) {
+          try {
+            final histDoc = await _firestore
+                .collection('notification_history')
+                .doc(existingHistoryId)
+                .get();
+            if (!histDoc.exists) {
+              final newRef = await _firestore
+                  .collection('notification_history')
+                  .add({
+                'userId':       userId,
+                'title':        title,
+                'body':         body,
+                'type':         type,
+                'eventId':      eventId,
+                'isRead':       false,
+                'createdAt':    Timestamp.now(),
+                'scheduledFor': Timestamp.fromDate(scheduledTime),
+              });
+              resolvedHistoryId = newRef.id;
+              await dedupeDoc.update({'historyDocId': newRef.id});
+            }
+          } catch (_) {}
+        }
+
         final String? reregPayload = (ed['type'] == 'study_plan' &&
                 existingEventId != null &&
-                existingHistoryId != null)
-            ? 'study_plan:$existingEventId:$existingHistoryId'
-            : existingHistoryId;
+                resolvedHistoryId != null)
+            ? 'study_plan:$existingEventId:$resolvedHistoryId'
+            : resolvedHistoryId;
         await _registerLocalAlarm(id, title, body, scheduledTime, type, reregPayload);
+        // Keep scheduledFor in sync with the actual alarm time so purgeOldData
+        // doesn't delete this record before the alarm fires.
+        try {
+          await dedupeDoc.update({
+            'scheduledFor': Timestamp.fromDate(scheduledTime),
+          });
+        } catch (_) {}
         return false;
       }
     } catch (e) {
       print('Dedupe check error: $e');
     }
 
-    // 3. Write notification_history row (shown in the bell feed when it fires).
-    // Use Timestamp.now() (client time) instead of FieldValue.serverTimestamp()
-    // so createdAt is never null locally — serverTimestamp() is null until the
-    // server round-trip completes, and purgeOldData running in the same session
-    // would incorrectly delete the freshly-written row.
+    // 3. Write notification_history row — scheduledFor = alarm time so the
+    // item only becomes visible in the history screen when the slot fires.
     final docRef = await _firestore.collection('notification_history').add({
       'userId': userId,
       'title': title,
@@ -510,8 +552,6 @@ class NotificationService {
       'createdAt': Timestamp.now(),
       'scheduledFor': Timestamp.fromDate(scheduledTime),
     });
-    // The history entry is written now. Both the bell dot and history screen
-    // show it only once scheduledFor <= now (checked client-side every second).
 
     // 4. Write dedupe record — includes historyDocId so we can reuse payload
     await dedupeDoc.set({
@@ -554,7 +594,9 @@ class NotificationService {
             ? _examChannelId
             : type == 'study_plan'
                 ? _studyPlanChannelId
-                : _taskChannelId;
+                : type == 'group_event'
+                    ? _groupEventChannelId
+                    : _taskChannelId;
 
     final tz.TZDateTime tzScheduled = _toTZDateTime(scheduledTime);
 
@@ -581,10 +623,11 @@ class NotificationService {
 
   String _getChannelName(String type) {
     switch (type) {
-      case 'class':       return 'Class Notifications';
-      case 'exam':        return 'Exam Notifications';
-      case 'study_plan':  return 'Study Plan Notifications';
-      default:            return 'Task Notifications';
+      case 'class':        return 'Class Notifications';
+      case 'exam':         return 'Exam Notifications';
+      case 'study_plan':   return 'Study Plan Notifications';
+      case 'group_event':  return 'Group Event Notifications';
+      default:             return 'Task Notifications';
     }
   }
 
@@ -614,26 +657,36 @@ class NotificationService {
   Future<void> cancelNotificationsForEvent(String eventId) async {
     final userId = FirebaseAuth.instance.currentUser?.uid;
 
-    final dedupeSnap = await _firestore
-        .collection('scheduled_notifications')
-        .where('eventId', isEqualTo: eventId)
-        .where('userId', isEqualTo: userId)
-        .get();
-    for (var doc in dedupeSnap.docs) {
-      final notifId = doc.data()['notificationId'] as int?;
-      if (notifId != null) await _plugin.cancel(notifId);
-      await doc.reference.delete();
-    }
+    // Fetch both collections in parallel
+    final results = await Future.wait([
+      _firestore.collection('scheduled_notifications')
+          .where('eventId', isEqualTo: eventId)
+          .where('userId', isEqualTo: userId)
+          .get(),
+      _firestore.collection('notification_history')
+          .where('eventId', isEqualTo: eventId)
+          .where('isRead', isEqualTo: false)
+          .where('userId', isEqualTo: userId)
+          .get(),
+    ]);
 
-    // Also remove unread history for this event
-    final historySnap = await _firestore
-        .collection('notification_history')
-        .where('eventId', isEqualTo: eventId)
-        .where('isRead', isEqualTo: false)
-        .where('userId', isEqualTo: userId)
-        .get();
-    for (var doc in historySnap.docs) {
-      await doc.reference.delete();
+    final dedupeSnap  = results[0];
+    final historySnap = results[1];
+
+    // Cancel OS alarms in parallel
+    await Future.wait(
+      dedupeSnap.docs.map((doc) async {
+        final notifId = doc.data()['notificationId'] as int?;
+        if (notifId != null) await _plugin.cancel(notifId);
+      }),
+    );
+
+    // Batch delete all docs in one round trip
+    if (dedupeSnap.docs.isNotEmpty || historySnap.docs.isNotEmpty) {
+      final batch = _firestore.batch();
+      for (final doc in dedupeSnap.docs) { batch.delete(doc.reference); }
+      for (final doc in historySnap.docs) { batch.delete(doc.reference); }
+      await batch.commit();
     }
   }
 
@@ -648,8 +701,11 @@ class NotificationService {
         .where('userId', isEqualTo: userId)
         .get();
 
+    if (snap.docs.isEmpty) return;
+
+    final batch = _firestore.batch();
     for (var doc in snap.docs) {
-      final data = doc.data();
+      final data         = doc.data();
       final historyDocId = data['historyDocId'] as String?;
       final scheduledFor = (data['scheduledFor'] as Timestamp?)?.toDate();
 
@@ -659,15 +715,13 @@ class NotificationService {
       if (historyDocId != null &&
           scheduledFor != null &&
           scheduledFor.isAfter(now)) {
-        try {
-          await _firestore
-              .collection('notification_history')
-              .doc(historyDocId)
-              .delete();
-        } catch (_) {}
+        batch.delete(_firestore.collection('notification_history').doc(historyDocId));
       }
-      await doc.reference.delete();
+      batch.delete(doc.reference);
     }
+    try {
+      await batch.commit();
+    } catch (_) {}
   }
 
   // ── PURGE OLD DATA ─────────────────────────────────────────────────────────
@@ -686,20 +740,31 @@ class NotificationService {
     final now           = DateTime.now();
 
     try {
-      // 1. notification_history — delete rows older than 7 days
-      final historySnap = await _firestore
-          .collection('notification_history')
-          .where('userId', isEqualTo: userId)
-          .get();
+      // Fetch both collections in parallel
+      final results = await Future.wait([
+        _firestore.collection('notification_history')
+            .where('userId', isEqualTo: userId)
+            .get(),
+        _firestore.collection('scheduled_notifications')
+            .where('userId', isEqualTo: userId)
+            .get(),
+      ]);
 
+      final historySnap = results[0];
+      final dedupeSnap  = results[1];
+
+      final batch       = _firestore.batch();
       int historyDeleted = 0;
+      int dedupeDeleted  = 0;
+
+      // 1. notification_history — delete rows older than 7 days
       for (var doc in historySnap.docs) {
         final raw     = doc.data()['createdAt'];
         final docDate = raw is Timestamp ? raw.toDate() : null;
         // IMPORTANT: if createdAt is null the doc was just written (serverTimestamp
         // hasn't resolved yet) — treat as "just now" and never delete it.
         if (docDate != null && docDate.isBefore(historyCutoff)) {
-          await doc.reference.delete();
+          batch.delete(doc.reference);
           historyDeleted++;
         }
       }
@@ -708,27 +773,21 @@ class NotificationService {
       //    (scheduledFor is in the past). Future records are kept so the
       //    dedupe check on next app open can still find them and restore the
       //    OS alarm if needed.
-      final dedupeSnap = await _firestore
-          .collection('scheduled_notifications')
-          .where('userId', isEqualTo: userId)
-          .get();
-
-      int dedupeDeleted = 0;
       for (var doc in dedupeSnap.docs) {
         final raw           = doc.data()['scheduledFor'];
         final scheduledDate = raw is Timestamp ? raw.toDate() : null;
-        // Only delete if it has already fired (scheduledFor < now)
         if (scheduledDate != null && scheduledDate.isBefore(now)) {
-          await doc.reference.delete();
+          batch.delete(doc.reference);
           dedupeDeleted++;
-        }
-        // If scheduledDate is null (bad data), also clean it up
-        if (scheduledDate == null) {
-          await doc.reference.delete();
+        } else if (scheduledDate == null) {
+          batch.delete(doc.reference);
           dedupeDeleted++;
         }
       }
 
+      if (historyDeleted > 0 || dedupeDeleted > 0) {
+        await batch.commit();
+      }
       print('[Purge] $historyDeleted history + $dedupeDeleted dedupe records removed');
     } catch (e) {
       print('[Purge] Non-fatal error: $e');

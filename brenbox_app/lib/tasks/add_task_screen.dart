@@ -25,6 +25,7 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
 
   List<String> _availableSubjects = [];
   bool _isLoadingSubjects = true;
+  bool _isSaving = false;
 
   final List<String> _taskTypes = [
     'Assignment',
@@ -154,6 +155,32 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
       return;
     }
 
+    if (mounted) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => PopScope(
+          canPop: false,
+          child: AlertDialog(
+            backgroundColor: AppColors.card(context),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+              side: BorderSide(color: AppColors.border(context), width: 2),
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                const CircularProgressIndicator(),
+                const SizedBox(height: 16),
+                Text('Saving...', style: GoogleFonts.dmMono(fontSize: 14)),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+    setState(() => _isSaving = true);
     try {
       final dueDateTime = DateTime(
         _dueDate!.year,
@@ -174,9 +201,10 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
         'createdAt': Timestamp.now(),
       });
 
-      await NotificationScheduler().rescheduleAllNotifications();
+      NotificationScheduler().rescheduleAllNotifications().catchError((_) {});
 
       if (!mounted) return;
+      if (mounted) Navigator.pop(context);
 
       final shouldNavigate = await showDialog<bool>(
         context: context,
@@ -231,9 +259,12 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
       }
     } catch (e) {
       print('Error saving task: $e');
+      if (mounted) Navigator.pop(context);
       if (mounted) {
         _showError('Save Error', 'Error saving task. Please try again.');
       }
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
     }
   }
 
@@ -420,7 +451,7 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
               const SizedBox(width: 16),
               Expanded(
                 child: ElevatedButton(
-                  onPressed: _saveTask,
+                  onPressed: _isSaving ? null : _saveTask,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF008BB9),
                     padding: const EdgeInsets.symmetric(vertical: 16),
@@ -428,13 +459,9 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
                       borderRadius: BorderRadius.circular(12),
                     ),
                   ),
-                  child: Text(
-                    'Save Task',
-                    style: GoogleFonts.dmMono(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
+                  child: _isSaving
+                      ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                      : Text('Save Task', style: GoogleFonts.dmMono(color: Colors.white, fontWeight: FontWeight.bold)),
                 ),
               ),
             ],

@@ -9,6 +9,7 @@ import 'tasks/add_new_screen.dart';
 import 'tasks/edit_class_screen.dart';
 import 'tasks/edit_task_screen.dart';
 import 'tasks/edit_exam_screen.dart';
+import 'tasks/edit_group_event_screen.dart';
 import 'screens/calendar_screen.dart';
 import 'screens/study_group_screen.dart';
 import 'screens/study_plan_screen.dart';
@@ -35,6 +36,8 @@ class _HomePageState extends State<HomePage> {
   bool _isLoading = true;
   DateTime _selectedDate = DateTime.now();
   int _selectedNavIndex = 0;
+  List<Map<String, dynamic>> _cachedGroupEvents = [];
+  StreamSubscription<QuerySnapshot>? _groupEventsSub;
 
   @override
   void initState() {
@@ -56,6 +59,7 @@ class _HomePageState extends State<HomePage> {
       }
     });
     _loadUserData();
+    _listenToGroupEvents();
   }
 
   StreamSubscription<RemoteMessage>? _fcmForegroundSub;
@@ -65,6 +69,7 @@ class _HomePageState extends State<HomePage> {
   void dispose() {
     _fcmForegroundSub?.cancel();
     _studyPlanExpiry?.cancel();
+    _groupEventsSub?.cancel();
     super.dispose();
   }
 
@@ -89,6 +94,43 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
+  void _listenToGroupEvents() {
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) return;
+    _groupEventsSub?.cancel();
+    _groupEventsSub = _firestore
+        .collection('user_group_events')
+        .where('userId', isEqualTo: uid)
+        .snapshots()
+        .listen((snap) {
+      if (!mounted) return;
+      setState(() {
+        _cachedGroupEvents = snap.docs.map((doc) {
+          final data = doc.data();
+          final ts = data['eventDate'] as Timestamp?;
+          if (ts == null) return null;
+          final d = ts.toDate();
+          return <String, dynamic>{
+            'id': doc.id,
+            'type': 'group_event',
+            'title': data['title'] ?? 'Group Event',
+            'eventSubType': data['eventType'] ?? 'Meeting',
+            'details': data['details'] ?? '',
+            'startTime': '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}',
+            'eventDate': ts,
+            'groupId': data['groupId'] ?? '',
+            'groupName': data['groupName'] ?? '',
+            'subject': data['subject'] ?? '',
+            'senderUsername': data['senderUsername'] ?? '',
+            'senderId': data['senderId'] ?? '',
+            'isCompleted': data['isCompleted'] ?? false,
+            'messageId': data['messageId'] ?? doc.id,
+          };
+        }).whereType<Map<String, dynamic>>().toList();
+      });
+    }, onError: (_) {});
+  }
+
   Future<void> _navigateToGroup(String groupId, int tab) async {
     try {
       final doc = await _firestore.collection('study_groups').doc(groupId).get();
@@ -97,9 +139,12 @@ class _HomePageState extends State<HomePage> {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text(
             'Group not found. It may have been deleted.',
-            style: GoogleFonts.dmMono(),
+            style: GoogleFonts.dmMono(fontWeight: FontWeight.bold, color: Colors.white),
           ),
           backgroundColor: const Color(0xFFB90000),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          duration: const Duration(seconds: 3),
         ));
         return;
       }
@@ -120,8 +165,12 @@ class _HomePageState extends State<HomePage> {
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('Could not open group.', style: GoogleFonts.dmMono()),
+        content: Text('Could not open group.',
+            style: GoogleFonts.dmMono(fontWeight: FontWeight.bold, color: Colors.white)),
         backgroundColor: const Color(0xFFB90000),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        duration: const Duration(seconds: 3),
       ));
     }
   }
@@ -204,6 +253,12 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _logout() async {
+    final uid = _auth.currentUser?.uid;
+    if (uid != null) {
+      try {
+        await _firestore.collection('users').doc(uid).update({'fcmToken': null});
+      } catch (_) {}
+    }
     await _auth.signOut();
     // AuthGate listens to authStateChanges() and navigates automatically.
   }
@@ -274,14 +329,23 @@ class _HomePageState extends State<HomePage> {
         }
       }
 
+      if (!hasEvents) {
+        for (final ge in _cachedGroupEvents) {
+          final ts = ge['eventDate'] as Timestamp?;
+          if (ts != null && _matchesDate(ts.toDate())) { hasEvents = true; break; }
+        }
+      }
+
       final bool isUpcoming = hasEvents && checkDate.isAfter(today);
       return {'hasEvents': hasEvents, 'isUpcoming': isUpcoming};
     }).handleError((_) {});
   }
 
-  Stream<List<Map<String, dynamic>>> _getExamsForDateStream() {
+  Stream<List<Map<String, dynamic>>> _getExamsForDateStream(DateTime date) {
     final user = _auth.currentUser;
     if (user == null) return Stream.value([]);
+
+    final selectedDay = DateTime(date.year, date.month, date.day);
 
     return _firestore
         .collection('exams')
@@ -296,13 +360,17 @@ class _HomePageState extends State<HomePage> {
           final data              = doc.data();
           final examDateTimestamp = data['examDate'] as Timestamp?;
           if (examDateTimestamp == null) continue;
-          final examDate  = examDateTimestamp.toDate();
-          final examDay   = DateTime(examDate.year, examDate.month, examDate.day);
+          final examDate = examDateTimestamp.toDate();
+          final examDay  = DateTime(examDate.year, examDate.month, examDate.day);
+
+          final isUpcoming = !examDay.isBefore(today);
+          final isSelectedDay = examDay == selectedDay;
+
+          // Show upcoming exams always; show past exams only on their exact day
+          if (!isUpcoming && !isSelectedDay) continue;
+
           final startTime = (data['startTime'] as Timestamp).toDate();
           final endTime   = (data['endTime']   as Timestamp).toDate();
-
-          // Skip exams from previous days — only show today and future
-          if (examDay.isBefore(today)) continue;
 
           result.add({
             'id':        doc.id,
@@ -319,9 +387,18 @@ class _HomePageState extends State<HomePage> {
           continue;
         }
       }
-      // Sort by exam date ascending so nearest exam appears first
-      result.sort((a, b) =>
-          (a['examDate'] as Timestamp).compareTo(b['examDate'] as Timestamp));
+      // Upcoming exams first (nearest first), past exams after (most recent first)
+      result.sort((a, b) {
+        final aDate = (a['examDate'] as Timestamp).toDate();
+        final bDate = (b['examDate'] as Timestamp).toDate();
+        final aDay  = DateTime(aDate.year, aDate.month, aDate.day);
+        final bDay  = DateTime(bDate.year, bDate.month, bDate.day);
+        final aIsPast = aDay.isBefore(today);
+        final bIsPast = bDay.isBefore(today);
+        if (!aIsPast && !bIsPast) return aDate.compareTo(bDate);
+        if (aIsPast && bIsPast)   return bDate.compareTo(aDate);
+        return aIsPast ? 1 : -1;
+      });
       return result;
     }).handleError((_) => <Map<String, dynamic>>[]);
   }
@@ -606,7 +683,7 @@ class _HomePageState extends State<HomePage> {
         ),
         const SizedBox(height: 16),
         StreamBuilder<List<Map<String, dynamic>>>(
-          stream: _getExamsForDateStream(),
+          stream: _getExamsForDateStream(_selectedDate),
           builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) {
               return Container(
@@ -633,7 +710,7 @@ class _HomePageState extends State<HomePage> {
                         size: 40, color: AppColors.subtext(context)),
                     const SizedBox(height: 8),
                     Text(
-                      'No upcoming assessments',
+                      'No assessments on this day',
                       style: GoogleFonts.dmMono(
                           fontSize: 12, color: AppColors.subtext(context)),
                     ),
@@ -959,25 +1036,29 @@ class _HomePageState extends State<HomePage> {
                       Expanded(
                         child: ElevatedButton.icon(
                           onPressed: () async {
-                            final messenger =
-                                ScaffoldMessenger.of(context);
+                            final messenger = ScaffoldMessenger.of(context);
                             Navigator.pop(context);
-                            final ok = await confirmDeleteDialog(context,
-                                title: 'Delete Exam',
-                                message: 'Are you sure you want to delete this exam? This cannot be undone.');
-                            if (!ok) return;
-                            // Cancel notifications and clean up Firestore
-                            await NotificationService()
-                                .cancelNotificationsForEvent(exam['id']);
-                            await _firestore
-                                .collection('exams')
-                                .doc(exam['id'])
-                                .delete();
-                            messenger.showSnackBar(SnackBar(
-                              content: Text('Exam deleted',
-                                  style: GoogleFonts.dmMono()),
-                              backgroundColor: const Color(0xFFB90000),
-                            ));
+                            await confirmAndDeleteDialog(
+                              context,
+                              title: 'Delete Exam',
+                              message: 'Are you sure you want to delete this exam? This cannot be undone.',
+                              onDelete: () async {
+                                await NotificationService()
+                                    .cancelNotificationsForEvent(exam['id']);
+                                await _firestore
+                                    .collection('exams')
+                                    .doc(exam['id'])
+                                    .delete();
+                                messenger.showSnackBar(SnackBar(
+                                  content: Text('Exam deleted',
+                                      style: GoogleFonts.dmMono(fontWeight: FontWeight.bold, color: Colors.white)),
+                                  backgroundColor: const Color(0xFFB90000),
+                                  behavior: SnackBarBehavior.floating,
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                  duration: const Duration(seconds: 3),
+                                ));
+                              },
+                            );
                           },
                           icon: const Icon(Icons.delete_outline),
                           label:
@@ -1153,6 +1234,8 @@ class _HomePageState extends State<HomePage> {
               children: events.map((event) {
                 if (event['type'] == 'task') {
                   return _buildTaskCard(event);
+                } else if (event['type'] == 'group_event') {
+                  return _buildGroupEventCard(event);
                 } else {
                   return _buildEnhancedClassCard(event);
                 }
@@ -1169,6 +1252,7 @@ class _HomePageState extends State<HomePage> {
 
     List<QueryDocumentSnapshot<Map<String, dynamic>>> timetableDocs = [];
     List<QueryDocumentSnapshot<Map<String, dynamic>>> tasksDocs = [];
+    List<Map<String, dynamic>> groupEventMaps = List<Map<String, dynamic>>.from(_cachedGroupEvents);
 
     void emitCombined() {
       if (controller.isClosed) return;
@@ -1228,6 +1312,14 @@ class _HomePageState extends State<HomePage> {
         }
       }
 
+      allEvents.addAll(groupEventMaps.where((e) {
+        final ts = e['eventDate'] as Timestamp?;
+        if (ts == null) return false;
+        final d = ts.toDate();
+        return d.year == _selectedDate.year &&
+            d.month == _selectedDate.month &&
+            d.day == _selectedDate.day;
+      }));
       controller.add(allEvents);
     }
 
@@ -1459,6 +1551,483 @@ class _HomePageState extends State<HomePage> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildGroupEventCard(Map<String, dynamic> event) {
+    const kGroup = Color(0xFF7C3AED);
+    final isCompleted = event['isCompleted'] as bool? ?? false;
+    final eventDate = (event['eventDate'] as Timestamp).toDate();
+
+    return _AnimatedTapButton(
+      onTap: () => _showGroupEventDetails(event),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 16),
+        decoration: BoxDecoration(
+          color: AppColors.card(context),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: isCompleted
+                ? const Color(0xFF34A853)
+                : AppColors.border(context),
+            width: 2,
+          ),
+        ),
+        child: Column(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [
+                    isCompleted
+                        ? const Color(0xFF34A853).withValues(alpha: 0.15)
+                        : kGroup.withValues(alpha: 0.15),
+                    AppColors.card(context),
+                  ],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius:
+                    const BorderRadius.vertical(top: Radius.circular(18)),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 48,
+                    height: 48,
+                    decoration: BoxDecoration(
+                      color: isCompleted ? const Color(0xFF34A853) : kGroup,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Icon(
+                      isCompleted ? Icons.check_circle : Icons.groups_rounded,
+                      color: Colors.white,
+                      size: 24,
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                event['title'] as String? ?? 'Group Event',
+                                style: GoogleFonts.dmMono(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                  color: isCompleted
+                                      ? AppColors.subtext(context)
+                                      : AppColors.text(context),
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            if (!isCompleted) ...[
+                              const SizedBox(width: 8),
+                              _CountdownTimer(dueDate: eventDate),
+                            ],
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: isCompleted
+                                    ? const Color(0xFF34A853)
+                                    : kGroup,
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text(
+                                (event['eventSubType'] as String? ?? 'Meeting').toUpperCase(),
+                                style: GoogleFonts.dmMono(
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.white),
+                              ),
+                            ),
+                            if (isCompleted) ...[
+                              const SizedBox(width: 6),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF34A853),
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const Icon(Icons.check,
+                                        size: 10, color: Colors.white),
+                                    const SizedBox(width: 4),
+                                    Text('COMPLETED',
+                                        style: GoogleFonts.dmMono(
+                                            fontSize: 9,
+                                            fontWeight: FontWeight.bold,
+                                            color: Colors.white)),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _buildDetailItem(Icons.calendar_today,
+                            DateFormat('dd MMM yyyy').format(eventDate)),
+                      ),
+                      Expanded(
+                        child: _buildDetailItem(
+                            Icons.access_time,
+                            event['startTime'] as String? ?? ''),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _buildDetailItem(Icons.groups_outlined,
+                            event['groupName'] as String? ?? ''),
+                      ),
+                      if ((event['subject'] as String? ?? '').isNotEmpty)
+                        Expanded(
+                          child: _buildDetailItem(Icons.subject,
+                              event['subject'] as String? ?? ''),
+                        ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showGroupEventDetails(Map<String, dynamic> event) {
+    const kGroup = Color(0xFF7C3AED);
+    final eventDate = (event['eventDate'] as Timestamp).toDate();
+    final stateCtx = context;
+
+    showModalBottomSheet(
+      context: stateCtx,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (BuildContext context, StateSetter setModalState) {
+            final isCompleted = event['isCompleted'] as bool? ?? false;
+            return Container(
+              decoration: BoxDecoration(
+                color: AppColors.card(context),
+                borderRadius:
+                    const BorderRadius.vertical(top: Radius.circular(24)),
+                border: Border(
+                  top: BorderSide(color: AppColors.border(context), width: 2),
+                  left: BorderSide(color: AppColors.border(context), width: 2),
+                  right: BorderSide(color: AppColors.border(context), width: 2),
+                ),
+              ),
+              child: SafeArea(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const SizedBox(height: 16),
+                      Container(
+                        width: 40,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: AppColors.border(context),
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                      Padding(
+                        padding:
+                            const EdgeInsets.symmetric(horizontal: 24),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Group Event Details',
+                              style: GoogleFonts.dmMono(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                                color: AppColors.text(context),
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                            _buildDetailRow('Title',
+                                event['title'] as String? ?? ''),
+                            if ((event['details'] as String? ?? '')
+                                .isNotEmpty)
+                              _buildDetailRow('Description',
+                                  event['details'] as String? ?? ''),
+                            _buildDetailRow('Type',
+                                event['eventSubType'] as String? ?? 'Meeting'),
+                            if ((event['groupName'] as String? ?? '')
+                                .isNotEmpty)
+                              _buildDetailRow('Group',
+                                  event['groupName'] as String? ?? ''),
+                            if ((event['subject'] as String? ?? '')
+                                .isNotEmpty)
+                              _buildDetailRow('Subject',
+                                  event['subject'] as String? ?? ''),
+                            _buildDetailRow('Date',
+                                DateFormat('EEE, dd MMM yyyy')
+                                    .format(eventDate)),
+                            _buildDetailRow('Time',
+                                event['startTime'] as String? ?? ''),
+                            if ((event['senderUsername'] as String? ?? '')
+                                .isNotEmpty)
+                              _buildDetailRow('Organizer',
+                                  event['senderUsername'] as String? ?? ''),
+                            const SizedBox(height: 8),
+                            // Status toggle
+                            Container(
+                              padding:
+                                  const EdgeInsets.symmetric(vertical: 8),
+                              child: Row(
+                                children: [
+                                  SizedBox(
+                                    width: 100,
+                                    child: Text('Status',
+                                        style: GoogleFonts.dmMono(
+                                            fontSize: 12,
+                                            color:
+                                                const Color(0xFF6B7280))),
+                                  ),
+                                  Expanded(
+                                    child: Row(
+                                      children: [
+                                        Expanded(
+                                          child: _AnimatedTapButton(
+                                            onTap: () async {
+                                              await _firestore
+                                                  .collection('user_group_events')
+                                                  .doc(event['id'] as String)
+                                                  .update({'isCompleted': false});
+                                              setModalState(() => event['isCompleted'] = false);
+                                              setState(() {});
+                                            },
+                                            child: Container(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                      horizontal: 16,
+                                                      vertical: 10),
+                                              decoration: BoxDecoration(
+                                                color: !isCompleted
+                                                    ? const Color(0xFFFBBC05)
+                                                    : AppColors.fieldBg(
+                                                        context),
+                                                borderRadius:
+                                                    BorderRadius.circular(8),
+                                                border: Border.all(
+                                                  color: !isCompleted
+                                                      ? const Color(
+                                                          0xFFFBBC05)
+                                                      : AppColors.border(
+                                                          context),
+                                                  width: 2,
+                                                ),
+                                              ),
+                                              child: Center(
+                                                child: Text('Pending',
+                                                    style: GoogleFonts.dmMono(
+                                                        fontSize: 11,
+                                                        fontWeight:
+                                                            FontWeight.bold,
+                                                        color: !isCompleted
+                                                            ? Colors.white
+                                                            : AppColors
+                                                                .subtext(
+                                                                    context))),
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Expanded(
+                                          child: _AnimatedTapButton(
+                                            onTap: () async {
+                                              await _firestore
+                                                  .collection('user_group_events')
+                                                  .doc(event['id'] as String)
+                                                  .update({'isCompleted': true});
+                                              setModalState(() => event['isCompleted'] = true);
+                                              setState(() {});
+                                            },
+                                            child: Container(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                      horizontal: 16,
+                                                      vertical: 10),
+                                              decoration: BoxDecoration(
+                                                color: isCompleted
+                                                    ? const Color(0xFF34A853)
+                                                    : AppColors.fieldBg(
+                                                        context),
+                                                borderRadius:
+                                                    BorderRadius.circular(8),
+                                                border: Border.all(
+                                                  color: isCompleted
+                                                      ? const Color(
+                                                          0xFF34A853)
+                                                      : AppColors.border(
+                                                          context),
+                                                  width: 2,
+                                                ),
+                                              ),
+                                              child: Center(
+                                                child: Text('Completed',
+                                                    style: GoogleFonts.dmMono(
+                                                        fontSize: 11,
+                                                        fontWeight:
+                                                            FontWeight.bold,
+                                                        color: isCompleted
+                                                            ? Colors.white
+                                                            : AppColors
+                                                                .subtext(
+                                                                    context))),
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                      Padding(
+                        padding:
+                            const EdgeInsets.symmetric(horizontal: 24),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                onPressed: () async {
+                                  Navigator.pop(stateCtx);
+                                  final result = await Navigator.push(
+                                    stateCtx,
+                                    MaterialPageRoute(
+                                      builder: (_) => EditGroupEventScreen(
+                                        groupId: event['groupId'] as String? ??
+                                            '',
+                                        messageId:
+                                            event['id'] as String? ?? '',
+                                        eventData: event,
+                                      ),
+                                    ),
+                                  );
+                                  if (result == true && mounted) {
+                                    setState(() {});
+                                  }
+                                },
+                                icon: Icon(Icons.edit_outlined,
+                                    color: AppColors.text(context)),
+                                label: Text('Edit',
+                                    style: GoogleFonts.dmMono(
+                                        color: AppColors.text(context))),
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: AppColors.text(context),
+                                  side: BorderSide(
+                                      color: AppColors.border(context),
+                                      width: 2),
+                                  padding: const EdgeInsets.symmetric(
+                                      vertical: 16),
+                                  shape: RoundedRectangleBorder(
+                                      borderRadius:
+                                          BorderRadius.circular(12)),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: ElevatedButton.icon(
+                                onPressed: () async {
+                                  final messenger =
+                                      ScaffoldMessenger.of(stateCtx);
+                                  Navigator.pop(stateCtx);
+                                  await confirmAndDeleteDialog(
+                                    stateCtx,
+                                    title: 'Delete Group Event',
+                                    message:
+                                        'This will remove the event from your calendar.',
+                                    onDelete: () async {
+                                      final geId = event['id'] as String;
+                                      await NotificationService().cancelNotificationsForEvent(geId);
+                                      await _firestore
+                                          .collection('user_group_events')
+                                          .doc(geId)
+                                          .delete();
+                                      messenger.showSnackBar(SnackBar(
+                                        content: Text('Group event deleted',
+                                            style: GoogleFonts.dmMono(
+                                                fontWeight: FontWeight.bold,
+                                                color: Colors.white)),
+                                        backgroundColor:
+                                            const Color(0xFFB90000),
+                                        behavior: SnackBarBehavior.floating,
+                                        shape: RoundedRectangleBorder(
+                                            borderRadius:
+                                                BorderRadius.circular(10)),
+                                        duration:
+                                            const Duration(seconds: 3),
+                                      ));
+                                    },
+                                  );
+                                },
+                                icon: const Icon(Icons.delete_outline),
+                                label: Text('Delete',
+                                    style: GoogleFonts.dmMono()),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color(0xFFB90000),
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(
+                                      vertical: 16),
+                                  shape: RoundedRectangleBorder(
+                                      borderRadius:
+                                          BorderRadius.circular(12)),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                    ],
+                  ),
+                ),
+            );
+          },
+        );
+      },
     );
   }
 
@@ -1729,27 +2298,29 @@ class _HomePageState extends State<HomePage> {
                           Expanded(
                             child: ElevatedButton.icon(
                               onPressed: () async {
-                                final messenger =
-                                    ScaffoldMessenger.of(context);
+                                final messenger = ScaffoldMessenger.of(context);
                                 Navigator.pop(context);
-                                final ok = await confirmDeleteDialog(context,
-                                    title: 'Delete Task',
-                                    message: 'Are you sure you want to delete this task? This cannot be undone.');
-                                if (!ok) return;
-                                // Cancel notifications and clean Firestore
-                                await NotificationService()
-                                    .cancelNotificationsForEvent(
-                                        task['id']);
-                                await _firestore
-                                    .collection('tasks')
-                                    .doc(task['id'])
-                                    .delete();
-                                messenger.showSnackBar(SnackBar(
-                                  content: Text('Task deleted',
-                                      style: GoogleFonts.dmMono()),
-                                  backgroundColor:
-                                      const Color(0xFFB90000),
-                                ));
+                                await confirmAndDeleteDialog(
+                                  context,
+                                  title: 'Delete Task',
+                                  message: 'Are you sure you want to delete this task? This cannot be undone.',
+                                  onDelete: () async {
+                                    await NotificationService()
+                                        .cancelNotificationsForEvent(task['id']);
+                                    await _firestore
+                                        .collection('tasks')
+                                        .doc(task['id'])
+                                        .delete();
+                                    messenger.showSnackBar(SnackBar(
+                                      content: Text('Task deleted',
+                                          style: GoogleFonts.dmMono(fontWeight: FontWeight.bold, color: Colors.white)),
+                                      backgroundColor: const Color(0xFFB90000),
+                                      behavior: SnackBarBehavior.floating,
+                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                      duration: const Duration(seconds: 3),
+                                    ));
+                                  },
+                                );
                               },
                               icon: const Icon(Icons.delete_outline),
                               label: Text('Delete',
@@ -1876,25 +2447,29 @@ class _HomePageState extends State<HomePage> {
                       Expanded(
                         child: ElevatedButton.icon(
                           onPressed: () async {
-                            final messenger =
-                                ScaffoldMessenger.of(context);
+                            final messenger = ScaffoldMessenger.of(context);
                             Navigator.pop(context);
-                            final ok = await confirmDeleteDialog(context,
-                                title: 'Delete Class',
-                                message: 'Are you sure you want to delete this class? This cannot be undone.');
-                            if (!ok) return;
-                            // Cancel notifications and clean Firestore
-                            await NotificationService()
-                                .cancelNotificationsForEvent(event['id']);
-                            await _firestore
-                                .collection('timetable')
-                                .doc(event['id'])
-                                .delete();
-                            messenger.showSnackBar(SnackBar(
-                              content: Text('Class deleted',
-                                  style: GoogleFonts.dmMono()),
-                              backgroundColor: const Color(0xFFB90000),
-                            ));
+                            await confirmAndDeleteDialog(
+                              context,
+                              title: 'Delete Class',
+                              message: 'Are you sure you want to delete this class? This cannot be undone.',
+                              onDelete: () async {
+                                await NotificationService()
+                                    .cancelNotificationsForEvent(event['id']);
+                                await _firestore
+                                    .collection('timetable')
+                                    .doc(event['id'])
+                                    .delete();
+                                messenger.showSnackBar(SnackBar(
+                                  content: Text('Class deleted',
+                                      style: GoogleFonts.dmMono(fontWeight: FontWeight.bold, color: Colors.white)),
+                                  backgroundColor: const Color(0xFFB90000),
+                                  behavior: SnackBarBehavior.floating,
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                  duration: const Duration(seconds: 3),
+                                ));
+                              },
+                            );
                           },
                           icon: const Icon(Icons.delete_outline),
                           label:
@@ -2404,21 +2979,29 @@ class _BellDot extends StatefulWidget {
   State<_BellDot> createState() => _BellDotState();
 }
 
-class _BellDotState extends State<_BellDot> {
-  // Docs are cached from Firestore stream. A 60-second timer re-runs build()
-  // so that DateTime.now() advances and the scheduledFor<=now check picks up
-  // newly-fired notifications even when no Firestore write has occurred.
+class _BellDotState extends State<_BellDot> with WidgetsBindingObserver {
   List<QueryDocumentSnapshot> _docs = [];
   StreamSubscription<QuerySnapshot>? _sub;
-  late final Timer _ticker;
+  Timer? _ticker;
 
   @override
   void initState() {
     super.initState();
-    // Real-time Firestore listener — updates instantly when isRead changes
+    WidgetsBinding.instance.addObserver(this);
+    _subscribe(widget.userId);
+    // Fallback tick every 15 s while the app is in foreground — catches
+    // notifications that fire without triggering a Firestore write.
+    _ticker = Timer.periodic(const Duration(seconds: 15), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  void _subscribe(String userId) {
+    _sub?.cancel();
+    if (userId.isEmpty) return;
     _sub = widget.firestore
         .collection('notification_history')
-        .where('userId', isEqualTo: widget.userId)
+        .where('userId', isEqualTo: userId)
         .snapshots()
         .listen(
       (snap) {
@@ -2426,17 +3009,29 @@ class _BellDotState extends State<_BellDot> {
       },
       onError: (_) {},
     );
-    // Timer re-evaluates scheduledFor<=now every 60s for notifications that
-    // fire without triggering a Firestore write (no user tap needed)
-    _ticker = Timer.periodic(const Duration(seconds: 60), (_) {
-      if (mounted) setState(() {});
-    });
+  }
+
+  // Re-subscribe if the parent rebuilds with a different (non-empty) userId.
+  // This handles the race where _auth.currentUser is null on first build.
+  @override
+  void didUpdateWidget(_BellDot oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.userId != widget.userId && widget.userId.isNotEmpty) {
+      _subscribe(widget.userId);
+    }
+  }
+
+  // Fires the moment the user returns to the app — no ticker delay needed.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && mounted) setState(() {});
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _sub?.cancel();
-    _ticker.cancel();
+    _ticker?.cancel();
     super.dispose();
   }
 

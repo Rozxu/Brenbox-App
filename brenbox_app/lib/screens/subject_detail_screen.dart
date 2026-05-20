@@ -1,4 +1,5 @@
-﻿import 'package:flutter/material.dart';
+﻿import 'dart:async';
+import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -6,6 +7,9 @@ import 'package:intl/intl.dart';
 import '../tasks/edit_class_screen.dart';
 import '../tasks/edit_task_screen.dart';
 import '../tasks/edit_exam_screen.dart';
+import '../tasks/edit_group_event_screen.dart';
+import '../services/notification_scheduler.dart';
+import '../services/notification_service.dart';
 import 'study_group_screen.dart';
 import 'study_plan_screen.dart';
 import '../app_preferences.dart';
@@ -42,12 +46,62 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
   static const Color _blue = Color(0xFF3859FF);
   static const Color _red = Color(0xFFB90000);
   static const Color _green = Color(0xFF34A853);
+  static const Color _groupColor = Color(0xFF7C3AED);
+
+  List<Map<String, dynamic>> _cachedGroupEvents = [];
+  StreamSubscription<QuerySnapshot>? _groupEventsSub;
 
   @override
   void initState() {
     super.initState();
     _selectedDate = DateTime.now();
     _subjectIdFuture = _initSubjectId();
+    _listenToGroupEvents();
+  }
+
+  @override
+  void dispose() {
+    _groupEventsSub?.cancel();
+    super.dispose();
+  }
+
+  void _listenToGroupEvents() {
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) return;
+    _groupEventsSub?.cancel();
+    _groupEventsSub = _firestore
+        .collection('user_group_events')
+        .where('userId', isEqualTo: uid)
+        .where('subject', isEqualTo: widget.subjectName)
+        .snapshots()
+        .listen((snap) {
+      if (!mounted) return;
+      setState(() {
+        _cachedGroupEvents = snap.docs.map((doc) {
+          final data = doc.data();
+          final ts = data['eventDate'] as Timestamp?;
+          if (ts == null) return null;
+          final d = ts.toDate();
+          return <String, dynamic>{
+            'id': doc.id,
+            'type': 'group_event',
+            'title': data['title'] ?? 'Group Event',
+            'eventSubType': data['eventType'] ?? 'Meeting',
+            'details': data['details'] ?? '',
+            'startTime': '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}',
+            'eventDate': ts,
+            'groupId': data['groupId'] ?? '',
+            'groupName': data['groupName'] ?? '',
+            'subject': data['subject'] ?? '',
+            'senderUsername': data['senderUsername'] ?? '',
+            'senderId': data['senderId'] ?? '',
+            'isCompleted': data['isCompleted'] ?? false,
+            'messageId': data['messageId'] ?? doc.id,
+            'sortDate': d,
+          };
+        }).whereType<Map<String, dynamic>>().toList();
+      });
+    });
   }
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -200,6 +254,20 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
                 .get();
             for (var doc in e.docs) {
               final ts = doc.data()['examDate'] as Timestamp?;
+              if (ts != null) {
+                final d = ts.toDate();
+                if (DateTime(d.year, d.month, d.day) == checkDate) {
+                  hasClasses = true;
+                  if (checkDate.isAfter(today)) isUpcoming = true;
+                  break;
+                }
+              }
+            }
+          }
+          if (!hasClasses) {
+            for (final ge in _cachedGroupEvents) {
+              if ((ge['subject'] as String? ?? '') != widget.subjectName) continue;
+              final ts = ge['eventDate'] as Timestamp?;
               if (ts != null) {
                 final d = ts.toDate();
                 if (DateTime(d.year, d.month, d.day) == checkDate) {
@@ -436,96 +504,27 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
 
   void _showCreateGroupDialog() {
     final ctrl = TextEditingController();
+    bool saving = false;
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppColors.card(context),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-          side: BorderSide(color: AppColors.border(context), width: 2),
-        ),
-        title: Text(
-          'Create Study Group',
-          style: GoogleFonts.dmMono(fontWeight: FontWeight.bold),
-        ),
-        content: TextField(
-          controller: ctrl,
-          style: GoogleFonts.dmMono(),
-          autofocus: true,
-          decoration: InputDecoration(
-            hintText: 'Group name',
-            hintStyle: GoogleFonts.dmMono(color: AppColors.subtext(context)),
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(10),
-              borderSide: BorderSide(color: AppColors.border(context), width: 2),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialog) {
+          return AlertDialog(
+            backgroundColor: AppColors.card(context),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+              side: BorderSide(color: AppColors.border(context), width: 2),
             ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(10),
-              borderSide: const BorderSide(color: _blue, width: 2),
+            title: Text(
+              'Create Study Group',
+              style: GoogleFonts.dmMono(fontWeight: FontWeight.bold),
             ),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: Text('Cancel', style: GoogleFonts.dmMono(color: AppColors.subtext(context))),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              final name = ctrl.text.trim();
-              if (name.isEmpty) return;
-              Navigator.pop(ctx);
-              await _createGroup(name);
-              if (mounted) _showSnack('Group "$name" created!');
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: _blue,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
-              ),
-            ),
-            child: Text(
-              'Create',
-              style: GoogleFonts.dmMono(
-                color: Colors.white,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showInviteDialog(String groupId, String groupName) {
-    final ctrl = TextEditingController();
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppColors.card(context),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-          side: BorderSide(color: AppColors.border(context), width: 2),
-        ),
-        title: Text(
-          'Invite to Group',
-          style: GoogleFonts.dmMono(fontWeight: FontWeight.bold),
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              'Enter the email of the user to invite:',
-              style: GoogleFonts.dmMono(fontSize: 12, color: AppColors.subtext(context)),
-            ),
-            const SizedBox(height: 10),
-            TextField(
+            content: TextField(
               controller: ctrl,
               style: GoogleFonts.dmMono(),
-              keyboardType: TextInputType.emailAddress,
               autofocus: true,
               decoration: InputDecoration(
-                hintText: 'user@email.com',
+                hintText: 'Group name',
                 hintStyle: GoogleFonts.dmMono(color: AppColors.subtext(context)),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(10),
@@ -537,35 +536,114 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
                 ),
               ),
             ),
+            actions: [
+              TextButton(
+                onPressed: saving ? null : () => Navigator.pop(ctx),
+                child: Text('Cancel', style: GoogleFonts.dmMono(color: AppColors.subtext(context))),
+              ),
+              ElevatedButton(
+                onPressed: saving ? null : () async {
+                  final name = ctrl.text.trim();
+                  if (name.isEmpty) return;
+                  setDialog(() => saving = true);
+                  try {
+                    await _createGroup(name);
+                    if (ctx.mounted) Navigator.pop(ctx);
+                    if (mounted) _showSnack('Group "$name" created!');
+                  } finally {
+                    if (ctx.mounted) setDialog(() => saving = false);
+                  }
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _blue,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+                child: saving
+                    ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                    : Text('Create', style: GoogleFonts.dmMono(color: Colors.white, fontWeight: FontWeight.bold)),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  void _showInviteDialog(String groupId, String groupName) {
+    final ctrl = TextEditingController();
+    bool saving = false;
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialog) => AlertDialog(
+          backgroundColor: AppColors.card(context),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: BorderSide(color: AppColors.border(context), width: 2),
+          ),
+          title: Text(
+            'Invite to Group',
+            style: GoogleFonts.dmMono(fontWeight: FontWeight.bold),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Enter the email of the user to invite:',
+                style: GoogleFonts.dmMono(fontSize: 12, color: AppColors.subtext(context)),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: ctrl,
+                style: GoogleFonts.dmMono(),
+                keyboardType: TextInputType.emailAddress,
+                autofocus: true,
+                decoration: InputDecoration(
+                  hintText: 'user@email.com',
+                  hintStyle: GoogleFonts.dmMono(color: AppColors.subtext(context)),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: BorderSide(color: AppColors.border(context), width: 2),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: const BorderSide(color: _blue, width: 2),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: saving ? null : () => Navigator.pop(ctx),
+              child: Text('Cancel', style: GoogleFonts.dmMono(color: AppColors.subtext(context))),
+            ),
+            ElevatedButton(
+              onPressed: saving ? null : () async {
+                final email = ctrl.text.trim();
+                if (email.isEmpty) return;
+                setDialog(() => saving = true);
+                try {
+                  await _sendInvitation(groupId, groupName, email);
+                  if (ctx.mounted) Navigator.pop(ctx);
+                } finally {
+                  if (ctx.mounted) setDialog(() => saving = false);
+                }
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _blue,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+              child: saving
+                  ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                  : Text('Send', style: GoogleFonts.dmMono(color: Colors.white, fontWeight: FontWeight.bold)),
+            ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: Text('Cancel', style: GoogleFonts.dmMono(color: AppColors.subtext(context))),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              final email = ctrl.text.trim();
-              if (email.isEmpty) return;
-              Navigator.pop(ctx);
-              await _sendInvitation(groupId, groupName, email);
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: _blue,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
-              ),
-            ),
-            child: Text(
-              'Send',
-              style: GoogleFonts.dmMono(
-                color: Colors.white,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -575,6 +653,65 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
   // ══════════════════════════════════════════════════════════════════════════
 
   // ══════════════════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════════════════════════
+  // CLASH-CHECK HELPERS  (used by add extra class)
+  // ══════════════════════════════════════════════════════════════════════
+
+  int _timeToMinutes(String t) {
+    final p = t.split(':');
+    return int.parse(p[0]) * 60 + int.parse(p[1]);
+  }
+
+  Map<String, dynamic>? _checkClashInMemory(
+    List<Map<String, dynamic>> existing,
+    DateTime date,
+    String startTime,
+    String endTime,
+  ) {
+    for (final data in existing) {
+      try {
+        final ts = data['date'] as Timestamp?;
+        if (ts == null) continue;
+        final eventDate = ts.toDate();
+        if (eventDate.year != date.year ||
+            eventDate.month != date.month ||
+            eventDate.day != date.day) continue;
+        final exStart = data['startTime'] as String;
+        final exEnd   = data['endTime']   as String;
+        final ns = _timeToMinutes(startTime);
+        final ne = _timeToMinutes(endTime);
+        final es = _timeToMinutes(exStart);
+        final ee = _timeToMinutes(exEnd);
+        if (ns < ee && ne > es) {
+          return {
+            'className': data['className'] ?? 'Untitled',
+            'startTime': exStart,
+            'endTime':   exEnd,
+            'date':      eventDate,
+          };
+        }
+      } catch (_) { continue; }
+    }
+    return null;
+  }
+
+  String _fmtTime(String t) {
+    try {
+      final p = t.split(':');
+      final h = int.parse(p[0]);
+      final m = p[1];
+      if (h == 0)  return '12:$m AM';
+      if (h < 12)  return '$h:$m AM';
+      if (h == 12) return '12:$m PM';
+      return '${h - 12}:$m PM';
+    } catch (_) { return t; }
+  }
+
+  int _parseStartYear(String? academicYear) {
+    if (academicYear == null) return DateTime.now().year;
+    return int.tryParse(academicYear.split('/').first) ?? DateTime.now().year;
+  }
+
   // ADD EXTRA CLASS DIALOG
   // ══════════════════════════════════════════════════════════════════════
 
@@ -582,16 +719,34 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
     final user = _auth.currentUser;
     if (user == null) return;
 
-    // Controllers
-    final roomCtrl = TextEditingController();
+    final roomCtrl     = TextEditingController();
     final buildingCtrl = TextEditingController();
     final lecturerCtrl = TextEditingController();
 
-    DateTime? selectedDate;
+    String    dateOption      = 'None';
+    String    occurrence      = 'Once';
+    DateTime? startDate;
+    DateTime? endDate;
     TimeOfDay? startTime;
     TimeOfDay? endTime;
+    Set<int>  selectedDays    = {};
+    int       selectedSemester = widget.semester ?? 1;
+    int       selectedYear     = _parseStartYear(widget.academicYear);
+    bool      isSaving         = false;
+    String?   errorMsg;
 
-    String? errorMsg;
+    // Returns weekdays that occur at least once in startDate..endDate.
+    Set<int> getAvailableDays() {
+      if (startDate == null || endDate == null) return {1,2,3,4,5,6,7};
+      if (endDate!.difference(startDate!).inDays >= 6) return {1,2,3,4,5,6,7};
+      final available = <int>{};
+      DateTime cur = startDate!;
+      while (!cur.isAfter(endDate!)) {
+        available.add(cur.weekday);
+        cur = cur.add(const Duration(days: 1));
+      }
+      return available;
+    }
 
     await showModalBottomSheet(
       context: context,
@@ -599,17 +754,278 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
       backgroundColor: Colors.transparent,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setS) {
+
+          // ── local UI helpers ────────────────────────────────────────────
+
+          Widget optionBtn(String label) {
+            final sel = dateOption == label;
+            return Expanded(
+              child: GestureDetector(
+                onTap: () => setS(() {
+                  dateOption = label;
+                  if (label == 'None') endDate = null;
+                  if (label == 'Manual') {
+                    occurrence = 'Repeating';
+                    selectedDays = selectedDays.intersection(getAvailableDays());
+                  }
+                  if (label == 'Academic Year/Term') {
+                    selectedDays = selectedDays.intersection(getAvailableDays());
+                  }
+                }),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  decoration: BoxDecoration(
+                    color: sel ? const Color(0xFFFFEBEE) : AppColors.card(context),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: sel ? _red : AppColors.border(context), width: 2),
+                  ),
+                  child: Text(label,
+                    textAlign: TextAlign.center,
+                    style: GoogleFonts.dmMono(fontSize: 10, fontWeight: FontWeight.bold,
+                        color: sel ? _red : AppColors.text(context))),
+                ),
+              ),
+            );
+          }
+
+          Widget occurrenceBtn(String label) {
+            final sel = occurrence == label;
+            return Expanded(
+              child: GestureDetector(
+                onTap: () => setS(() => occurrence = label),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  decoration: BoxDecoration(
+                    color: sel ? const Color(0xFFFFEBEE) : AppColors.card(context),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: sel ? _red : AppColors.border(context), width: 2),
+                  ),
+                  child: Text(label,
+                    textAlign: TextAlign.center,
+                    style: GoogleFonts.dmMono(fontSize: 13, fontWeight: FontWeight.bold,
+                        color: sel ? _red : AppColors.text(context))),
+                ),
+              ),
+            );
+          }
+
+          Widget dateTile(String hint, DateTime? date, bool isStart) {
+            return GestureDetector(
+              onTap: () async {
+                final isDark = AppColors.isDark(context);
+                final picked = await showDatePicker(
+                  context: ctx,
+                  initialDate: date ?? DateTime.now(),
+                  firstDate: DateTime(2020),
+                  lastDate: DateTime(2030),
+                  builder: (_, child) => Theme(
+                    data: isDark
+                        ? ThemeData.dark().copyWith(colorScheme: const ColorScheme.dark(
+                            primary: Color(0xFFB90000), onPrimary: Colors.white,
+                            surface: Color(0xFF252D47), onSurface: Colors.white))
+                        : ThemeData.light().copyWith(colorScheme: const ColorScheme.light(
+                            primary: Color(0xFFB90000))),
+                    child: child!,
+                  ),
+                );
+                if (picked != null) {
+                  setS(() {
+                    if (isStart) {
+                      startDate = picked;
+                      if (endDate != null && endDate!.isBefore(picked)) {
+                        endDate = null;
+                        selectedDays.clear();
+                      }
+                    } else {
+                      endDate = picked;
+                    }
+                    if (dateOption == 'Manual' || dateOption == 'Academic Year/Term') {
+                      selectedDays = selectedDays.intersection(getAvailableDays());
+                    }
+                    errorMsg = null;
+                  });
+                }
+              },
+              child: _addClassPickerTile(
+                icon: Icons.calendar_today,
+                label: date != null ? DateFormat('EEE, dd MMM yyyy').format(date) : hint,
+                active: date != null,
+                required: true,
+                hasError: errorMsg != null && date == null,
+              ),
+            );
+          }
+
+          Widget daySelector() {
+            final days = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+            final available = (dateOption == 'Manual' || dateOption == 'Academic Year/Term')
+                ? getAvailableDays() : {1,2,3,4,5,6,7};
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _addClassLabel('Days *'),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8, runSpacing: 8,
+                  children: List.generate(7, (i) {
+                    final idx = i + 1;
+                    final isSel = selectedDays.contains(idx);
+                    final isAvail = available.contains(idx);
+                    return GestureDetector(
+                      onTap: isAvail
+                          ? () => setS(() { if (isSel) { selectedDays.remove(idx); } else { selectedDays.add(idx); } })
+                          : null,
+                      child: Opacity(
+                        opacity: isAvail ? 1.0 : 0.35,
+                        child: Container(
+                          width: 65,
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          decoration: BoxDecoration(
+                            color: isSel ? const Color(0xFF6B7280) : AppColors.card(context),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: AppColors.border(context), width: 2),
+                          ),
+                          child: Text(days[i],
+                            textAlign: TextAlign.center,
+                            style: GoogleFonts.dmMono(fontSize: 13, fontWeight: FontWeight.bold,
+                                color: isSel ? Colors.white : AppColors.text(context))),
+                        ),
+                      ),
+                    );
+                  }),
+                ),
+                const SizedBox(height: 14),
+              ],
+            );
+          }
+
+          Widget semesterYearSelector() {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _addClassLabel('Semester'),
+                          const SizedBox(height: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: AppColors.input(context),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: AppColors.border(context), width: 2),
+                            ),
+                            child: Theme(
+                              data: Theme.of(context).copyWith(
+                                canvasColor: AppColors.card(context),
+                                colorScheme: ColorScheme.light(
+                                  primary: const Color(0xFF6B7280),
+                                  onPrimary: Colors.white,
+                                  surface: AppColors.card(context),
+                                  onSurface: AppColors.text(context),
+                                ),
+                              ),
+                              child: DropdownButton<int>(
+                                value: selectedSemester,
+                                isExpanded: true,
+                                underline: const SizedBox(),
+                                style: GoogleFonts.dmMono(fontSize: 14, color: AppColors.text(context)),
+                                dropdownColor: AppColors.card(context),
+                                icon: Icon(Icons.arrow_drop_down, color: AppColors.text(context)),
+                                items: List.generate(10, (i) => i + 1).map((i) => DropdownMenuItem(
+                                  value: i,
+                                  child: Text('Semester $i',
+                                      style: GoogleFonts.dmMono(fontSize: 14, color: AppColors.text(context))),
+                                )).toList(),
+                                onChanged: (v) { if (v != null) setS(() => selectedSemester = v); },
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _addClassLabel('Year'),
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                                  decoration: BoxDecoration(
+                                    color: AppColors.input(context),
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(color: AppColors.border(context), width: 2),
+                                  ),
+                                  child: TextField(
+                                    keyboardType: TextInputType.number,
+                                    style: GoogleFonts.dmMono(fontSize: 14),
+                                    textAlign: TextAlign.center,
+                                    decoration: InputDecoration(
+                                      hintText: (selectedYear % 100).toString().padLeft(2, '0'),
+                                      hintStyle: GoogleFonts.dmMono(fontSize: 14, color: AppColors.subtext(context)),
+                                      border: InputBorder.none,
+                                    ),
+                                    maxLength: 2,
+                                    buildCounter: (_, {required currentLength, required isFocused, maxLength}) => null,
+                                    onChanged: (v) {
+                                      if (v.length == 2) {
+                                        final y = int.tryParse('20$v');
+                                        if (y != null) setS(() => selectedYear = y);
+                                      }
+                                    },
+                                  ),
+                                ),
+                              ),
+                              Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 4),
+                                child: Text('/', style: GoogleFonts.dmMono(fontSize: 18, fontWeight: FontWeight.bold)),
+                              ),
+                              Expanded(
+                                child: Container(
+                                  padding: const EdgeInsets.all(16),
+                                  decoration: BoxDecoration(
+                                    color: AppColors.card(context),
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(color: AppColors.border(context), width: 2),
+                                  ),
+                                  child: Text(
+                                    (selectedYear + 1).toString().substring(2),
+                                    textAlign: TextAlign.center,
+                                    style: GoogleFonts.dmMono(fontSize: 14, color: AppColors.subtext(context)),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+              ],
+            );
+          }
+
+          // ── main sheet content ──────────────────────────────────────────
+
           return Padding(
-            padding: EdgeInsets.only(
-              bottom: MediaQuery.of(ctx).viewInsets.bottom,
-            ),
+            padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
             child: Container(
               decoration: BoxDecoration(
                 color: AppColors.card(context),
                 borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
                 border: Border(
-                  top: BorderSide(color: AppColors.border(context), width: 2),
-                  left: BorderSide(color: AppColors.border(context), width: 2),
+                  top:   BorderSide(color: AppColors.border(context), width: 2),
+                  left:  BorderSide(color: AppColors.border(context), width: 2),
                   right: BorderSide(color: AppColors.border(context), width: 2),
                 ),
               ),
@@ -620,7 +1036,8 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      // ── Header ──────────────────────────────────────────
+
+                      // Header
                       Row(
                         children: [
                           Container(
@@ -629,97 +1046,82 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
                               color: _red.withOpacity(0.1),
                               borderRadius: BorderRadius.circular(10),
                             ),
-                            child: const Icon(
-                              Icons.add_circle_outline,
-                              color: _red,
-                              size: 22,
-                            ),
+                            child: const Icon(Icons.add_circle_outline, color: _red, size: 22),
                           ),
                           const SizedBox(width: 12),
                           Expanded(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text(
-                                  'Add Extra Class',
-                                  style: GoogleFonts.dmMono(
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                                Text(
-                                  widget.subjectName,
-                                  style: GoogleFonts.dmMono(
-                                    fontSize: 12,
-                                    color: AppColors.subtext(context),
-                                  ),
-                                ),
+                                Text('Add Extra Class', style: GoogleFonts.dmMono(fontSize: 18, fontWeight: FontWeight.bold)),
+                                Text(widget.subjectName, style: GoogleFonts.dmMono(fontSize: 12, color: AppColors.subtext(context))),
                               ],
                             ),
                           ),
                           GestureDetector(
                             onTap: () => Navigator.pop(ctx),
-                            child: Icon(
-                              Icons.close,
-                              color: AppColors.subtext(context),
-                              size: 22,
-                            ),
+                            child: Icon(Icons.close, color: AppColors.subtext(context), size: 22),
                           ),
                         ],
                       ),
                       const SizedBox(height: 20),
 
-                      // ── Date picker ─────────────────────────────────────
-                      _addClassLabel('Date *'),
-                      const SizedBox(height: 6),
-                      GestureDetector(
-                        onTap: () async {
-                          final isDark = AppColors.isDark(ctx);
-                          final picked = await showDatePicker(
-                            context: ctx,
-                            initialDate: selectedDate ?? DateTime.now(),
-                            firstDate: DateTime(2020),
-                            lastDate: DateTime(2030),
-                            builder: (_, child) => Theme(
-                              data: isDark
-                                  ? ThemeData.dark().copyWith(
-                                      colorScheme: const ColorScheme.dark(
-                                        primary: Color(0xFFB90000),
-                                        onPrimary: Colors.white,
-                                        surface: Color(0xFF252D47),
-                                        onSurface: Colors.white,
-                                      ),
-                                    )
-                                  : ThemeData.light().copyWith(
-                                      colorScheme: const ColorScheme.light(
-                                        primary: Color(0xFFB90000),
-                                      ),
-                                    ),
-                              child: child!,
-                            ),
-                          );
-                          if (picked != null) {
-                            setS(() {
-                              selectedDate = picked;
-                              errorMsg = null;
-                            });
-                          }
-                        },
-                        child: _addClassPickerTile(
-                          icon: Icons.calendar_today,
-                          label: selectedDate != null
-                              ? DateFormat(
-                                  'EEE, dd MMM yyyy',
-                                ).format(selectedDate!)
-                              : 'Select date',
-                          active: selectedDate != null,
-                          required: true,
-                          hasError: errorMsg != null && selectedDate == null,
-                        ),
-                      ),
+                      // Date mode buttons
+                      _addClassLabel('Start/End Dates'),
+                      const SizedBox(height: 8),
+                      Row(children: [
+                        optionBtn('None'),
+                        const SizedBox(width: 8),
+                        optionBtn('Academic Year/Term'),
+                        const SizedBox(width: 8),
+                        optionBtn('Manual'),
+                      ]),
                       const SizedBox(height: 14),
 
-                      // ── Start time ──────────────────────────────────────
+                      // None — single date
+                      if (dateOption == 'None') ...[
+                        _addClassLabel('Date *'),
+                        const SizedBox(height: 6),
+                        dateTile('Select date', startDate, true),
+                        const SizedBox(height: 14),
+                      ],
+
+                      // Manual — start + end + day selector (always Repeating)
+                      if (dateOption == 'Manual') ...[
+                        _addClassLabel('Start Date *'),
+                        const SizedBox(height: 6),
+                        dateTile('Select start date', startDate, true),
+                        const SizedBox(height: 14),
+                        _addClassLabel('End Date *'),
+                        const SizedBox(height: 6),
+                        dateTile('Select end date', endDate, false),
+                        const SizedBox(height: 14),
+                        daySelector(),
+                      ],
+
+                      // Academic Year/Term — semester/year + start + end + occurrence + days
+                      if (dateOption == 'Academic Year/Term') ...[
+                        semesterYearSelector(),
+                        _addClassLabel('Start Date *'),
+                        const SizedBox(height: 6),
+                        dateTile('Select start date', startDate, true),
+                        const SizedBox(height: 14),
+                        _addClassLabel('End Date *'),
+                        const SizedBox(height: 6),
+                        dateTile('Select end date', endDate, false),
+                        const SizedBox(height: 14),
+                        _addClassLabel('Occurrence'),
+                        const SizedBox(height: 8),
+                        Row(children: [
+                          occurrenceBtn('Once'),
+                          const SizedBox(width: 8),
+                          occurrenceBtn('Repeating'),
+                        ]),
+                        const SizedBox(height: 14),
+                        if (occurrence == 'Repeating') daySelector(),
+                      ],
+
+                      // Start time
                       _addClassLabel('Start Time *'),
                       const SizedBox(height: 6),
                       GestureDetector(
@@ -727,23 +1129,14 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
                           final picked = await showDialog<TimeOfDay>(
                             context: ctx,
                             builder: (_) => _CustomTimePickerDialog(
-                              initialTime:
-                                  startTime ??
-                                  const TimeOfDay(hour: 8, minute: 0),
+                              initialTime: startTime ?? const TimeOfDay(hour: 8, minute: 0),
                             ),
                           );
-                          if (picked != null) {
-                            setS(() {
-                              startTime = picked;
-                              errorMsg = null;
-                            });
-                          }
+                          if (picked != null) setS(() { startTime = picked; errorMsg = null; });
                         },
                         child: _addClassPickerTile(
                           icon: Icons.access_time,
-                          label: startTime != null
-                              ? startTime!.format(ctx)
-                              : 'Select start time',
+                          label: startTime != null ? startTime!.format(ctx) : 'Select start time',
                           active: startTime != null,
                           required: true,
                           hasError: errorMsg != null && startTime == null,
@@ -751,7 +1144,7 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
                       ),
                       const SizedBox(height: 14),
 
-                      // ── End time ────────────────────────────────────────
+                      // End time
                       _addClassLabel('End Time *'),
                       const SizedBox(height: 6),
                       GestureDetector(
@@ -759,28 +1152,17 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
                           final picked = await showDialog<TimeOfDay>(
                             context: ctx,
                             builder: (_) => _CustomTimePickerDialog(
-                              initialTime:
-                                  endTime ??
+                              initialTime: endTime ??
                                   (startTime != null
-                                      ? TimeOfDay(
-                                          hour: (startTime!.hour + 2) % 24,
-                                          minute: startTime!.minute,
-                                        )
+                                      ? TimeOfDay(hour: (startTime!.hour + 2) % 24, minute: startTime!.minute)
                                       : const TimeOfDay(hour: 10, minute: 0)),
                             ),
                           );
-                          if (picked != null) {
-                            setS(() {
-                              endTime = picked;
-                              errorMsg = null;
-                            });
-                          }
+                          if (picked != null) setS(() { endTime = picked; errorMsg = null; });
                         },
                         child: _addClassPickerTile(
                           icon: Icons.access_time_filled,
-                          label: endTime != null
-                              ? endTime!.format(ctx)
-                              : 'Select end time',
+                          label: endTime != null ? endTime!.format(ctx) : 'Select end time',
                           active: endTime != null,
                           required: true,
                           hasError: errorMsg != null && endTime == null,
@@ -788,130 +1170,238 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
                       ),
                       const SizedBox(height: 14),
 
-                      // ── Room (optional) ─────────────────────────────────
+                      // Optional fields
                       _addClassLabel('Room (optional)'),
                       const SizedBox(height: 6),
                       _addClassTextField(roomCtrl, 'e.g. A101'),
                       const SizedBox(height: 14),
-
-                      // ── Building (optional) ─────────────────────────────
                       _addClassLabel('Building (optional)'),
                       const SizedBox(height: 6),
                       _addClassTextField(buildingCtrl, 'e.g. Block A'),
                       const SizedBox(height: 14),
-
-                      // ── Lecturer (optional) ─────────────────────────────
                       _addClassLabel('Lecturer (optional)'),
                       const SizedBox(height: 6),
                       _addClassTextField(lecturerCtrl, 'e.g. Dr. Smith'),
                       const SizedBox(height: 8),
 
-                      // ── Error message ───────────────────────────────────
+                      // Inline error
                       if (errorMsg != null)
                         Padding(
                           padding: const EdgeInsets.only(bottom: 8),
                           child: Row(
                             children: [
-                              const Icon(
-                                Icons.error_outline,
-                                size: 14,
-                                color: Color(0xFFB90000),
-                              ),
+                              const Icon(Icons.error_outline, size: 14, color: Color(0xFFB90000)),
                               const SizedBox(width: 6),
-                              Text(
-                                errorMsg!,
-                                style: GoogleFonts.dmMono(
-                                  fontSize: 12,
-                                  color: const Color(0xFFB90000),
-                                ),
-                              ),
+                              Flexible(child: Text(errorMsg!,
+                                  style: GoogleFonts.dmMono(fontSize: 12, color: const Color(0xFFB90000)))),
                             ],
                           ),
                         ),
 
                       const SizedBox(height: 8),
 
-                      // ── Save button ─────────────────────────────────────
+                      // Save button
                       SizedBox(
                         width: double.infinity,
                         child: ElevatedButton.icon(
-                          onPressed: () async {
-                            // Validate required fields
-                            if (selectedDate == null ||
-                                startTime == null ||
-                                endTime == null) {
-                              setS(
-                                () => errorMsg =
-                                    'Please fill in date, start time and end time.',
-                              );
-                              return;
+                          onPressed: isSaving ? null : () async {
+                            // ── Validation ──────────────────────────────
+                            if (startTime == null || endTime == null) {
+                              setS(() => errorMsg = 'Please select start and end time.'); return;
+                            }
+                            if (dateOption == 'None' && startDate == null) {
+                              setS(() => errorMsg = 'Please select a date.'); return;
+                            }
+                            if ((dateOption == 'Manual' || dateOption == 'Academic Year/Term') &&
+                                (startDate == null || endDate == null)) {
+                              setS(() => errorMsg = 'Please select start and end dates.'); return;
+                            }
+                            final needsDays = dateOption == 'Manual' ||
+                                (dateOption == 'Academic Year/Term' && occurrence == 'Repeating');
+                            if (needsDays && selectedDays.isEmpty) {
+                              setS(() => errorMsg = 'Please select at least one day.'); return;
+                            }
+                            final sm = startTime!.hour * 60 + startTime!.minute;
+                            final em = endTime!.hour   * 60 + endTime!.minute;
+                            if (em <= sm) {
+                              setS(() => errorMsg = 'End time must be after start time.'); return;
                             }
 
-                            // Validate end time is after start time
-                            final startMins =
-                                startTime!.hour * 60 + startTime!.minute;
-                            final endMins =
-                                endTime!.hour * 60 + endTime!.minute;
-                            if (endMins <= startMins) {
-                              setS(
-                                () => errorMsg =
-                                    'End time must be after start time.',
-                              );
-                              return;
-                            }
+                            setS(() { isSaving = true; errorMsg = null; });
 
-                            // Format HH:mm strings
-                            final startStr =
-                                '${startTime!.hour.toString().padLeft(2, '0')}:${startTime!.minute.toString().padLeft(2, '0')}';
-                            final endStr =
-                                '${endTime!.hour.toString().padLeft(2, '0')}:${endTime!.minute.toString().padLeft(2, '0')}';
+                            final startStr = '${startTime!.hour.toString().padLeft(2, '0')}:${startTime!.minute.toString().padLeft(2, '0')}';
+                            final endStr   = '${endTime!.hour.toString().padLeft(2, '0')}:${endTime!.minute.toString().padLeft(2, '0')}';
 
-                            // Save to Firestore
-                            await _firestore.collection('timetable').add({
-                              'userId': user.uid,
-                              'className': widget.subjectName,
-                              'date': Timestamp.fromDate(selectedDate!),
-                              'startTime': startStr,
-                              'endTime': endStr,
-                              'room': roomCtrl.text.trim(),
-                              'building': buildingCtrl.text.trim(),
+                            // Fetch existing entries once for clash checks
+                            final existingSnap = await _firestore
+                                .collection('timetable')
+                                .where('userId', isEqualTo: user.uid)
+                                .get();
+                            final existingDocs = existingSnap.docs.map((d) => d.data()).toList();
+
+                            final List<Map<String, dynamic>> classEvents = [];
+                            final List<Map<String, dynamic>> clashInfo   = [];
+
+                            Map<String, dynamic> baseEvent(DateTime date) => {
+                              'userId':       user.uid,
+                              'className':    widget.subjectName,
+                              'date':         Timestamp.fromDate(date),
+                              'startTime':    startStr,
+                              'endTime':      endStr,
+                              'room':         roomCtrl.text.trim(),
+                              'building':     buildingCtrl.text.trim(),
                               'lecturerName': lecturerCtrl.text.trim(),
-                              'type': 'class',
-                              'semester': widget.semester,
-                              'academicYear': widget.academicYear,
-                            });
+                              'type':         'class',
+                              'createdAt':    Timestamp.now(),
+                            };
 
-                            if (ctx.mounted) Navigator.pop(ctx);
+                            void tryAdd(DateTime date, {int? sem, String? acYear}) {
+                              final norm  = DateTime(date.year, date.month, date.day);
+                              final clash = _checkClashInMemory(existingDocs, norm, startStr, endStr);
+                              if (clash != null) {
+                                clashInfo.add({'date': norm, 'className': clash['className'],
+                                    'startTime': clash['startTime'], 'endTime': clash['endTime']});
+                              } else {
+                                final ev = baseEvent(norm);
+                                if (sem    != null) ev['semester']     = sem;
+                                if (acYear != null) ev['academicYear'] = acYear;
+                                classEvents.add(ev);
+                              }
+                            }
 
-                            if (mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text(
-                                    'Class added for ${DateFormat('EEE, dd MMM yyyy').format(selectedDate!)}',
-                                    style: GoogleFonts.dmMono(),
+                            // ── Build event list ────────────────────────
+                            if (dateOption == 'None') {
+                              tryAdd(startDate!, sem: widget.semester, acYear: widget.academicYear);
+                            } else if (dateOption == 'Academic Year/Term' && occurrence == 'Once') {
+                              tryAdd(startDate!,
+                                  sem: selectedSemester,
+                                  acYear: '$selectedYear/${selectedYear + 1}');
+                            } else {
+                              // Repeating (Manual or Academic Year/Term)
+                              final acYear = dateOption == 'Academic Year/Term'
+                                  ? '$selectedYear/${selectedYear + 1}' : null;
+                              final sem    = dateOption == 'Academic Year/Term'
+                                  ? selectedSemester : null;
+                              DateTime cur = startDate!;
+                              while (!cur.isAfter(endDate!)) {
+                                if (selectedDays.contains(cur.weekday)) {
+                                  tryAdd(cur, sem: sem, acYear: acYear);
+                                }
+                                cur = cur.add(const Duration(days: 1));
+                              }
+                            }
+
+                            // ── Handle clashes ──────────────────────────
+                            if (clashInfo.isNotEmpty && classEvents.isEmpty) {
+                              setS(() => isSaving = false);
+                              if (!mounted) return;
+                              final fc = clashInfo.first;
+                              showDialog(
+                                context: context,
+                                builder: (_) => AlertDialog(
+                                  backgroundColor: AppColors.card(context),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                    side: BorderSide(color: AppColors.border(context), width: 2),
                                   ),
-                                  backgroundColor: _green,
+                                  title: Row(children: [
+                                    const Icon(Icons.warning, color: Colors.orange, size: 24),
+                                    const SizedBox(width: 12),
+                                    Expanded(child: Text('All Dates Clash',
+                                        style: GoogleFonts.dmMono(fontWeight: FontWeight.bold))),
+                                  ]),
+                                  content: Text(
+                                    'All selected dates clash with existing classes.\n\nExample:\n${fc['className']}\n'
+                                    '${_fmtTime(fc['startTime'])} – ${_fmtTime(fc['endTime'])}\n'
+                                    'on ${DateFormat('EEE, dd MMM').format(fc['date'])}',
+                                    style: GoogleFonts.dmMono(fontSize: 12),
+                                  ),
+                                  actions: [
+                                    TextButton(
+                                      onPressed: () => Navigator.pop(context),
+                                      child: Text('OK', style: GoogleFonts.dmMono(fontWeight: FontWeight.bold)),
+                                    ),
+                                  ],
                                 ),
                               );
-                              // Refresh calendar to show new dot
+                              return;
+                            }
+
+                            if (clashInfo.isNotEmpty) {
+                              if (!mounted) return;
+                              final cont = await showDialog<bool>(
+                                context: context,
+                                builder: (dCtx) => AlertDialog(
+                                  backgroundColor: AppColors.card(context),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                    side: BorderSide(color: AppColors.border(context), width: 2),
+                                  ),
+                                  title: Row(children: [
+                                    const Icon(Icons.warning, color: Colors.orange, size: 24),
+                                    const SizedBox(width: 12),
+                                    Expanded(child: Text('Clash Warning',
+                                        style: GoogleFonts.dmMono(fontWeight: FontWeight.bold))),
+                                  ]),
+                                  content: Text(
+                                    '${clashInfo.length} date(s) skipped due to clashes.\n'
+                                    '${classEvents.length} class(es) will be saved.\n\nContinue?',
+                                    style: GoogleFonts.dmMono(fontSize: 12),
+                                  ),
+                                  actions: [
+                                    TextButton(
+                                      onPressed: () => Navigator.pop(dCtx, false),
+                                      child: Text('Cancel', style: GoogleFonts.dmMono(color: AppColors.subtext(context))),
+                                    ),
+                                    TextButton(
+                                      onPressed: () => Navigator.pop(dCtx, true),
+                                      child: Text('Continue', style: GoogleFonts.dmMono(fontWeight: FontWeight.bold)),
+                                    ),
+                                  ],
+                                ),
+                              );
+                              if (cont != true) { setS(() => isSaving = false); return; }
+                            }
+
+                            if (classEvents.isEmpty) {
+                              setS(() { isSaving = false; errorMsg = 'No classes to save. Check your settings.'; });
+                              return;
+                            }
+
+                            // ── Batch save ──────────────────────────────
+                            final batch = _firestore.batch();
+                            for (final ev in classEvents) {
+                              batch.set(_firestore.collection('timetable').doc(), ev);
+                            }
+                            await batch.commit();
+
+                            NotificationScheduler().rescheduleAllNotifications().catchError((_) {});
+
+                            if (ctx.mounted) Navigator.pop(ctx);
+                            if (mounted) {
+                              final count = classEvents.length;
+                              ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                                content: Text(
+                                  count == 1
+                                      ? 'Class added for ${DateFormat('EEE, dd MMM yyyy').format((classEvents.first['date'] as Timestamp).toDate())}'
+                                      : '$count classes added successfully',
+                                  style: GoogleFonts.dmMono(fontWeight: FontWeight.bold, color: Colors.white),
+                                ),
+                                backgroundColor: _green,
+                                behavior: SnackBarBehavior.floating,
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                duration: const Duration(seconds: 3),
+                              ));
                               setState(() {});
                             }
                           },
                           icon: const Icon(Icons.check, size: 20),
-                          label: Text(
-                            'Save Class',
-                            style: GoogleFonts.dmMono(
-                              fontSize: 15,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
+                          label: Text('Save Class', style: GoogleFonts.dmMono(fontSize: 15, fontWeight: FontWeight.bold)),
                           style: ElevatedButton.styleFrom(
                             backgroundColor: _red,
                             foregroundColor: Colors.white,
                             padding: const EdgeInsets.symmetric(vertical: 16),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                           ),
                         ),
                       ),
@@ -1729,7 +2219,7 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
                   vertical: 8,
                 ),
                 decoration: BoxDecoration(
-                  color: _blue,
+                  color: _groupColor,
                   borderRadius: BorderRadius.circular(20),
                 ),
                 child: Row(
@@ -1759,7 +2249,7 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
               return const Center(
                 child: Padding(
                   padding: EdgeInsets.all(16),
-                  child: CircularProgressIndicator(color: _blue),
+                  child: CircularProgressIndicator(color: _groupColor),
                 ),
               );
             }
@@ -1778,13 +2268,13 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
                     Container(
                       padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
-                        color: _blue.withOpacity(0.08),
+                        color: _groupColor.withValues(alpha: 0.08),
                         shape: BoxShape.circle,
                       ),
                       child: const Icon(
                         Icons.group_outlined,
                         size: 36,
-                        color: _blue,
+                        color: _groupColor,
                       ),
                     ),
                     const SizedBox(height: 10),
@@ -1831,10 +2321,10 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
                     decoration: BoxDecoration(
                       color: AppColors.card(context),
                       borderRadius: BorderRadius.circular(14),
-                      border: Border.all(color: _blue, width: 2),
+                      border: Border.all(color: _groupColor, width: 2),
                       boxShadow: [
                         BoxShadow(
-                          color: _blue.withOpacity(0.06),
+                          color: _groupColor.withValues(alpha: 0.06),
                           blurRadius: 8,
                           offset: const Offset(0, 2),
                         ),
@@ -1846,12 +2336,12 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
                           width: 44,
                           height: 44,
                           decoration: BoxDecoration(
-                            color: _blue.withOpacity(0.1),
+                            color: _groupColor.withValues(alpha: 0.1),
                             borderRadius: BorderRadius.circular(12),
                           ),
                           child: const Icon(
                             Icons.group,
-                            color: _blue,
+                            color: _groupColor,
                             size: 24,
                           ),
                         ),
@@ -1897,9 +2387,9 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
                               vertical: 6,
                             ),
                             decoration: BoxDecoration(
-                              color: _blue.withOpacity(0.2),
+                              color: _groupColor.withValues(alpha: 0.2),
                               borderRadius: BorderRadius.circular(20),
-                              border: Border.all(color: _blue),
+                              border: Border.all(color: _groupColor),
                             ),
                             child: Row(
                               mainAxisSize: MainAxisSize.min,
@@ -1908,8 +2398,8 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
                                   Icons.person_add_outlined,
                                   size: 14,
                                   color: AppColors.isDark(context)
-                                      ? const Color(0xFF82B4FF)
-                                      : _blue,
+                                      ? const Color(0xFFCBB9FF)
+                                      : _groupColor,
                                 ),
                                 const SizedBox(width: 4),
                                 Text(
@@ -1918,8 +2408,8 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
                                     fontSize: 10,
                                     fontWeight: FontWeight.bold,
                                     color: AppColors.isDark(context)
-                                        ? const Color(0xFF82B4FF)
-                                        : _blue,
+                                        ? const Color(0xFFCBB9FF)
+                                        : _groupColor,
                                   ),
                                 ),
                               ],
@@ -2729,6 +3219,7 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
             return Column(
               children: events.map((event) {
                 if (event['type'] == 'task') return _buildTaskCard(event);
+                if (event['type'] == 'group_event') return _buildGroupEventCard(event);
                 if (event['eventType'] == 'exam') return _buildExamCard(event);
                 return _buildClassCard(event);
               }).toList(),
@@ -2767,6 +3258,7 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
             return Column(
               children: snap.data!.map((event) {
                 if (event['type'] == 'task') return _buildTaskCard(event);
+                if (event['type'] == 'group_event') return _buildGroupEventCard(event);
                 return _buildExamCard(event);
               }).toList(),
             );
@@ -2877,6 +3369,16 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
             } catch (_) {}
           }
 
+          // Group Events — use persistent cache for real-time updates
+          for (final event in _cachedGroupEvents) {
+            final ts = event['eventDate'] as Timestamp?;
+            if (ts == null) continue;
+            final d = ts.toDate();
+            if (d.year == date.year && d.month == date.month && d.day == date.day) {
+              list.add(event);
+            }
+          }
+
           return list;
         });
   }
@@ -2956,9 +3458,384 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
               }
             } catch (_) {}
           }
+          // Upcoming group events — use persistent cache for real-time updates
+          for (final event in _cachedGroupEvents) {
+            final ts = event['eventDate'] as Timestamp?;
+            if (ts == null) continue;
+            final d = event['sortDate'] as DateTime;
+            final dOnly = DateTime(d.year, d.month, d.day);
+            if (!dOnly.isBefore(today)) {
+              events.add(event);
+            }
+          }
+
           events.sort((a, b) => a['sortDate'].compareTo(b['sortDate']));
           return events;
         });
+  }
+
+  Widget _buildGroupEventCard(Map<String, dynamic> event) {
+    const kGroup = Color(0xFF7C3AED);
+    final isCompleted = event['isCompleted'] as bool? ?? false;
+
+    return _AnimatedTapButton(
+      onTap: () => _showGroupEventDetails(event),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: AppColors.card(context),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isCompleted ? const Color(0xFF34A853) : kGroup,
+            width: 2,
+          ),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: isCompleted ? const Color(0xFF34A853) : kGroup,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(
+                isCompleted ? Icons.check_circle : Icons.groups_rounded,
+                color: Colors.white,
+                size: 20,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: isCompleted ? const Color(0xFF34A853) : kGroup,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          (event['eventSubType'] as String? ?? 'Meeting').toUpperCase(),
+                          style: GoogleFonts.dmMono(
+                              fontSize: 8,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          event['title'] as String? ?? 'Group Event',
+                          style: GoogleFonts.dmMono(
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                            color: isCompleted
+                                ? AppColors.subtext(context)
+                                : AppColors.text(context),
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '${_formatTime(event['startTime'] as String? ?? '')} • ${event['eventSubType'] as String? ?? 'Meeting'} • ${event['groupName'] as String? ?? ''}',
+                    style: GoogleFonts.dmMono(
+                        fontSize: 10, color: AppColors.subtext(context)),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showGroupEventDetails(Map<String, dynamic> event) {
+    final eventDate = (event['eventDate'] as Timestamp).toDate();
+    final stateCtx = context;
+
+    showModalBottomSheet(
+      context: stateCtx,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (BuildContext context, StateSetter setModalState) {
+            final isCompleted = event['isCompleted'] as bool? ?? false;
+            return Container(
+              decoration: BoxDecoration(
+                color: AppColors.card(context),
+                borderRadius:
+                    const BorderRadius.vertical(top: Radius.circular(24)),
+                border: Border(
+                  top: BorderSide(color: AppColors.border(context), width: 2),
+                  left: BorderSide(color: AppColors.border(context), width: 2),
+                  right: BorderSide(color: AppColors.border(context), width: 2),
+                ),
+              ),
+              child: SafeArea(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const SizedBox(height: 16),
+                    Container(
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: AppColors.border(context),
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 24),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Group Event Details',
+                              style: GoogleFonts.dmMono(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                  color: AppColors.text(context))),
+                          const SizedBox(height: 16),
+                          _buildDetailRow('Title',
+                              event['title'] as String? ?? ''),
+                          if ((event['details'] as String? ?? '').isNotEmpty)
+                            _buildDetailRow('Description',
+                                event['details'] as String? ?? ''),
+                          _buildDetailRow('Type',
+                              event['eventSubType'] as String? ?? 'Meeting'),
+                          if ((event['groupName'] as String? ?? '').isNotEmpty)
+                            _buildDetailRow('Group',
+                                event['groupName'] as String? ?? ''),
+                          _buildDetailRow('Date',
+                              DateFormat('EEE, dd MMM yyyy').format(eventDate)),
+                          _buildDetailRow(
+                              'Time', event['startTime'] as String? ?? ''),
+                          if ((event['senderUsername'] as String? ?? '')
+                              .isNotEmpty)
+                            _buildDetailRow('Organizer',
+                                event['senderUsername'] as String? ?? ''),
+                          const SizedBox(height: 8),
+                          // Status toggle
+                          Container(
+                            padding: const EdgeInsets.symmetric(vertical: 8),
+                            child: Row(
+                              children: [
+                                SizedBox(
+                                  width: 100,
+                                  child: Text('Status',
+                                      style: GoogleFonts.dmMono(
+                                          fontSize: 12,
+                                          color: const Color(0xFF6B7280))),
+                                ),
+                                Expanded(
+                                  child: Row(
+                                    children: [
+                                      Expanded(
+                                        child: _AnimatedTapButton(
+                                          onTap: () async {
+                                            await _firestore
+                                                .collection('user_group_events')
+                                                .doc(event['id'] as String)
+                                                .update({'isCompleted': false});
+                                            setModalState(() {
+                                              event['isCompleted'] = false;
+                                            });
+                                            setState(() {});
+                                          },
+                                          child: Container(
+                                            padding: const EdgeInsets.symmetric(
+                                                horizontal: 16, vertical: 10),
+                                            decoration: BoxDecoration(
+                                              color: !isCompleted
+                                                  ? const Color(0xFFFBBC05)
+                                                  : AppColors.fieldBg(context),
+                                              borderRadius:
+                                                  BorderRadius.circular(8),
+                                              border: Border.all(
+                                                color: !isCompleted
+                                                    ? const Color(0xFFFBBC05)
+                                                    : AppColors.border(context),
+                                                width: 2,
+                                              ),
+                                            ),
+                                            child: Center(
+                                              child: Text('Pending',
+                                                  style: GoogleFonts.dmMono(
+                                                      fontSize: 11,
+                                                      fontWeight:
+                                                          FontWeight.bold,
+                                                      color: !isCompleted
+                                                          ? Colors.white
+                                                          : AppColors.subtext(
+                                                              context))),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: _AnimatedTapButton(
+                                          onTap: () async {
+                                            await _firestore
+                                                .collection('user_group_events')
+                                                .doc(event['id'] as String)
+                                                .update({'isCompleted': true});
+                                            setModalState(() {
+                                              event['isCompleted'] = true;
+                                            });
+                                            setState(() {});
+                                          },
+                                          child: Container(
+                                            padding: const EdgeInsets.symmetric(
+                                                horizontal: 16, vertical: 10),
+                                            decoration: BoxDecoration(
+                                              color: isCompleted
+                                                  ? const Color(0xFF34A853)
+                                                  : AppColors.fieldBg(context),
+                                              borderRadius:
+                                                  BorderRadius.circular(8),
+                                              border: Border.all(
+                                                color: isCompleted
+                                                    ? const Color(0xFF34A853)
+                                                    : AppColors.border(context),
+                                                width: 2,
+                                              ),
+                                            ),
+                                            child: Center(
+                                              child: Text('Completed',
+                                                  style: GoogleFonts.dmMono(
+                                                      fontSize: 11,
+                                                      fontWeight:
+                                                          FontWeight.bold,
+                                                      color: isCompleted
+                                                          ? Colors.white
+                                                          : AppColors.subtext(
+                                                              context))),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 24),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: () async {
+                                Navigator.pop(stateCtx);
+                                final result = await Navigator.push(
+                                  stateCtx,
+                                  MaterialPageRoute(
+                                    builder: (_) => EditGroupEventScreen(
+                                      groupId:
+                                          event['groupId'] as String? ?? '',
+                                      messageId:
+                                          event['id'] as String? ?? '',
+                                      eventData: event,
+                                    ),
+                                  ),
+                                );
+                                if (result == true && mounted) setState(() {});
+                              },
+                              icon: Icon(Icons.edit_outlined,
+                                  color: AppColors.text(context)),
+                              label: Text('Edit',
+                                  style: GoogleFonts.dmMono(
+                                      color: AppColors.text(context))),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: AppColors.text(context),
+                                side: BorderSide(
+                                    color: AppColors.border(context), width: 2),
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 16),
+                                shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12)),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: ElevatedButton.icon(
+                              onPressed: () async {
+                                final messenger =
+                                    ScaffoldMessenger.of(stateCtx);
+                                Navigator.pop(stateCtx);
+                                await confirmAndDeleteDialog(
+                                  stateCtx,
+                                  title: 'Delete Group Event',
+                                  message:
+                                      'This will remove the event from your calendar.',
+                                  onDelete: () async {
+                                    final geId = event['id'] as String;
+                                    await NotificationService().cancelNotificationsForEvent(geId);
+                                    await _firestore
+                                        .collection('user_group_events')
+                                        .doc(geId)
+                                        .delete();
+                                    messenger.showSnackBar(SnackBar(
+                                      content: Text('Group event deleted',
+                                          style: GoogleFonts.dmMono(
+                                              fontWeight: FontWeight.bold,
+                                              color: Colors.white)),
+                                      backgroundColor:
+                                          const Color(0xFFB90000),
+                                      behavior: SnackBarBehavior.floating,
+                                      shape: RoundedRectangleBorder(
+                                          borderRadius:
+                                              BorderRadius.circular(10)),
+                                      duration: const Duration(seconds: 3),
+                                    ));
+                                  },
+                                );
+                              },
+                              icon: const Icon(Icons.delete_outline),
+                              label: Text('Delete', style: GoogleFonts.dmMono()),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFFB90000),
+                                foregroundColor: Colors.white,
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 16),
+                                shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12)),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 
   Widget _buildClassCard(Map<String, dynamic> c) {
@@ -3321,16 +4198,17 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
             if (r == true && mounted) setState(() {});
           }),
           _deleteBtn('Delete Class', () async {
-            final m = ScaffoldMessenger.of(ctx);
-            Navigator.pop(ctx);
+            final m = ScaffoldMessenger.of(context);
             await _firestore.collection('timetable').doc(event['id']).delete();
-            m.showSnackBar(
-              SnackBar(
-                content: Text('Class deleted', style: GoogleFonts.dmMono()),
-                backgroundColor: _red,
-              ),
-            );
-          }, confirmMessage: 'Are you sure you want to delete this class? This cannot be undone.'),
+            m.showSnackBar(SnackBar(
+              content: Text('Class deleted',
+                  style: GoogleFonts.dmMono(fontWeight: FontWeight.bold, color: Colors.white)),
+              backgroundColor: _red,
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              duration: const Duration(seconds: 3),
+            ));
+          }, onBeforeConfirm: () => Navigator.pop(ctx), confirmMessage: 'Are you sure you want to delete this class? This cannot be undone.'),
         ],
       ),
     );
@@ -3380,16 +4258,17 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
                 if (r == true && mounted) setState(() {});
               }),
               _deleteBtn('Delete Task', () async {
-                final m = ScaffoldMessenger.of(ctx);
-                Navigator.pop(ctx);
+                final m = ScaffoldMessenger.of(context);
                 await _firestore.collection('tasks').doc(task['id']).delete();
-                m.showSnackBar(
-                  SnackBar(
-                    content: Text('Task deleted', style: GoogleFonts.dmMono()),
-                    backgroundColor: _red,
-                  ),
-                );
-              }, confirmMessage: 'Are you sure you want to delete this task? This cannot be undone.'),
+                m.showSnackBar(SnackBar(
+                  content: Text('Task deleted',
+                      style: GoogleFonts.dmMono(fontWeight: FontWeight.bold, color: Colors.white)),
+                  backgroundColor: _red,
+                  behavior: SnackBarBehavior.floating,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  duration: const Duration(seconds: 3),
+                ));
+              }, onBeforeConfirm: () => Navigator.pop(ctx), confirmMessage: 'Are you sure you want to delete this task? This cannot be undone.'),
             ],
           );
         },
@@ -3441,16 +4320,17 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
             if (r == true && mounted) setState(() {});
           }),
           _deleteBtn('Delete Exam', () async {
-            final m = ScaffoldMessenger.of(ctx);
-            Navigator.pop(ctx);
+            final m = ScaffoldMessenger.of(context);
             await _firestore.collection('exams').doc(exam['id']).delete();
-            m.showSnackBar(
-              SnackBar(
-                content: Text('Exam deleted', style: GoogleFonts.dmMono()),
-                backgroundColor: _red,
-              ),
-            );
-          }, confirmMessage: 'Are you sure you want to delete this exam? This cannot be undone.'),
+            m.showSnackBar(SnackBar(
+              content: Text('Exam deleted',
+                  style: GoogleFonts.dmMono(fontWeight: FontWeight.bold, color: Colors.white)),
+              backgroundColor: _red,
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              duration: const Duration(seconds: 3),
+            ));
+          }, onBeforeConfirm: () => Navigator.pop(ctx), confirmMessage: 'Are you sure you want to delete this exam? This cannot be undone.'),
         ],
       ),
     );
@@ -3523,15 +4403,21 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
     );
   }
 
-  Widget _deleteBtn(String label, Future<void> Function() onConfirmed, {String? confirmMessage}) {
+  Widget _deleteBtn(
+    String label,
+    Future<void> Function() onDelete, {
+    String? confirmMessage,
+    VoidCallback? onBeforeConfirm,
+  }) {
     return ElevatedButton.icon(
       onPressed: () async {
-        final ok = await confirmDeleteDialog(
+        onBeforeConfirm?.call();
+        await confirmAndDeleteDialog(
           context,
           title: label,
           message: confirmMessage ?? 'Are you sure you want to delete this? This cannot be undone.',
+          onDelete: onDelete,
         );
-        if (ok) await onConfirmed();
       },
       icon: const Icon(Icons.delete_outline),
       label: Text(label, style: GoogleFonts.dmMono()),

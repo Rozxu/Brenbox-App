@@ -50,6 +50,92 @@ class AppColors {
       isDark(context) ? const Color(0xFF3D4A6B) : const Color(0xFFE5E7EB);
 }
 
+/// Single dialog that transitions from confirm → loading state for delete operations.
+/// Avoids the "showDialog after await" BuildContext invalidation issue.
+Future<void> confirmAndDeleteDialog(
+  BuildContext context, {
+  String title = 'Delete',
+  String message = 'Are you sure you want to delete this? This action cannot be undone.',
+  required Future<void> Function() onDelete,
+}) {
+  return showDialog<void>(
+    context: context,
+    barrierDismissible: false,
+    builder: (dlgCtx) {
+      bool loading = false;
+      return PopScope(
+        canPop: false,
+        child: StatefulBuilder(
+          builder: (dlgCtx, setState) {
+            if (loading) {
+              return AlertDialog(
+                backgroundColor: AppColors.card(dlgCtx),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  side: BorderSide(color: AppColors.border(dlgCtx), width: 2),
+                ),
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    const CircularProgressIndicator(),
+                    const SizedBox(height: 16),
+                    Text('Deleting...', style: GoogleFonts.dmMono(fontSize: 14)),
+                  ],
+                ),
+              );
+            }
+            return AlertDialog(
+              backgroundColor: AppColors.card(dlgCtx),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+                side: BorderSide(color: AppColors.border(dlgCtx), width: 2),
+              ),
+              title: Text(
+                title,
+                style: GoogleFonts.dmMono(
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.text(dlgCtx),
+                ),
+              ),
+              content: Text(
+                message,
+                style: GoogleFonts.dmMono(
+                  fontSize: 13,
+                  color: AppColors.subtext(dlgCtx),
+                  height: 1.5,
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dlgCtx),
+                  child: Text('Cancel',
+                      style: GoogleFonts.dmMono(color: AppColors.subtext(dlgCtx))),
+                ),
+                ElevatedButton.icon(
+                  onPressed: () async {
+                    setState(() => loading = true);
+                    await onDelete();
+                    if (dlgCtx.mounted) Navigator.pop(dlgCtx);
+                  },
+                  icon: const Icon(Icons.delete_outline, size: 16),
+                  label: Text('Delete', style: GoogleFonts.dmMono()),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFB90000),
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8)),
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+      );
+    },
+  );
+}
+
 /// Shows a red-accented confirmation dialog before a destructive action.
 /// Returns true if the user confirmed, false if cancelled.
 Future<bool> confirmDeleteDialog(

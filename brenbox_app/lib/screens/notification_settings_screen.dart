@@ -3,6 +3,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../services/notification_scheduler.dart';
+import '../services/notification_service.dart';
 import '../app_preferences.dart';
 
 class NotificationSettingsScreen extends StatefulWidget {
@@ -51,6 +52,13 @@ class _NotificationSettingsScreenState
   bool _studyPlanEnabled = true;
   int _studyPlanReminderHour = 20;
   int _studyPlanReminderMin = 0;
+
+  // ── GROUP EVENT ─────────────────────────────────────────────────────────────
+  bool _groupEventEnabled = true;
+  List<int> _groupEventDays = [1];
+  bool _groupEventHourBefore = true;
+  bool _groupEvent10MinBefore = true;
+  bool _groupEventOnTime = true;
 
   static const List<int> _dayOptions = [1, 2, 3];
 
@@ -103,6 +111,13 @@ class _NotificationSettingsScreenState
         _studyPlanEnabled      = s['studyPlanEnabled']      ?? true;
         _studyPlanReminderHour = s['studyPlanReminderHour'] ?? 20;
         _studyPlanReminderMin  = s['studyPlanReminderMin']  ?? 0;
+
+        _groupEventEnabled = s['groupEventEnabled'] ?? true;
+        final rawGE = List<int>.from(s['groupEventDays'] ?? [1]);
+        _groupEventDays = rawGE.where((d) => _dayOptions.contains(d)).toList();
+        _groupEventHourBefore = s['groupEventHourBefore'] ?? true;
+        _groupEvent10MinBefore = s['groupEvent10MinBefore'] ?? true;
+        _groupEventOnTime = s['groupEventOnTime'] ?? true;
       });
     }
 
@@ -140,6 +155,11 @@ class _NotificationSettingsScreenState
       'studyPlanEnabled':      _studyPlanEnabled,
       'studyPlanReminderHour': _studyPlanReminderHour,
       'studyPlanReminderMin':  _studyPlanReminderMin,
+      'groupEventEnabled':     _groupEventEnabled,
+      'groupEventDays':        _groupEventDays,
+      'groupEventHourBefore':  _groupEventHourBefore,
+      'groupEvent10MinBefore': _groupEvent10MinBefore,
+      'groupEventOnTime':      _groupEventOnTime,
     };
 
     await _firestore
@@ -149,7 +169,17 @@ class _NotificationSettingsScreenState
 
     // Fire-and-forget — rescheduling hits Firestore many times per event;
     // don't block the UI waiting for it.
-    NotificationScheduler().rescheduleAllNotifications(forceFull: true);
+    NotificationScheduler()
+        .rescheduleAllNotifications(forceFull: true)
+        .catchError((_) {});
+
+    // Immediate test notification so the user can confirm the channel works
+    // without waiting until the scheduled reminder time.
+    if (_studyPlanEnabled) {
+      NotificationService().showStudyPlanSettingsConfirmation(
+        timeLabel: _fmt12(_studyPlanReminderHour, _studyPlanReminderMin),
+      );
+    }
 
     setState(() {
       _isSaving = false;
@@ -159,8 +189,11 @@ class _NotificationSettingsScreenState
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Settings saved!', style: GoogleFonts.dmMono()),
+          content: Text('Settings saved!',
+              style: GoogleFonts.dmMono(fontWeight: FontWeight.bold, color: Colors.white)),
           backgroundColor: const Color(0xFF34A853),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
           duration: const Duration(seconds: 2),
         ),
       );
@@ -535,6 +568,38 @@ class _NotificationSettingsScreenState
                             ),
                           ],
                         ),
+                      ),
+                    ],
+                    const SizedBox(height: 16),
+
+                    // ══ GROUP EVENT ══════════════════════════════════════
+                    _sectionHeader(
+                      '👥 Group Event Notifications',
+                      _groupEventEnabled,
+                      (v) => _change(() => _groupEventEnabled = v),
+                      const Color(0xFF7C3AED),
+                    ),
+                    if (_groupEventEnabled) ...[
+                      const SizedBox(height: 10),
+                      _subLabel('Remind before event (fires N×24h before the event time):'),
+                      const SizedBox(height: 8),
+                      _daysSelector(_groupEventDays,
+                          (d) => _change(() => _groupEventDays = d)),
+                      const SizedBox(height: 6),
+                      _toggleRow(
+                        '1 hour before event',
+                        _groupEventHourBefore,
+                        (v) => _change(() => _groupEventHourBefore = v),
+                      ),
+                      _toggleRow(
+                        '10 minutes before event',
+                        _groupEvent10MinBefore,
+                        (v) => _change(() => _groupEvent10MinBefore = v),
+                      ),
+                      _toggleRow(
+                        'When event starts (on time)',
+                        _groupEventOnTime,
+                        (v) => _change(() => _groupEventOnTime = v),
                       ),
                     ],
                     const SizedBox(height: 8),

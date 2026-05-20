@@ -894,6 +894,10 @@ class _UploadEditSheetState extends State<_UploadEditSheet> {
       setState(() => _errorMsg = 'Please enter a certificate title.');
       return;
     }
+    if (_tags.isEmpty) {
+      setState(() => _errorMsg = 'Please add at least one tag.');
+      return;
+    }
 
     setState(() {
       _isLoading = true;
@@ -1015,121 +1019,6 @@ class _UploadEditSheetState extends State<_UploadEditSheet> {
 
               const SizedBox(height: 20),
 
-              // ── STEP 1: Pick PDF (upload mode only) ──────────────
-              if (!isEdit) ...[
-                Text(
-                  'Step 1 — Select PDF File',
-                  style: GoogleFonts.dmMono(
-                      fontSize: 11,
-                      color: AppColors.subtext(context),
-                      fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 8),
-
-                GestureDetector(
-                  onTap: _isLoading ? null : _pickFile,
-                  child: Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 16, vertical: 14),
-                    decoration: BoxDecoration(
-                      color: hasFile
-                          ? _green.withOpacity(0.07)
-                          : AppColors.input(context),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(
-                        color: hasFile ? _green : AppColors.border(context),
-                        width: hasFile ? 1.5 : 1,
-                      ),
-                    ),
-                    child: Row(
-                      children: [
-                        Container(
-                          width: 40,
-                          height: 40,
-                          decoration: BoxDecoration(
-                            color: hasFile
-                                ? _green.withOpacity(0.15)
-                                : AppColors.fieldBg(context),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Icon(
-                            hasFile
-                                ? Icons.check_circle_outline
-                                : Icons.picture_as_pdf_outlined,
-                            color: hasFile ? _green : AppColors.subtext(context),
-                            size: 22,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                hasFile
-                                    ? _pickedFileName!
-                                    : 'No file selected',
-                                style: GoogleFonts.dmMono(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.bold,
-                                  color: hasFile
-                                      ? _green
-                                      : AppColors.subtext(context),
-                                ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              if (hasFile && _pickedBytes != null) ...[
-                                const SizedBox(height: 2),
-                                Text(
-                                  '${(_pickedBytes!.lengthInBytes / 1024).toStringAsFixed(0)} KB',
-                                  style: GoogleFonts.dmMono(
-                                      fontSize: 10,
-                                      color: AppColors.subtext(context)),
-                                ),
-                              ] else ...[
-                                const SizedBox(height: 2),
-                                Text('Tap to browse PDF files',
-                                    style: GoogleFonts.dmMono(
-                                        fontSize: 10,
-                                        color: AppColors.subtext(context))),
-                              ],
-                            ],
-                          ),
-                        ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 12, vertical: 6),
-                          decoration: BoxDecoration(
-                            color: hasFile ? _green : AppColors.chipBg(context),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Text(
-                            hasFile ? 'Change' : 'Browse',
-                            style: GoogleFonts.dmMono(
-                              fontSize: 11,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-
-                const SizedBox(height: 20),
-                Text(
-                  'Step 2 — Fill in Details',
-                  style: GoogleFonts.dmMono(
-                      fontSize: 11,
-                      color: AppColors.subtext(context),
-                      fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 8),
-              ],
-
               // Certificate Title
               Text('Certificate Title *',
                   style: GoogleFonts.dmMono(
@@ -1159,38 +1048,8 @@ class _UploadEditSheetState extends State<_UploadEditSheet> {
               ),
               const SizedBox(height: 14),
 
-              // Year
-              Text('Year',
-                  style: GoogleFonts.dmMono(
-                      fontSize: 11, color: AppColors.subtext(context))),
-              const SizedBox(height: 6),
-              TextField(
-                controller: _yearCtrl,
-                keyboardType: TextInputType.number,
-                style: GoogleFonts.dmMono(fontSize: 13),
-                decoration: InputDecoration(
-                  hintText: 'e.g. 2024',
-                  hintStyle: GoogleFonts.dmMono(
-                      fontSize: 12, color: AppColors.subtext(context)),
-                  filled: true,
-                  fillColor: AppColors.fieldBg(context),
-                  border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10),
-                      borderSide: BorderSide(color: AppColors.subtext(context).withValues(alpha: 0.35), width: 1)),
-                  enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10),
-                      borderSide: BorderSide(color: AppColors.subtext(context).withValues(alpha: 0.35), width: 1)),
-                  focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10),
-                      borderSide: BorderSide(color: AppColors.subtext(context).withValues(alpha: 0.6), width: 1.5)),
-                  contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 14, vertical: 12),
-                ),
-              ),
-              const SizedBox(height: 14),
-
-              // Tags
-              Text('Tags',
+              // Tags *
+              Text('Tags *',
                   style: GoogleFonts.dmMono(
                       fontSize: 11, color: AppColors.subtext(context))),
               const SizedBox(height: 6),
@@ -1292,6 +1151,133 @@ class _UploadEditSheetState extends State<_UploadEditSheet> {
                 ),
               ],
 
+              const SizedBox(height: 14),
+
+              // Year
+              Text('Year',
+                  style: GoogleFonts.dmMono(
+                      fontSize: 11, color: AppColors.subtext(context))),
+              const SizedBox(height: 6),
+              TextField(
+                controller: _yearCtrl,
+                keyboardType: TextInputType.number,
+                style: GoogleFonts.dmMono(fontSize: 13),
+                decoration: InputDecoration(
+                  hintText: 'e.g. 2024',
+                  hintStyle: GoogleFonts.dmMono(
+                      fontSize: 12, color: AppColors.subtext(context)),
+                  filled: true,
+                  fillColor: AppColors.fieldBg(context),
+                  border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: BorderSide(color: AppColors.subtext(context).withValues(alpha: 0.35), width: 1)),
+                  enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: BorderSide(color: AppColors.subtext(context).withValues(alpha: 0.35), width: 1)),
+                  focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: BorderSide(color: AppColors.subtext(context).withValues(alpha: 0.6), width: 1.5)),
+                  contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 14, vertical: 12),
+                ),
+              ),
+              const SizedBox(height: 14),
+
+              // File picker (upload only)
+              if (!isEdit) ...[
+                GestureDetector(
+                  onTap: _isLoading ? null : _pickFile,
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 16, vertical: 14),
+                    decoration: BoxDecoration(
+                      color: hasFile
+                          ? _green.withValues(alpha: 0.07)
+                          : AppColors.input(context),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: hasFile ? _green : AppColors.border(context),
+                        width: hasFile ? 1.5 : 1,
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(
+                            color: hasFile
+                                ? _green.withValues(alpha: 0.15)
+                                : AppColors.fieldBg(context),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Icon(
+                            hasFile
+                                ? Icons.check_circle_outline
+                                : Icons.picture_as_pdf_outlined,
+                            color: hasFile ? _green : AppColors.subtext(context),
+                            size: 22,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                hasFile ? _pickedFileName! : 'No file selected',
+                                style: GoogleFonts.dmMono(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                  color: hasFile
+                                      ? _green
+                                      : AppColors.subtext(context),
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              if (hasFile && _pickedBytes != null) ...[
+                                const SizedBox(height: 2),
+                                Text(
+                                  '${(_pickedBytes!.lengthInBytes / 1024).toStringAsFixed(0)} KB',
+                                  style: GoogleFonts.dmMono(
+                                      fontSize: 10,
+                                      color: AppColors.subtext(context)),
+                                ),
+                              ] else ...[
+                                const SizedBox(height: 2),
+                                Text('Tap to browse PDF files',
+                                    style: GoogleFonts.dmMono(
+                                        fontSize: 10,
+                                        color: AppColors.subtext(context))),
+                              ],
+                            ],
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: hasFile ? _green : AppColors.chipBg(context),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            hasFile ? 'Change' : 'Browse',
+                            style: GoogleFonts.dmMono(
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 14),
+              ],
+
               // Progress bar
               if (_isLoading && !isEdit) ...[
                 const SizedBox(height: 16),
@@ -1306,12 +1292,15 @@ class _UploadEditSheetState extends State<_UploadEditSheet> {
                   ),
                 ),
                 const SizedBox(height: 6),
-                Text(
-                  _uploadProgress > 0
-                      ? 'Uploading... ${(_uploadProgress * 100).toStringAsFixed(0)}%'
-                      : 'Uploading...',
-                  style: GoogleFonts.dmMono(
-                      fontSize: 11, color: AppColors.subtext(context)),
+                Center(
+                  child: Text(
+                    _uploadProgress > 0
+                        ? 'Uploading... ${(_uploadProgress * 100).toStringAsFixed(0)}%'
+                        : 'Uploading...',
+                    textAlign: TextAlign.center,
+                    style: GoogleFonts.dmMono(
+                        fontSize: 11, color: AppColors.subtext(context)),
+                  ),
                 ),
               ],
 
@@ -1348,25 +1337,8 @@ class _UploadEditSheetState extends State<_UploadEditSheet> {
                   const SizedBox(width: 12),
                   Expanded(
                     flex: 2,
-                    child: ElevatedButton.icon(
+                    child: ElevatedButton(
                       onPressed: _isLoading ? null : _submit,
-                      icon: _isLoading
-                          ? const SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(
-                                  color: Colors.white, strokeWidth: 2),
-                            )
-                          : Icon(
-                              isEdit
-                                  ? Icons.save_outlined
-                                  : Icons.cloud_upload_outlined,
-                              size: 18),
-                      label: Text(
-                        isEdit ? 'Save Changes' : 'Upload PDF',
-                        style: GoogleFonts.dmMono(
-                            fontWeight: FontWeight.bold, fontSize: 13),
-                      ),
                       style: ElevatedButton.styleFrom(
                         backgroundColor:
                             (!isEdit && !hasFile) ? AppColors.border(context) : AppColors.chipBg(context),
@@ -1378,6 +1350,32 @@ class _UploadEditSheetState extends State<_UploadEditSheet> {
                             borderRadius: BorderRadius.circular(12)),
                         elevation: 0,
                       ),
+                      child: _isLoading
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                  color: Colors.white, strokeWidth: 2),
+                            )
+                          : Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  isEdit
+                                      ? Icons.save_outlined
+                                      : Icons.cloud_upload_outlined,
+                                  size: 18,
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  isEdit ? 'Save Changes' : 'Upload PDF',
+                                  style: GoogleFonts.dmMono(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 13),
+                                ),
+                              ],
+                            ),
                     ),
                   ),
                 ],
@@ -1468,43 +1466,35 @@ class _CertificateViewerScreenState extends State<CertificateViewerScreen> {
         fileName:    widget.fileName,
         subfolder:   'Certificates',
       );
-
       if (!mounted) return;
-
-      if (savedPath != null) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Saved to device!',
-                  style: GoogleFonts.dmMono(
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white)),
-              Text(savedPath,
-                  style: GoogleFonts.dmMono(
-                      fontSize: 10, color: Colors.white70),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis),
-            ],
-          ),
-          backgroundColor: const Color(0xFF2E7D32),
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(10)),
-          duration: const Duration(seconds: 4),
-        ));
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Download failed. Please try again.',
-              style: GoogleFonts.dmMono(fontSize: 12)),
-          backgroundColor: const Color(0xFFB90000),
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(10)),
-        ));
-      }
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Saved to Downloads/Brenbox/Certificates!',
+                style: GoogleFonts.dmMono(
+                    fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white)),
+            Text(savedPath,
+                style: GoogleFonts.dmMono(fontSize: 10, color: Colors.white70),
+                maxLines: 2, overflow: TextOverflow.ellipsis),
+          ],
+        ),
+        backgroundColor: const Color(0xFF2E7D32),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        duration: const Duration(seconds: 4),
+      ));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Download failed: $e',
+            style: GoogleFonts.dmMono(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white)),
+        backgroundColor: const Color(0xFFB90000),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        duration: const Duration(seconds: 5),
+      ));
     } finally {
       if (mounted) setState(() => _downloading = false);
     }
@@ -1546,10 +1536,10 @@ class _CertificateViewerScreenState extends State<CertificateViewerScreen> {
                       icon: Container(
                         padding: const EdgeInsets.all(6),
                         decoration: BoxDecoration(
-                          color: _tan.withOpacity(0.2),
+                          color: _tan.withValues(alpha: 0.2),
                           borderRadius: BorderRadius.circular(8),
                           border: Border.all(
-                              color: _tan.withOpacity(0.5), width: 1),
+                              color: _tan.withValues(alpha: 0.5), width: 1),
                         ),
                         child: const Icon(Icons.download_outlined,
                             color: _tan, size: 18),
@@ -1604,12 +1594,10 @@ class _CertificateViewerScreenState extends State<CertificateViewerScreen> {
 class _AnimatedTapButton extends StatefulWidget {
   final Widget child;
   final VoidCallback onTap;
-  final Duration duration;
 
   const _AnimatedTapButton({
     required this.child,
     required this.onTap,
-    this.duration = const Duration(milliseconds: 100),
   });
 
   @override
@@ -1628,7 +1616,7 @@ class _AnimatedTapButtonState extends State<_AnimatedTapButton> {
       onTap: widget.onTap,
       child: AnimatedScale(
         scale:    _isTapped ? 0.95 : 1.0,
-        duration: widget.duration,
+        duration: const Duration(milliseconds: 100),
         child:    widget.child,
       ),
     );

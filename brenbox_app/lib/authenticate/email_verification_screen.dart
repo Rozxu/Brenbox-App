@@ -257,7 +257,6 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
               // BACK TO LOGIN
               TextButton(
                 onPressed: () async {
-                  // Sign out and go back to login
                   await _auth.signOut();
                   if (mounted) {
                     Navigator.pushNamedAndRemoveUntil(

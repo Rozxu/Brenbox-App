@@ -12,12 +12,27 @@ class NotificationScheduler {
   final _firestore = FirebaseFirestore.instance;
   final _notificationService = NotificationService();
 
-  static const int _classBaseId     = 1000;
-  static const int _taskBaseId      = 5000;
-  static const int _examBaseId      = 9000;
-  static const int _studyPlanBaseId = 100000;
+  static const int _classBaseId      = 1000;
+  static const int _taskBaseId       = 5000;
+  static const int _examBaseId       = 9000;
+  static const int _studyPlanBaseId  = 100000;
+  static const int _groupEventBaseId = 200000;
 
   // ── PUBLIC API ──────────────────────────────────────────────────────────────
+
+  /// Fast path — schedules only group events. Call immediately after a user
+  /// accepts or edits a group event so history docs appear without waiting
+  /// for the full reschedule pipeline.
+  Future<void> scheduleGroupEventsOnly() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+    final userDoc = await _firestore.collection('users').doc(user.uid).get();
+    final data = userDoc.data();
+    if (data?['notificationsEnabled'] == false) return;
+    final settings = data?['notificationSettings'] as Map<String, dynamic>?
+        ?? _defaultSettings();
+    await _scheduleGroupEventNotifications(user.uid, settings);
+  }
 
   /// Full reschedule — call when user SAVES settings.
   /// forceFull:true wipes all existing schedules and starts clean.
@@ -31,7 +46,7 @@ class NotificationScheduler {
 
     if (!notificationsEnabled) {
       await _notificationService.cancelAllNotifications();
-      await _notificationService.clearAllDedupeRecords(user.uid);
+      try { await _notificationService.clearAllDedupeRecords(user.uid); } catch (_) {}
       return;
     }
 
@@ -40,7 +55,7 @@ class NotificationScheduler {
 
     if (forceFull) {
       await _notificationService.cancelAllNotifications();
-      await _notificationService.clearAllDedupeRecords(user.uid);
+      try { await _notificationService.clearAllDedupeRecords(user.uid); } catch (_) {}
     }
 
     // Schedule FIRST, purge AFTER — never delete a key before it is used
@@ -48,6 +63,7 @@ class NotificationScheduler {
     await _scheduleTaskNotifications(user.uid, settings);
     await _scheduleExamNotifications(user.uid, settings);
     await _scheduleStudyPlanNotifications(user.uid, settings);
+    await _scheduleGroupEventNotifications(user.uid, settings);
     await _notificationService.purgeOldData(user.uid);
   }
 
@@ -70,6 +86,7 @@ class NotificationScheduler {
     await _scheduleTaskNotifications(user.uid, settings);
     await _scheduleExamNotifications(user.uid, settings);
     await _scheduleStudyPlanNotifications(user.uid, settings);
+    await _scheduleGroupEventNotifications(user.uid, settings);
 
     // Purge AFTER — never delete a dedupe key before we have used it
     await _notificationService.purgeOldData(user.uid);
@@ -99,6 +116,11 @@ class NotificationScheduler {
     'studyPlanEnabled':        true,
     'studyPlanReminderHour':   20,
     'studyPlanReminderMin':    0,
+    'groupEventEnabled':       true,
+    'groupEventDays':          [1],
+    'groupEventHourBefore':    true,
+    'groupEvent10MinBefore':   true,
+    'groupEventOnTime':        true,
   };
 
   // ── CLASS NOTIFICATIONS ─────────────────────────────────────────────────────
@@ -145,36 +167,13 @@ class NotificationScheduler {
         final baseId       = (doc.id.hashCode.abs() % 90000) + _classBaseId;
 
         if (settings['classDayBefore'] ?? true) {
-          // Days-before: fire exactly N*24h before classStart.
-          // The user-chosen reminderHour/Min is used ONLY as a fallback label;
-          // the actual trigger time is classStart minus the duration so the
-          // notification arrives at precisely the right moment relative to the
-          // event, regardless of what time of day the class is.
-          await _trySchedule(
-            dedupeKey: '${doc.id}_class_3d',
-            id: baseId + 0,
-            title: '📚 Class in 3 Days',
-            body: '$className starts at ${_fmt12(startTime)} on'
-                ' ${_fmtDateShort(classDate)}.$locationText',
-            scheduledTime: classStart.subtract(const Duration(days: 3)),
-            type: 'class', eventId: doc.id, userId: userId,
-          );
-          await _trySchedule(
-            dedupeKey: '${doc.id}_class_2d',
-            id: baseId + 1,
-            title: '📚 Class in 2 Days',
-            body: '$className starts at ${_fmt12(startTime)} on'
-                ' ${_fmtDateShort(classDate)}.$locationText',
-            scheduledTime: classStart.subtract(const Duration(days: 2)),
-            type: 'class', eventId: doc.id, userId: userId,
-          );
           await _trySchedule(
             dedupeKey: '${doc.id}_class_1d',
             id: baseId + 2,
             title: '📚 Class Tomorrow!',
             body: "Don't forget — $className starts at"
                 ' ${_fmt12(startTime)} tomorrow.$locationText',
-            scheduledTime: classStart.subtract(const Duration(days: 1)),
+            scheduledTime: _atTime(classDate, -1, reminderHour, reminderMin),
             type: 'class', eventId: doc.id, userId: userId,
           );
         }
@@ -330,10 +329,7 @@ class NotificationScheduler {
         final startTimeTs = data['startTime'] as Timestamp?;
         if (examDateTs == null || startTimeTs == null) continue;
 
-        final examDateRaw = examDateTs.toDate();
-        final examDate    = DateTime(
-            examDateRaw.year, examDateRaw.month, examDateRaw.day);
-        final startTime   = startTimeTs.toDate();
+        final startTime = startTimeTs.toDate();
 
         if (startTime.isBefore(now)) continue;
 
@@ -499,6 +495,94 @@ class NotificationScheduler {
     }
   }
 
+  // ── GROUP EVENT NOTIFICATIONS ───────────────────────────────────────────────
+
+  Future<void> _scheduleGroupEventNotifications(
+    String userId,
+    Map<String, dynamic> settings,
+  ) async {
+    if (!(settings['groupEventEnabled'] ?? true)) return;
+
+    final now = DateTime.now();
+    final groupEventDays = List<int>.from(settings['groupEventDays'] ?? [1]);
+
+    final QuerySnapshot eventsSnap;
+    try {
+      eventsSnap = await _firestore
+          .collection('user_group_events')
+          .where('userId', isEqualTo: userId)
+          .get();
+    } catch (_) { return; }
+
+    for (final eventDoc in eventsSnap.docs) {
+      try {
+        final data = eventDoc.data() as Map<String, dynamic>;
+        if (data['isCompleted'] == true) continue;
+
+        final eventDateTs = data['eventDate'] as Timestamp?;
+        if (eventDateTs == null) continue;
+        final eventStart = eventDateTs.toDate();
+        if (eventStart.isBefore(now)) continue;
+
+        final title     = data['title']     as String? ?? 'Group Event';
+        final subType   = data['eventType'] as String? ?? 'Meeting';
+        final groupName = data['groupName'] as String? ?? 'Your Group';
+        final baseId    = (eventDoc.id.hashCode.abs() % 90000) + _groupEventBaseId;
+        final timeStr   = _fmt12hm(eventStart.hour, eventStart.minute);
+
+        for (int i = 0; i < groupEventDays.length; i++) {
+          final days       = groupEventDays[i];
+          final notifyTime = eventStart.subtract(Duration(days: days));
+          final daysText   = days == 1 ? 'tomorrow' : 'in $days days';
+
+          await _trySchedule(
+            dedupeKey: '${eventDoc.id}_ge_${days}d',
+            id: baseId + i,
+            title: '👥 Group $subType $daysText!',
+            body: '"$title" ($groupName) is $daysText at $timeStr. Don\'t miss it!',
+            scheduledTime: notifyTime,
+            type: 'group_event', eventId: eventDoc.id, userId: userId,
+          );
+        }
+
+        if (settings['groupEventHourBefore'] ?? true) {
+          await _trySchedule(
+            dedupeKey: '${eventDoc.id}_ge_1hr',
+            id: baseId + 10,
+            title: '⏰ Group $subType in 1 Hour!',
+            body: '"$title" ($groupName) starts at $timeStr. Get ready!',
+            scheduledTime: eventStart.subtract(const Duration(hours: 1)),
+            type: 'group_event', eventId: eventDoc.id, userId: userId,
+          );
+        }
+
+        if (settings['groupEvent10MinBefore'] ?? true) {
+          await _trySchedule(
+            dedupeKey: '${eventDoc.id}_ge_10min',
+            id: baseId + 11,
+            title: '🔔 Group $subType Starting Soon!',
+            body: '"$title" ($groupName) starts in 10 minutes at $timeStr!',
+            scheduledTime: eventStart.subtract(const Duration(minutes: 10)),
+            type: 'group_event', eventId: eventDoc.id, userId: userId,
+          );
+        }
+
+        if (settings['groupEventOnTime'] ?? true) {
+          await _trySchedule(
+            dedupeKey: '${eventDoc.id}_ge_now',
+            id: baseId + 12,
+            title: '👥 Group $subType is Starting!',
+            body: '"$title" ($groupName) is starting now. Join in!',
+            scheduledTime: eventStart,
+            type: 'group_event', eventId: eventDoc.id, userId: userId,
+          );
+        }
+      } catch (e) {
+        print('Group event notification error: $e');
+      }
+    }
+  }
+
   _Msg _studyPlanMessage({
     required String planName,
     required String examLabel,
@@ -599,12 +683,6 @@ class NotificationScheduler {
     const mo = ['Jan','Feb','Mar','Apr','May','Jun',
                  'Jul','Aug','Sep','Oct','Nov','Dec'];
     return '${dt.day} ${mo[dt.month - 1]} at ${_fmt12hm(dt.hour, dt.minute)}';
-  }
-
-  String _fmtDateShort(DateTime dt) {
-    const mo = ['Jan','Feb','Mar','Apr','May','Jun',
-                 'Jul','Aug','Sep','Oct','Nov','Dec'];
-    return '${dt.day} ${mo[dt.month - 1]}';
   }
 
   String _buildLocationText(String room, String building) {
@@ -722,6 +800,12 @@ class NotificationScheduler {
     bool updatesFirst    = true;
     bool notesFirst      = true;
 
+    // Header shown in both the phone banner and the notification history card.
+    // e.g. "New Message in IOT Group 5 (Internet-of-Things (IoT))"
+    final groupHeader = subject.isNotEmpty
+        ? '$groupName ($subject)'
+        : groupName;
+
     final base = _firestore.collection('study_groups').doc(groupId);
 
     final messagesSub = base.collection('messages').snapshots().listen((snap) {
@@ -732,15 +816,25 @@ class NotificationScheduler {
         if ((d['senderId'] as String? ?? '') == userId) continue;
         final sender  = d['senderUsername'] as String? ?? 'Someone';
         final msgType = d['type']           as String? ?? 'text';
-        final text    = d['text']           as String? ?? '';
-        final body    = msgType == 'image'
-            ? 'image📸'
-            : (text.isNotEmpty ? text : 'Sent a message');
+
+        // Body format: "SenderName: content" — mirrors the desired screenshot.
+        final String msgContent;
+        switch (msgType) {
+          case 'image':  msgContent = '📸 Sent a photo';  break;
+          case 'file':   msgContent = '📎 ${d['fileName'] as String? ?? 'Sent a file'}'; break;
+          case 'poll':   msgContent = '📊 Created a poll: "${d['question'] as String? ?? ''}"'; break;
+          case 'event':  msgContent = '📅 Set up an event: "${d['title'] as String? ?? ''}"'; break;
+          default:
+            final text = (d['text'] as String? ?? '').trim();
+            msgContent = text.isNotEmpty ? text : 'Sent a message';
+        }
+        final body = '$sender: $msgContent';
+
         _notificationService.showGroupActivityNotification(
           userId: userId, groupId: groupId, groupName: groupName,
           subject: subject,
-          title: '$groupName — $sender',
-          body:  body,
+          title: 'New Message in $groupHeader',
+          body:  body.length > 200 ? '${body.substring(0, 200)}…' : body,
           type:  'group_chat', tab: 0,
         );
       }
@@ -757,7 +851,7 @@ class NotificationScheduler {
         _notificationService.showGroupActivityNotification(
           userId: userId, groupId: groupId, groupName: groupName,
           subject: subject,
-          title: '$groupName — New Task',
+          title: 'New Task in $groupHeader',
           body:  '$who added "$title"',
           type:  'group_milestone', tab: 1,
         );
@@ -771,11 +865,11 @@ class NotificationScheduler {
         final d = change.doc.data()!;
         if ((d['postedBy'] as String? ?? '') == userId) continue;
         final who     = d['postedByUsername'] as String? ?? 'Someone';
-        final content = d['content']          as String? ?? '';
+        final content = (d['content'] as String? ?? '').trim();
         _notificationService.showGroupActivityNotification(
           userId: userId, groupId: groupId, groupName: groupName,
           subject: subject,
-          title: '$groupName — New Update',
+          title: 'New Update in $groupHeader',
           body:  '$who: ${content.isNotEmpty ? content : 'posted an update'}',
           type:  'group_update', tab: 2,
         );
@@ -788,13 +882,13 @@ class NotificationScheduler {
         if (change.type != DocumentChangeType.added) continue;
         final d = change.doc.data()!;
         if ((d['authorId'] as String? ?? '') == userId) continue;
-        final who   = d['authorUsername'] as String? ?? 'Someone';
-        final title = d['title']          as String? ?? 'a note';
+        final who      = d['authorUsername'] as String? ?? 'Someone';
+        final noteTitle = d['title']         as String? ?? 'a note';
         _notificationService.showGroupActivityNotification(
           userId: userId, groupId: groupId, groupName: groupName,
           subject: subject,
-          title: '$groupName — New Note',
-          body:  '$who added "$title"',
+          title: 'New Note in $groupHeader',
+          body:  '$who added "$noteTitle"',
           type:  'group_note', tab: 3,
         );
       }

@@ -1,162 +1,116 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:intl/intl.dart';
 import '../services/notification_scheduler.dart';
 import '../services/notification_service.dart';
+import 'package:intl/intl.dart';
 import '../app_preferences.dart';
 
-class EditTaskScreen extends StatefulWidget {
-  final Map<String, dynamic> taskData;
+class EditGroupEventScreen extends StatefulWidget {
+  final String groupId;
+  final String messageId;
+  final Map<String, dynamic> eventData;
 
-  const EditTaskScreen({Key? key, required this.taskData}) : super(key: key);
+  const EditGroupEventScreen({
+    Key? key,
+    required this.groupId,
+    required this.messageId,
+    required this.eventData,
+  }) : super(key: key);
 
   @override
-  State<EditTaskScreen> createState() => _EditTaskScreenState();
+  State<EditGroupEventScreen> createState() => _EditGroupEventScreenState();
 }
 
-class _EditTaskScreenState extends State<EditTaskScreen> {
-  late TextEditingController _taskTitleController;
-  late TextEditingController _taskDetailsController;
+class _EditGroupEventScreenState extends State<EditGroupEventScreen> {
+  static const kGroup = Color(0xFF7C3AED);
 
-  String? _selectedSubject;
+  late TextEditingController _titleController;
+  late TextEditingController _detailsController;
   String? _selectedType;
-  late DateTime _dueDate;
-  late TimeOfDay _dueTime;
+  late DateTime _eventDate;
+  late TimeOfDay _eventTime;
   bool _isSaving = false;
 
-  List<String> _availableSubjects = [];
-  bool _isLoadingSubjects = true;
-
-  final List<String> _taskTypes = [
-    'Assignment',
-    'Individual Project',
-    'Group Project',
+  final List<String> _eventTypes = [
     'Meeting',
-    'Lab Exercise',
     'Presentation',
+    'Study Session',
+    'Workshop',
+    'Discussion',
     'Other',
   ];
 
   @override
   void initState() {
     super.initState();
-
-    print('📝 Edit task screen received data: ${widget.taskData}');
-
-    _taskTitleController = TextEditingController(
-      text: widget.taskData['taskTitle'] ?? '',
+    _titleController = TextEditingController(
+      text: widget.eventData['title'] as String? ?? '',
     );
-    _taskDetailsController = TextEditingController(
-      text: widget.taskData['taskDetails'] ?? '',
+    _detailsController = TextEditingController(
+      text: widget.eventData['details'] as String? ?? '',
     );
-
-    _selectedSubject = widget.taskData['subject']?.isNotEmpty == true
-        ? widget.taskData['subject']
-        : null;
-    _selectedType = widget.taskData['taskType'];
-
-    final timestamp = widget.taskData['dueDate'] as Timestamp?;
-    final dueDateTime = timestamp?.toDate() ?? DateTime.now();
-    _dueDate = dueDateTime;
-    _dueTime = TimeOfDay(hour: dueDateTime.hour, minute: dueDateTime.minute);
-
-    _loadSubjects();
+    _selectedType = widget.eventData['eventSubType'] as String? ??
+        widget.eventData['eventType'] as String? ??
+        'Meeting';
+    final ts = widget.eventData['eventDate'] as Timestamp?;
+    final dt = ts?.toDate() ?? DateTime.now();
+    _eventDate = dt;
+    _eventTime = TimeOfDay(hour: dt.hour, minute: dt.minute);
   }
 
   @override
   void dispose() {
-    _taskTitleController.dispose();
-    _taskDetailsController.dispose();
+    _titleController.dispose();
+    _detailsController.dispose();
     super.dispose();
   }
 
-  Future<void> _loadSubjects() async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
-
-    try {
-      final classesSnapshot = await FirebaseFirestore.instance
-          .collection('timetable')
-          .where('userId', isEqualTo: user.uid)
-          .where('type', isEqualTo: 'class')
-          .get();
-
-      final subjects = <String>{};
-      for (var doc in classesSnapshot.docs) {
-        final className = doc.data()['className'] as String?;
-        if (className != null && className.isNotEmpty) {
-          subjects.add(className);
-        }
-      }
-
-      setState(() {
-        _availableSubjects = subjects.toList()..sort();
-        _isLoadingSubjects = false;
-      });
-    } catch (e) {
-      print('Error loading subjects: $e');
-      setState(() => _isLoadingSubjects = false);
-    }
-  }
-
-  Future<void> _selectDate(BuildContext context) async {
+  Future<void> _selectDate() async {
     final isDark = AppColors.isDark(context);
-    final DateTime? picked = await showDatePicker(
+    final picked = await showDatePicker(
       context: context,
-      initialDate: _dueDate,
+      initialDate: _eventDate,
       firstDate: DateTime(2020),
-      lastDate: DateTime(2030),
-      builder: (_, child) {
-        return Theme(
-          data: isDark
-              ? ThemeData.dark().copyWith(
-                  colorScheme: const ColorScheme.dark(
-                    primary: Color(0xFF008BB9),
-                    onPrimary: Colors.white,
-                    surface: Color(0xFF252D47),
-                    onSurface: Colors.white,
-                  ),
-                )
-              : ThemeData.light().copyWith(
-                  colorScheme: const ColorScheme.light(primary: Color(0xFF008BB9)),
+      lastDate: DateTime(2035),
+      builder: (_, child) => Theme(
+        data: isDark
+            ? ThemeData.dark().copyWith(
+                colorScheme: const ColorScheme.dark(
+                  primary: kGroup,
+                  onPrimary: Colors.white,
+                  surface: Color(0xFF252D47),
+                  onSurface: Colors.white,
                 ),
-          child: child!,
-        );
-      },
+              )
+            : ThemeData.light().copyWith(
+                colorScheme: const ColorScheme.light(primary: kGroup),
+              ),
+        child: child!,
+      ),
     );
-
-    if (picked != null) setState(() => _dueDate = picked);
+    if (picked != null && mounted) setState(() => _eventDate = picked);
   }
 
-  // ── Updated _selectTime: opens the custom dialog ──────────────────────────
-  Future<void> _selectTime(BuildContext context) async {
-    final TimeOfDay? picked = await showDialog<TimeOfDay>(
+  Future<void> _selectTime() async {
+    final picked = await showDialog<TimeOfDay>(
       context: context,
-      builder: (_) => _CustomTimePickerDialog(initialTime: _dueTime),
+      builder: (_) => _CustomTimePickerDialog(initialTime: _eventTime),
     );
-
-    if (picked == null || !mounted) return;
-
-    setState(() => _dueTime = picked);
+    if (picked != null && mounted) setState(() => _eventTime = picked);
   }
 
-  Future<void> _updateTask() async {
-    if (_taskTitleController.text.trim().isEmpty) {
-      _showError('Validation Error', 'Please enter task title');
+  Future<void> _save() async {
+    if (_titleController.text.trim().isEmpty) {
+      _showError('Validation Error', 'Please enter a title');
       return;
     }
     if (_selectedType == null) {
-      _showError('Validation Error', 'Please select task type');
+      _showError('Validation Error', 'Please select an event type');
       return;
     }
-
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) {
-      _showError('Error', 'User not authenticated');
-      return;
-    }
+    if (_isSaving) return;
+    setState(() => _isSaving = true);
 
     if (mounted) {
       showDialog(
@@ -174,7 +128,7 @@ class _EditTaskScreenState extends State<EditTaskScreen> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                const CircularProgressIndicator(),
+                const CircularProgressIndicator(color: kGroup),
                 const SizedBox(height: 16),
                 Text('Updating...', style: GoogleFonts.dmMono(fontSize: 14)),
               ],
@@ -183,75 +137,68 @@ class _EditTaskScreenState extends State<EditTaskScreen> {
         ),
       );
     }
-    setState(() => _isSaving = true);
+
     try {
-      final dueDateTime = DateTime(
-        _dueDate.year,
-        _dueDate.month,
-        _dueDate.day,
-        _dueTime.hour,
-        _dueTime.minute,
+      final dt = DateTime(
+        _eventDate.year,
+        _eventDate.month,
+        _eventDate.day,
+        _eventTime.hour,
+        _eventTime.minute,
       );
-
       await FirebaseFirestore.instance
-          .collection('tasks')
-          .doc(widget.taskData['id'])
+          .collection('user_group_events')
+          .doc(widget.messageId)
           .update({
-        'taskTitle': _taskTitleController.text.trim(),
-        'taskDetails': _taskDetailsController.text.trim(),
-        'subject': _selectedSubject ?? '',
-        'taskType': _selectedType,
-        'dueDate': Timestamp.fromDate(dueDateTime),
-        'updatedAt': Timestamp.now(),
+        'title': _titleController.text.trim(),
+        'details': _detailsController.text.trim(),
+        'eventType': _selectedType,
+        'eventDate': Timestamp.fromDate(dt),
       });
-
-      await NotificationService().cancelNotificationsForEvent(widget.taskData['id'] as String? ?? '');
-      NotificationScheduler().rescheduleAllNotifications().catchError((_) {});
-
+      // Cancel stale alarms/history for this event so fresh ones are created
+      // immediately with the new time — avoids history-screen delay or blanks.
+      await NotificationService().cancelNotificationsForEvent(widget.messageId);
+      NotificationScheduler().scheduleGroupEventsOnly().catchError((_) {});
       if (!mounted) return;
-      if (mounted) Navigator.pop(context);
+      Navigator.pop(context);
 
       await showDialog(
         context: context,
         barrierDismissible: false,
-        builder: (dialogContext) {
-          return AlertDialog(
-            backgroundColor: AppColors.card(context),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-              side: BorderSide(color: AppColors.border(context), width: 2),
-            ),
-            title: Row(
-              children: [
-                const Icon(Icons.check_circle, color: Colors.green, size: 28),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text('Updated!',
-                      style: GoogleFonts.dmMono(fontWeight: FontWeight.bold)),
-                ),
-              ],
-            ),
-            content: Text('Task has been successfully updated',
-                style: GoogleFonts.dmMono(fontSize: 13)),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(dialogContext).pop(),
-                child: Text('OK',
-                    style: GoogleFonts.dmMono(
-                        fontWeight: FontWeight.bold, color: AppColors.text(context))),
+        builder: (dialogContext) => AlertDialog(
+          backgroundColor: AppColors.card(context),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+            side: BorderSide(color: AppColors.border(context), width: 2),
+          ),
+          title: Row(
+            children: [
+              const Icon(Icons.check_circle, color: Colors.green, size: 28),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text('Updated!',
+                    style: GoogleFonts.dmMono(fontWeight: FontWeight.bold)),
               ),
             ],
-          );
-        },
+          ),
+          content: Text('Group event has been successfully updated.',
+              style: GoogleFonts.dmMono(fontSize: 13)),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: Text('OK',
+                  style: GoogleFonts.dmMono(
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.text(context))),
+            ),
+          ],
+        ),
       );
 
       if (mounted) Navigator.of(context).pop(true);
-    } catch (e) {
-      print('Error updating task: $e');
+    } catch (_) {
       if (mounted) Navigator.pop(context);
-      if (mounted) {
-        _showError('Update Error', 'Error updating task. Please try again.');
-      }
+      _showError('Update Error', 'Failed to update. Please try again.');
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
@@ -268,7 +215,8 @@ class _EditTaskScreenState extends State<EditTaskScreen> {
         ),
         title: Row(
           children: [
-            const Icon(Icons.error_outline, color: Color(0xFFB90000), size: 24),
+            const Icon(Icons.error_outline,
+                color: Color(0xFFB90000), size: 24),
             const SizedBox(width: 12),
             Expanded(
               child: Text(title,
@@ -283,7 +231,8 @@ class _EditTaskScreenState extends State<EditTaskScreen> {
             onPressed: () => Navigator.pop(context),
             child: Text('OK',
                 style: GoogleFonts.dmMono(
-                    fontWeight: FontWeight.bold, color: AppColors.text(context))),
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.text(context))),
           ),
         ],
       ),
@@ -317,7 +266,7 @@ class _EditTaskScreenState extends State<EditTaskScreen> {
           ),
         ),
         title: Text(
-          'EDIT TASK',
+          'EDIT GROUP EVENT',
           style: GoogleFonts.dmMono(
             fontSize: 20,
             fontWeight: FontWeight.bold,
@@ -332,24 +281,19 @@ class _EditTaskScreenState extends State<EditTaskScreen> {
           children: [
             const SizedBox(height: 16),
 
-            _buildLabel('Task'),
-            const SizedBox(height: 8),
-            _buildTextField(_taskTitleController, 'Task Title'),
-            const SizedBox(height: 16),
-
-            _buildLabel('Details'),
-            const SizedBox(height: 8),
-            _buildMultilineTextField(_taskDetailsController, 'Task description'),
-            const SizedBox(height: 16),
-
-            _buildLabel('Subject (Optional)'),
-            const SizedBox(height: 8),
-            _buildSubjectSelector(),
-            const SizedBox(height: 16),
-
-            _buildLabel('Type'),
+            _buildLabel('Event Type'),
             const SizedBox(height: 8),
             _buildTypeSelector(),
+            const SizedBox(height: 16),
+
+            _buildLabel('Title'),
+            const SizedBox(height: 8),
+            _buildTextField(_titleController, 'Event title'),
+            const SizedBox(height: 16),
+
+            _buildLabel('Description (Optional)'),
+            const SizedBox(height: 8),
+            _buildMultilineTextField(_detailsController, 'Event description'),
             const SizedBox(height: 16),
 
             Row(
@@ -358,23 +302,24 @@ class _EditTaskScreenState extends State<EditTaskScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      _buildLabel('Due Date'),
+                      _buildLabel('Date'),
                       const SizedBox(height: 8),
                       GestureDetector(
-                        onTap: () => _selectDate(context),
+                        onTap: _selectDate,
                         child: Container(
                           padding: const EdgeInsets.all(16),
                           decoration: BoxDecoration(
                             color: AppColors.input(context),
                             borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: AppColors.border(context), width: 2),
+                            border: Border.all(
+                                color: AppColors.border(context), width: 2),
                           ),
                           child: Row(
                             children: [
                               Expanded(
                                 child: Text(
                                   DateFormat('EEE, dd MMM yyyy')
-                                      .format(_dueDate),
+                                      .format(_eventDate),
                                   style: GoogleFonts.dmMono(fontSize: 14),
                                 ),
                               ),
@@ -394,18 +339,19 @@ class _EditTaskScreenState extends State<EditTaskScreen> {
                       _buildLabel('Time'),
                       const SizedBox(height: 8),
                       GestureDetector(
-                        onTap: () => _selectTime(context),
+                        onTap: _selectTime,
                         child: Container(
                           padding: const EdgeInsets.all(16),
                           decoration: BoxDecoration(
                             color: AppColors.input(context),
                             borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: AppColors.border(context), width: 2),
+                            border: Border.all(
+                                color: AppColors.border(context), width: 2),
                           ),
                           child: Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              Text(_formatTimeOfDay(_dueTime),
+                              Text(_formatTimeOfDay(_eventTime),
                                   style: GoogleFonts.dmMono(fontSize: 14)),
                               const Icon(Icons.access_time, size: 18),
                             ],
@@ -427,28 +373,37 @@ class _EditTaskScreenState extends State<EditTaskScreen> {
                     onPressed: () => Navigator.pop(context),
                     style: OutlinedButton.styleFrom(
                       padding: const EdgeInsets.symmetric(vertical: 16),
-                      side: BorderSide(color: AppColors.border(context), width: 2),
+                      side: BorderSide(
+                          color: AppColors.border(context), width: 2),
                       shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12)),
                     ),
                     child: Text('Cancel',
                         style: GoogleFonts.dmMono(
-                            color: AppColors.text(context), fontWeight: FontWeight.bold)),
+                            color: AppColors.text(context),
+                            fontWeight: FontWeight.bold)),
                   ),
                 ),
                 const SizedBox(width: 16),
                 Expanded(
                   child: ElevatedButton(
-                    onPressed: _isSaving ? null : _updateTask,
+                    onPressed: _isSaving ? null : _save,
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF008BB9),
+                      backgroundColor: kGroup,
                       padding: const EdgeInsets.symmetric(vertical: 16),
                       shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12)),
                     ),
                     child: _isSaving
-                        ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                        : Text('Update Task', style: GoogleFonts.dmMono(color: Colors.white, fontWeight: FontWeight.bold)),
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                                color: Colors.white, strokeWidth: 2))
+                        : Text('Update Group Event',
+                            style: GoogleFonts.dmMono(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold)),
                   ),
                 ),
               ],
@@ -471,7 +426,8 @@ class _EditTaskScreenState extends State<EditTaskScreen> {
       style: GoogleFonts.dmMono(fontSize: 14),
       decoration: InputDecoration(
         hintText: hint,
-        hintStyle: GoogleFonts.dmMono(fontSize: 14, color: AppColors.subtext(context)),
+        hintStyle: GoogleFonts.dmMono(
+            fontSize: 14, color: AppColors.subtext(context)),
         filled: true,
         fillColor: AppColors.input(context),
         border: OutlineInputBorder(
@@ -499,7 +455,8 @@ class _EditTaskScreenState extends State<EditTaskScreen> {
       maxLines: 5,
       decoration: InputDecoration(
         hintText: hint,
-        hintStyle: GoogleFonts.dmMono(fontSize: 14, color: AppColors.subtext(context)),
+        hintStyle: GoogleFonts.dmMono(
+            fontSize: 14, color: AppColors.subtext(context)),
         filled: true,
         fillColor: AppColors.input(context),
         border: OutlineInputBorder(
@@ -519,142 +476,6 @@ class _EditTaskScreenState extends State<EditTaskScreen> {
     );
   }
 
-  Widget _buildSubjectSelector() {
-    if (_isLoadingSubjects) {
-      return Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: AppColors.input(context),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: AppColors.border(context), width: 2),
-        ),
-        child: Row(
-          children: [
-            const SizedBox(
-              width: 16,
-              height: 16,
-              child: CircularProgressIndicator(
-                  strokeWidth: 2, color: Color(0xFF6B7280)),
-            ),
-            const SizedBox(width: 12),
-            Text('Loading subjects...',
-                style: GoogleFonts.dmMono(fontSize: 14, color: AppColors.subtext(context))),
-          ],
-        ),
-      );
-    }
-
-    return GestureDetector(
-      onTap: () {
-        if (_availableSubjects.isEmpty) {
-          _showError('No Subjects',
-              'No classes found. Add classes first to link them to tasks.');
-          return;
-        }
-        showModalBottomSheet(
-          context: context,
-          backgroundColor: Colors.transparent,
-          builder: (context) {
-            return Container(
-              decoration: BoxDecoration(
-                color: AppColors.card(context),
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-                border: Border(
-                  top: BorderSide(color: AppColors.border(context), width: 2),
-                  left: BorderSide(color: AppColors.border(context), width: 2),
-                  right: BorderSide(color: AppColors.border(context), width: 2),
-                ),
-              ),
-              child: SafeArea(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const SizedBox(height: 16),
-                    Container(
-                      width: 40,
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: AppColors.border(context),
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 24),
-                      child: Text('Select Subject',
-                          style: GoogleFonts.dmMono(
-                              fontSize: 18, fontWeight: FontWeight.bold)),
-                    ),
-                    const SizedBox(height: 16),
-                    ConstrainedBox(
-                      constraints: BoxConstraints(
-                        maxHeight:
-                            MediaQuery.of(context).size.height * 0.40,
-                      ),
-                      child: ListView.builder(
-                        shrinkWrap: true,
-                        itemCount: _availableSubjects.length + 1,
-                        itemBuilder: (context, index) {
-                          if (index == 0) {
-                            return ListTile(
-                              title: Text('None',
-                                  style: GoogleFonts.dmMono(fontSize: 14)),
-                              onTap: () {
-                                setState(() => _selectedSubject = null);
-                                Navigator.pop(context);
-                              },
-                            );
-                          }
-                          final subject = _availableSubjects[index - 1];
-                          return ListTile(
-                            title: Text(subject,
-                                style: GoogleFonts.dmMono(fontSize: 14)),
-                            trailing: _selectedSubject == subject
-                                ? const Icon(Icons.check,
-                                    color: Color(0xFF008BB9))
-                                : null,
-                            onTap: () {
-                              setState(() => _selectedSubject = subject);
-                              Navigator.pop(context);
-                            },
-                          );
-                        },
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                  ],
-                ),
-              ),
-            );
-          },
-        );
-      },
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: AppColors.input(context),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: AppColors.border(context), width: 2),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Expanded(
-              child: Text(
-                _selectedSubject ?? 'Select Subject',
-                style: GoogleFonts.dmMono(
-                  fontSize: 14,
-                  color: _selectedSubject != null ? AppColors.text(context) : AppColors.subtext(context),
-                ),
-              ),
-            ),
-            const Icon(Icons.arrow_forward_ios, size: 16),
-          ],
-        ),
-      ),
-    );
-  }
-
   Widget _buildTypeSelector() {
     return GestureDetector(
       onTap: () {
@@ -665,7 +486,8 @@ class _EditTaskScreenState extends State<EditTaskScreen> {
             return Container(
               decoration: BoxDecoration(
                 color: AppColors.card(context),
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+                borderRadius:
+                    const BorderRadius.vertical(top: Radius.circular(24)),
                 border: Border(
                   top: BorderSide(color: AppColors.border(context), width: 2),
                   left: BorderSide(color: AppColors.border(context), width: 2),
@@ -688,22 +510,21 @@ class _EditTaskScreenState extends State<EditTaskScreen> {
                     const SizedBox(height: 16),
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 24),
-                      child: Text('Select Task Type',
+                      child: Text('Select Event Type',
                           style: GoogleFonts.dmMono(
                               fontSize: 18, fontWeight: FontWeight.bold)),
                     ),
                     const SizedBox(height: 16),
                     ListView.builder(
                       shrinkWrap: true,
-                      itemCount: _taskTypes.length,
+                      itemCount: _eventTypes.length,
                       itemBuilder: (context, index) {
-                        final type = _taskTypes[index];
+                        final type = _eventTypes[index];
                         return ListTile(
                           title: Text(type,
                               style: GoogleFonts.dmMono(fontSize: 14)),
                           trailing: _selectedType == type
-                              ? const Icon(Icons.check,
-                                  color: Color(0xFF008BB9))
+                              ? const Icon(Icons.check, color: kGroup)
                               : null,
                           onTap: () {
                             setState(() => _selectedType = type);
@@ -732,10 +553,12 @@ class _EditTaskScreenState extends State<EditTaskScreen> {
           children: [
             Expanded(
               child: Text(
-                _selectedType ?? 'Task Type',
+                _selectedType ?? 'Event Type',
                 style: GoogleFonts.dmMono(
                   fontSize: 14,
-                  color: _selectedType != null ? AppColors.text(context) : AppColors.subtext(context),
+                  color: _selectedType != null
+                      ? AppColors.text(context)
+                      : AppColors.subtext(context),
                 ),
               ),
             ),
@@ -761,13 +584,13 @@ class _CustomTimePickerDialog extends StatefulWidget {
 }
 
 class _CustomTimePickerDialogState extends State<_CustomTimePickerDialog> {
+  static const _kAccent = Color(0xFF7C3AED);
+
   late int _hour;
   late int _minute;
   late bool _isAm;
-
   bool _editingHour = false;
   bool _editingMinute = false;
-
   late TextEditingController _hourCtrl;
   late TextEditingController _minuteCtrl;
   late FocusNode _hourFocus;
@@ -780,23 +603,20 @@ class _CustomTimePickerDialogState extends State<_CustomTimePickerDialog> {
     _isAm = t.period == DayPeriod.am;
     _hour = t.hourOfPeriod == 0 ? 12 : t.hourOfPeriod;
     _minute = t.minute;
-
     _hourCtrl = TextEditingController(text: _hour.toString().padLeft(2, '0'));
     _minuteCtrl =
         TextEditingController(text: _minute.toString().padLeft(2, '0'));
-
     _hourFocus = FocusNode()
       ..addListener(() {
         if (_hourFocus.hasFocus) {
-          _hourCtrl.selection = TextSelection(
-              baseOffset: 0, extentOffset: _hourCtrl.text.length);
+          _hourCtrl.selection =
+              TextSelection(baseOffset: 0, extentOffset: _hourCtrl.text.length);
           setState(() => _editingHour = true);
         } else {
           _commitHour();
           setState(() => _editingHour = false);
         }
       });
-
     _minuteFocus = FocusNode()
       ..addListener(() {
         if (_minuteFocus.hasFocus) {
@@ -856,34 +676,31 @@ class _CustomTimePickerDialogState extends State<_CustomTimePickerDialog> {
       context: context,
       initialTime: _toTimeOfDay(),
       initialEntryMode: TimePickerEntryMode.dialOnly,
-      builder: (context, child) {
-        return Theme(
-          data: Theme.of(context).copyWith(
-            colorScheme: ColorScheme.light(
-              primary: const Color(0xFF008BB9),
-              onPrimary: Colors.white,
-              surface: AppColors.card(context),
-              onSurface: AppColors.text(context),
-            ),
-            timePickerTheme: TimePickerThemeData(
-              backgroundColor: AppColors.card(context),
-              dialHandColor: const Color(0xFF008BB9),
-              dialBackgroundColor: AppColors.fieldBg(context),
-              hourMinuteTextColor: AppColors.text(context),
-              hourMinuteColor: AppColors.fieldBg(context),
-              dayPeriodTextColor: AppColors.text(context),
-              dayPeriodColor: AppColors.fieldBg(context),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-                side: BorderSide(color: AppColors.border(context), width: 2),
-              ),
+      builder: (context, child) => Theme(
+        data: Theme.of(context).copyWith(
+          colorScheme: ColorScheme.light(
+            primary: _kAccent,
+            onPrimary: Colors.white,
+            surface: AppColors.card(context),
+            onSurface: AppColors.text(context),
+          ),
+          timePickerTheme: TimePickerThemeData(
+            backgroundColor: AppColors.card(context),
+            dialHandColor: _kAccent,
+            dialBackgroundColor: AppColors.fieldBg(context),
+            hourMinuteTextColor: AppColors.text(context),
+            hourMinuteColor: AppColors.fieldBg(context),
+            dayPeriodTextColor: AppColors.text(context),
+            dayPeriodColor: AppColors.fieldBg(context),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+              side: BorderSide(color: AppColors.border(context), width: 2),
             ),
           ),
-          child: child!,
-        );
-      },
+        ),
+        child: child!,
+      ),
     );
-
     if (picked != null && mounted) {
       setState(() {
         _isAm = picked.period == DayPeriod.am;
@@ -916,23 +733,22 @@ class _CustomTimePickerDialogState extends State<_CustomTimePickerDialog> {
                 style: GoogleFonts.dmMono(
                     fontSize: 15, fontWeight: FontWeight.bold)),
             const SizedBox(height: 20),
-
             GestureDetector(
               onTap: _openDial,
               child: Container(
                 width: double.infinity,
-                padding: const EdgeInsets.symmetric(
-                    vertical: 14, horizontal: 16),
+                padding:
+                    const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
                 decoration: BoxDecoration(
                   color: AppColors.fieldBg(context),
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: AppColors.border(context), width: 1.5),
+                  border:
+                      Border.all(color: AppColors.border(context), width: 1.5),
                 ),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    const Icon(Icons.access_time,
-                        size: 20, color: Color(0xFF008BB9)),
+                    const Icon(Icons.access_time, size: 20, color: _kAccent),
                     const SizedBox(width: 10),
                     Text('$h:$m $period',
                         style: GoogleFonts.dmMono(
@@ -944,19 +760,18 @@ class _CustomTimePickerDialogState extends State<_CustomTimePickerDialog> {
                       padding: const EdgeInsets.symmetric(
                           horizontal: 8, vertical: 4),
                       decoration: BoxDecoration(
-                        color: const Color(0xFF008BB9).withOpacity(0.12),
+                        color: _kAccent.withValues(alpha: 0.12),
                         borderRadius: BorderRadius.circular(6),
                       ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           const Icon(Icons.touch_app,
-                              size: 12, color: Color(0xFF008BB9)),
+                              size: 12, color: _kAccent),
                           const SizedBox(width: 4),
                           Text('Use dial',
                               style: GoogleFonts.dmMono(
-                                  fontSize: 10,
-                                  color: const Color(0xFF008BB9))),
+                                  fontSize: 10, color: _kAccent)),
                         ],
                       ),
                     ),
@@ -964,9 +779,7 @@ class _CustomTimePickerDialogState extends State<_CustomTimePickerDialog> {
                 ),
               ),
             ),
-
             const SizedBox(height: 16),
-
             Row(
               children: [
                 Expanded(child: Divider(color: AppColors.border(context))),
@@ -980,11 +793,10 @@ class _CustomTimePickerDialogState extends State<_CustomTimePickerDialog> {
               ],
             ),
             const SizedBox(height: 16),
-
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                _SpinnerField(
+                _GESpinnerField(
                   controller: _hourCtrl,
                   focusNode: _hourFocus,
                   label: 'HH',
@@ -1001,7 +813,7 @@ class _CustomTimePickerDialogState extends State<_CustomTimePickerDialog> {
                       style: GoogleFonts.dmMono(
                           fontSize: 28, fontWeight: FontWeight.bold)),
                 ),
-                _SpinnerField(
+                _GESpinnerField(
                   controller: _minuteCtrl,
                   focusNode: _minuteFocus,
                   label: 'MM',
@@ -1010,15 +822,11 @@ class _CustomTimePickerDialogState extends State<_CustomTimePickerDialog> {
                   onSubmitted: (_) => _commitMinute(),
                 ),
                 const SizedBox(width: 14),
-                _AmPmToggle(
-                  isAm: _isAm,
-                  onChanged: (v) => setState(() => _isAm = v),
-                ),
+                _GEAmPmToggle(
+                    isAm: _isAm, onChanged: (v) => setState(() => _isAm = v)),
               ],
             ),
-
             const SizedBox(height: 20),
-
             Row(
               children: [
                 Expanded(
@@ -1026,13 +834,15 @@ class _CustomTimePickerDialogState extends State<_CustomTimePickerDialog> {
                     onPressed: () => Navigator.pop(context),
                     style: OutlinedButton.styleFrom(
                       padding: const EdgeInsets.symmetric(vertical: 14),
-                      side: BorderSide(color: AppColors.border(context), width: 2),
+                      side:
+                          BorderSide(color: AppColors.border(context), width: 2),
                       shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(10)),
                     ),
                     child: Text('Cancel',
                         style: GoogleFonts.dmMono(
-                            color: AppColors.text(context), fontWeight: FontWeight.bold)),
+                            color: AppColors.text(context),
+                            fontWeight: FontWeight.bold)),
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -1044,7 +854,7 @@ class _CustomTimePickerDialogState extends State<_CustomTimePickerDialog> {
                       Navigator.pop(context, _toTimeOfDay());
                     },
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF008BB9),
+                      backgroundColor: _kAccent,
                       padding: const EdgeInsets.symmetric(vertical: 14),
                       shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(10)),
@@ -1067,7 +877,7 @@ class _CustomTimePickerDialogState extends State<_CustomTimePickerDialog> {
 // Spinner field
 // =============================================================================
 
-class _SpinnerField extends StatelessWidget {
+class _GESpinnerField extends StatelessWidget {
   final TextEditingController controller;
   final FocusNode focusNode;
   final String label;
@@ -1075,7 +885,7 @@ class _SpinnerField extends StatelessWidget {
   final VoidCallback onDown;
   final ValueChanged<String> onSubmitted;
 
-  const _SpinnerField({
+  const _GESpinnerField({
     required this.controller,
     required this.focusNode,
     required this.label,
@@ -1088,7 +898,7 @@ class _SpinnerField extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        _ArrowBtn(icon: Icons.keyboard_arrow_up, onTap: onUp),
+        _GEArrowBtn(icon: Icons.keyboard_arrow_up, onTap: onUp),
         const SizedBox(height: 4),
         SizedBox(
           width: 68,
@@ -1099,8 +909,8 @@ class _SpinnerField extends StatelessWidget {
             textAlign: TextAlign.center,
             maxLength: 2,
             onSubmitted: onSubmitted,
-            style:
-                GoogleFonts.dmMono(fontSize: 26, fontWeight: FontWeight.bold),
+            style: GoogleFonts.dmMono(
+                fontSize: 26, fontWeight: FontWeight.bold),
             decoration: InputDecoration(
               counterText: '',
               hintText: label,
@@ -1110,16 +920,18 @@ class _SpinnerField extends StatelessWidget {
               fillColor: AppColors.input(context),
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(10),
-                borderSide: BorderSide(color: AppColors.border(context), width: 2),
+                borderSide:
+                    BorderSide(color: AppColors.border(context), width: 2),
               ),
               enabledBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(10),
-                borderSide: BorderSide(color: AppColors.border(context), width: 2),
+                borderSide:
+                    BorderSide(color: AppColors.border(context), width: 2),
               ),
               focusedBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(10),
                 borderSide: const BorderSide(
-                    color: Color(0xFF008BB9), width: 2.5),
+                    color: Color(0xFF7C3AED), width: 2.5),
               ),
               contentPadding:
                   const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
@@ -1127,16 +939,16 @@ class _SpinnerField extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 4),
-        _ArrowBtn(icon: Icons.keyboard_arrow_down, onTap: onDown),
+        _GEArrowBtn(icon: Icons.keyboard_arrow_down, onTap: onDown),
       ],
     );
   }
 }
 
-class _ArrowBtn extends StatelessWidget {
+class _GEArrowBtn extends StatelessWidget {
   final IconData icon;
   final VoidCallback onTap;
-  const _ArrowBtn({required this.icon, required this.onTap});
+  const _GEArrowBtn({required this.icon, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -1161,33 +973,35 @@ class _ArrowBtn extends StatelessWidget {
 // AM / PM toggle
 // =============================================================================
 
-class _AmPmToggle extends StatelessWidget {
+class _GEAmPmToggle extends StatelessWidget {
   final bool isAm;
   final ValueChanged<bool> onChanged;
-  const _AmPmToggle({required this.isAm, required this.onChanged});
+  const _GEAmPmToggle({required this.isAm, required this.onChanged});
 
   @override
   Widget build(BuildContext context) {
     return Column(
       children: [
-        _PeriodBtn(label: 'AM', selected: isAm, onTap: () => onChanged(true)),
+        _GEPeriodBtn(
+            label: 'AM', selected: isAm, onTap: () => onChanged(true)),
         const SizedBox(height: 6),
-        _PeriodBtn(
+        _GEPeriodBtn(
             label: 'PM', selected: !isAm, onTap: () => onChanged(false)),
       ],
     );
   }
 }
 
-class _PeriodBtn extends StatelessWidget {
+class _GEPeriodBtn extends StatelessWidget {
   final String label;
   final bool selected;
   final VoidCallback onTap;
-  const _PeriodBtn(
+  const _GEPeriodBtn(
       {required this.label, required this.selected, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
+    const kAccent = Color(0xFF7C3AED);
     return GestureDetector(
       onTap: onTap,
       child: AnimatedContainer(
@@ -1195,10 +1009,10 @@ class _PeriodBtn extends StatelessWidget {
         width: 52,
         height: 40,
         decoration: BoxDecoration(
-          color: selected ? const Color(0xFF008BB9) : AppColors.input(context),
+          color: selected ? kAccent : AppColors.input(context),
           borderRadius: BorderRadius.circular(8),
           border: Border.all(
-            color: selected ? const Color(0xFF008BB9) : AppColors.border(context),
+            color: selected ? kAccent : AppColors.border(context),
             width: 2,
           ),
         ),
@@ -1208,7 +1022,7 @@ class _PeriodBtn extends StatelessWidget {
           style: GoogleFonts.dmMono(
             fontSize: 13,
             fontWeight: FontWeight.bold,
-            color: selected ? Colors.white : AppColors.text(context),
+            color: selected ? Colors.white : AppColors.subtext(context),
           ),
         ),
       ),

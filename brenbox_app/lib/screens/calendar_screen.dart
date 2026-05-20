@@ -8,6 +8,7 @@ import 'package:intl/intl.dart';
 import '../tasks/edit_class_screen.dart';
 import '../tasks/edit_task_screen.dart';
 import '../tasks/edit_exam_screen.dart';
+import '../tasks/edit_group_event_screen.dart';
 import '../services/notification_service.dart';
 import 'subject_detail_screen.dart';
 import '../app_preferences.dart';
@@ -31,11 +32,58 @@ class _CalendarScreenState extends State<CalendarScreen> {
   String _selectedSemester =
       'All'; // All, Semester 1, Semester 2, etc., Non Semester
 
+  List<Map<String, dynamic>> _cachedGroupEvents = [];
+  StreamSubscription<QuerySnapshot>? _groupEventsSub;
+
   @override
   void initState() {
     super.initState();
     _selectedDate = DateTime.now();
     // Don't call _loadAvailableSemesters here anymore
+    _listenToGroupEvents();
+  }
+
+  @override
+  void dispose() {
+    _groupEventsSub?.cancel();
+    super.dispose();
+  }
+
+  void _listenToGroupEvents() {
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) return;
+    _groupEventsSub?.cancel();
+    _groupEventsSub = _firestore
+        .collection('user_group_events')
+        .where('userId', isEqualTo: uid)
+        .snapshots()
+        .listen((snap) {
+      if (!mounted) return;
+      setState(() {
+        _cachedGroupEvents = snap.docs.map((doc) {
+          final data = doc.data();
+          final ts = data['eventDate'] as Timestamp?;
+          if (ts == null) return null;
+          final d = ts.toDate();
+          return <String, dynamic>{
+            'id': doc.id,
+            'type': 'group_event',
+            'title': data['title'] ?? 'Group Event',
+            'eventSubType': data['eventType'] ?? 'Meeting',
+            'details': data['details'] ?? '',
+            'startTime': '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}',
+            'eventDate': ts,
+            'groupId': data['groupId'] ?? '',
+            'groupName': data['groupName'] ?? '',
+            'subject': data['subject'] ?? '',
+            'senderUsername': data['senderUsername'] ?? '',
+            'senderId': data['senderId'] ?? '',
+            'isCompleted': data['isCompleted'] ?? false,
+            'messageId': data['messageId'] ?? doc.id,
+          };
+        }).whereType<Map<String, dynamic>>().toList();
+      });
+    }, onError: (_) {});
   }
 
   // NEW: Stream-based approach for real-time semester updates
@@ -185,6 +233,18 @@ class _CalendarScreenState extends State<CalendarScreen> {
           }
 
           bool hasEvents = matchingDocs.isNotEmpty;
+
+          if (!hasEvents) {
+            for (final ge in _cachedGroupEvents) {
+              final ts = ge['eventDate'] as Timestamp?;
+              if (ts != null) {
+                final d = ts.toDate();
+                final dOnly = DateTime(d.year, d.month, d.day);
+                if (dOnly == checkDate) { hasEvents = true; break; }
+              }
+            }
+          }
+
           bool isUpcoming = hasEvents && checkDate.isAfter(today);
 
           return {'hasEvents': hasEvents, 'isUpcoming': isUpcoming};
@@ -569,6 +629,8 @@ class _CalendarScreenState extends State<CalendarScreen> {
                   return _buildTaskCard(event);
                 } else if (event['eventType'] == 'exam') {
                   return _buildExamCard(event);
+                } else if (event['type'] == 'group_event') {
+                  return _buildGroupEventCard(event);
                 } else {
                   return _buildClassCard(event);
                 }
@@ -600,6 +662,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
         .snapshots();
 
     return _mergeCalendarStreams(
+      userId,
       date,
       timetableStream,
       tasksStream,
@@ -608,6 +671,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
   }
 
   Stream<List<Map<String, dynamic>>> _mergeCalendarStreams(
+    String userId,
     DateTime date,
     Stream<QuerySnapshot> timetableStream,
     Stream<QuerySnapshot> tasksStream,
@@ -616,6 +680,12 @@ class _CalendarScreenState extends State<CalendarScreen> {
     QuerySnapshot? latestTimetable;
     QuerySnapshot? latestTasks;
     QuerySnapshot? latestExams;
+    List<Map<String, dynamic>> latestGroupEvents = _cachedGroupEvents.where((e) {
+      final ts = e['eventDate'] as Timestamp?;
+      if (ts == null) return false;
+      final d = ts.toDate();
+      return d.year == date.year && d.month == date.month && d.day == date.day;
+    }).toList();
 
     final controller = StreamController<List<Map<String, dynamic>>>.broadcast();
 
@@ -641,6 +711,8 @@ class _CalendarScreenState extends State<CalendarScreen> {
                 'lecturerName': data['lecturerName'] ?? '',
                 'type': data['type'] ?? 'class',
                 'date': timestamp,
+                'semester': data['semester'],
+                'academicYear': data['academicYear'],
               });
             }
           }
@@ -698,6 +770,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
         } catch (_) {}
       }
 
+      allEvents.addAll(latestGroupEvents);
       return allEvents;
     }
 
@@ -714,7 +787,371 @@ class _CalendarScreenState extends State<CalendarScreen> {
       if (!controller.isClosed) controller.add(buildEvents());
     }, onError: (_) {});
 
+    controller.onCancel = () {
+      sub1.cancel();
+      sub2.cancel();
+      sub3.cancel();
+      if (!controller.isClosed) controller.close();
+    };
+
     return controller.stream;
+  }
+
+  Widget _buildGroupEventCard(Map<String, dynamic> event) {
+    const kGroup = Color(0xFF7C3AED);
+    final isCompleted = event['isCompleted'] as bool? ?? false;
+
+    return _AnimatedTapButton(
+      onTap: () => _showGroupEventDetails(event),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: AppColors.card(context),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isCompleted ? const Color(0xFF34A853) : kGroup,
+            width: 2,
+          ),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: isCompleted ? const Color(0xFF34A853) : kGroup,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(
+                isCompleted ? Icons.check_circle : Icons.groups_rounded,
+                color: Colors.white,
+                size: 20,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: isCompleted
+                              ? const Color(0xFF34A853)
+                              : kGroup,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          (event['eventSubType'] as String? ?? 'Meeting').toUpperCase(),
+                          style: GoogleFonts.dmMono(
+                              fontSize: 8,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          event['title'] as String? ?? 'Group Event',
+                          style: GoogleFonts.dmMono(
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                            color: isCompleted
+                                ? AppColors.subtext(context)
+                                : AppColors.text(context),
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '${_formatTime(event['startTime'] as String? ?? '')} • ${event['eventSubType'] as String? ?? 'Meeting'} • ${event['groupName'] as String? ?? ''}',
+                    style: GoogleFonts.dmMono(
+                        fontSize: 10,
+                        color: AppColors.subtext(context)),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showGroupEventDetails(Map<String, dynamic> event) {
+    const kGroup = Color(0xFF7C3AED);
+    final eventDate = (event['eventDate'] as Timestamp).toDate();
+    final stateCtx = context;
+
+    showModalBottomSheet(
+      context: stateCtx,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (BuildContext context, StateSetter setModalState) {
+            final isCompleted = event['isCompleted'] as bool? ?? false;
+            return Container(
+              decoration: BoxDecoration(
+                color: AppColors.card(context),
+                borderRadius:
+                    const BorderRadius.vertical(top: Radius.circular(24)),
+                border: Border(
+                  top: BorderSide(color: AppColors.border(context), width: 2),
+                  left: BorderSide(color: AppColors.border(context), width: 2),
+                  right: BorderSide(color: AppColors.border(context), width: 2),
+                ),
+              ),
+              child: SafeArea(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const SizedBox(height: 16),
+                      Container(
+                        width: 40,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: AppColors.border(context),
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 24),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('Group Event Details',
+                                style: GoogleFonts.dmMono(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.bold,
+                                    color: AppColors.text(context))),
+                            const SizedBox(height: 16),
+                            _buildDetailRow('Title',
+                                event['title'] as String? ?? ''),
+                            if ((event['details'] as String? ?? '').isNotEmpty)
+                              _buildDetailRow('Description',
+                                  event['details'] as String? ?? ''),
+                            _buildDetailRow('Type',
+                                event['eventSubType'] as String? ?? 'Meeting'),
+                            if ((event['groupName'] as String? ?? '').isNotEmpty)
+                              _buildDetailRow('Group',
+                                  event['groupName'] as String? ?? ''),
+                            if ((event['subject'] as String? ?? '').isNotEmpty)
+                              _buildDetailRow('Subject',
+                                  event['subject'] as String? ?? ''),
+                            _buildDetailRow('Date',
+                                DateFormat('EEE, dd MMM yyyy').format(eventDate)),
+                            _buildDetailRow('Time',
+                                event['startTime'] as String? ?? ''),
+                            if ((event['senderUsername'] as String? ?? '')
+                                .isNotEmpty)
+                              _buildDetailRow('Organizer',
+                                  event['senderUsername'] as String? ?? ''),
+                            const SizedBox(height: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(vertical: 8),
+                              child: Row(
+                                children: [
+                                  SizedBox(
+                                    width: 100,
+                                    child: Text('Status',
+                                        style: GoogleFonts.dmMono(
+                                            fontSize: 12,
+                                            color: const Color(0xFF6B7280))),
+                                  ),
+                                  Expanded(
+                                    child: Row(
+                                      children: [
+                                        Expanded(
+                                          child: _AnimatedTapButton(
+                                            onTap: () async {
+                                              await _firestore
+                                                  .collection('user_group_events')
+                                                  .doc(event['id'] as String)
+                                                  .update({'isCompleted': false});
+                                              setModalState(() => event['isCompleted'] = false);
+                                              setState(() {});
+                                            },
+                                            child: Container(
+                                              padding: const EdgeInsets.symmetric(
+                                                  horizontal: 16, vertical: 10),
+                                              decoration: BoxDecoration(
+                                                color: !isCompleted
+                                                    ? const Color(0xFFFBBC05)
+                                                    : AppColors.fieldBg(context),
+                                                borderRadius:
+                                                    BorderRadius.circular(8),
+                                                border: Border.all(
+                                                  color: !isCompleted
+                                                      ? const Color(0xFFFBBC05)
+                                                      : AppColors.border(context),
+                                                  width: 2,
+                                                ),
+                                              ),
+                                              child: Center(
+                                                child: Text('Pending',
+                                                    style: GoogleFonts.dmMono(
+                                                        fontSize: 11,
+                                                        fontWeight: FontWeight.bold,
+                                                        color: !isCompleted
+                                                            ? Colors.white
+                                                            : AppColors.subtext(context))),
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Expanded(
+                                          child: _AnimatedTapButton(
+                                            onTap: () async {
+                                              await _firestore
+                                                  .collection('user_group_events')
+                                                  .doc(event['id'] as String)
+                                                  .update({'isCompleted': true});
+                                              setModalState(() => event['isCompleted'] = true);
+                                              setState(() {});
+                                            },
+                                            child: Container(
+                                              padding: const EdgeInsets.symmetric(
+                                                  horizontal: 16, vertical: 10),
+                                              decoration: BoxDecoration(
+                                                color: isCompleted
+                                                    ? const Color(0xFF34A853)
+                                                    : AppColors.fieldBg(context),
+                                                borderRadius:
+                                                    BorderRadius.circular(8),
+                                                border: Border.all(
+                                                  color: isCompleted
+                                                      ? const Color(0xFF34A853)
+                                                      : AppColors.border(context),
+                                                  width: 2,
+                                                ),
+                                              ),
+                                              child: Center(
+                                                child: Text('Completed',
+                                                    style: GoogleFonts.dmMono(
+                                                        fontSize: 11,
+                                                        fontWeight: FontWeight.bold,
+                                                        color: isCompleted
+                                                            ? Colors.white
+                                                            : AppColors.subtext(context))),
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 24),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                onPressed: () async {
+                                  Navigator.pop(stateCtx);
+                                  final result = await Navigator.push(
+                                    stateCtx,
+                                    MaterialPageRoute(
+                                      builder: (_) => EditGroupEventScreen(
+                                        groupId: event['groupId'] as String? ?? '',
+                                        messageId: event['id'] as String? ?? '',
+                                        eventData: event,
+                                      ),
+                                    ),
+                                  );
+                                  if (result == true && mounted) setState(() {});
+                                },
+                                icon: Icon(Icons.edit_outlined,
+                                    color: AppColors.text(context)),
+                                label: Text('Edit',
+                                    style: GoogleFonts.dmMono(
+                                        color: AppColors.text(context))),
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: AppColors.text(context),
+                                  side: BorderSide(
+                                      color: AppColors.border(context), width: 2),
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 16),
+                                  shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12)),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: ElevatedButton.icon(
+                                onPressed: () async {
+                                  final messenger =
+                                      ScaffoldMessenger.of(stateCtx);
+                                  Navigator.pop(stateCtx);
+                                  await confirmAndDeleteDialog(
+                                    stateCtx,
+                                    title: 'Delete Group Event',
+                                    message:
+                                        'This will remove the event from your calendar.',
+                                    onDelete: () async {
+                                      await _firestore
+                                          .collection('user_group_events')
+                                          .doc(event['id'] as String)
+                                          .delete();
+                                      messenger.showSnackBar(SnackBar(
+                                        content: Text('Group event deleted',
+                                            style: GoogleFonts.dmMono(
+                                                fontWeight: FontWeight.bold,
+                                                color: Colors.white)),
+                                        backgroundColor: const Color(0xFFB90000),
+                                        behavior: SnackBarBehavior.floating,
+                                        shape: RoundedRectangleBorder(
+                                            borderRadius:
+                                                BorderRadius.circular(10)),
+                                        duration: const Duration(seconds: 3),
+                                      ));
+                                    },
+                                  );
+                                },
+                                icon: const Icon(Icons.delete_outline),
+                                label: Text('Delete', style: GoogleFonts.dmMono()),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color(0xFFB90000),
+                                  foregroundColor: Colors.white,
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 16),
+                                  shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12)),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                    ],
+                  ),
+                ),
+            );
+          },
+        );
+      },
+    );
   }
 
   Widget _buildTaskCard(Map<String, dynamic> task) {
@@ -1550,26 +1987,55 @@ class _CalendarScreenState extends State<CalendarScreen> {
     final user = _auth.currentUser;
     if (user == null) return;
 
-    final className   = subject['className'] as String;
-    final semester    = subject['semester'];
+    final className    = subject['className'] as String;
+    final semester     = subject['semester'];
     final academicYear = subject['academicYear'];
-    final messenger   = ScaffoldMessenger.of(context);
+    final messenger    = ScaffoldMessenger.of(context);
 
+    if (mounted) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => PopScope(
+          canPop: false,
+          child: AlertDialog(
+            backgroundColor: AppColors.card(context),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+              side: BorderSide(color: AppColors.border(context), width: 2),
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                const CircularProgressIndicator(),
+                const SizedBox(height: 16),
+                Text('Deleting...', style: GoogleFonts.dmMono(fontSize: 14)),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
     try {
-      // 1. Timetable — match on className + semester + academicYear
+      // Build timetable query with optional filters
       Query<Map<String, dynamic>> timetableQuery = _firestore
           .collection('timetable')
           .where('userId', isEqualTo: user.uid)
           .where('className', isEqualTo: className);
-      if (semester != null) {
-        timetableQuery =
-            timetableQuery.where('semester', isEqualTo: semester);
-      }
-      if (academicYear != null) {
-        timetableQuery =
-            timetableQuery.where('academicYear', isEqualTo: academicYear);
-      }
-      final timetableSnap = await timetableQuery.get();
+      if (semester != null) timetableQuery = timetableQuery.where('semester', isEqualTo: semester);
+      if (academicYear != null) timetableQuery = timetableQuery.where('academicYear', isEqualTo: academicYear);
+
+      // 1. Fetch all three collections in parallel
+      final results = await Future.wait([
+        timetableQuery.get(),
+        _firestore.collection('tasks').where('userId', isEqualTo: user.uid).where('subject', isEqualTo: className).get(),
+        _firestore.collection('exams').where('userId', isEqualTo: user.uid).where('subject', isEqualTo: className).get(),
+      ]);
+
+      final timetableSnap = results[0];
+      final tasksSnap     = results[1];
+      final examsSnap     = results[2];
 
       // Grab subjectId for study-group lookup
       String? subjectId;
@@ -1578,32 +2044,20 @@ class _CalendarScreenState extends State<CalendarScreen> {
         if (subjectId != null) break;
       }
 
-      for (final doc in timetableSnap.docs) {
-        await NotificationService().cancelNotificationsForEvent(doc.id);
-        await doc.reference.delete();
-      }
+      final allDocs = [...timetableSnap.docs, ...tasksSnap.docs, ...examsSnap.docs];
 
-      // 2. Tasks — keyed by subject name only (no semester field on tasks)
-      final tasksSnap = await _firestore
-          .collection('tasks')
-          .where('userId', isEqualTo: user.uid)
-          .where('subject', isEqualTo: className)
-          .get();
-      for (final doc in tasksSnap.docs) {
-        await NotificationService().cancelNotificationsForEvent(doc.id);
-        await doc.reference.delete();
-      }
+      // 2. Cancel all notifications in parallel — failures don't block the delete
+      await Future.wait(
+        allDocs.map((doc) =>
+            NotificationService().cancelNotificationsForEvent(doc.id).catchError((_) {})),
+      );
 
-      // 3. Exams — keyed by subject name only
-      final examsSnap = await _firestore
-          .collection('exams')
-          .where('userId', isEqualTo: user.uid)
-          .where('subject', isEqualTo: className)
-          .get();
-      for (final doc in examsSnap.docs) {
-        await NotificationService().cancelNotificationsForEvent(doc.id);
-        await doc.reference.delete();
+      // 3. Batch delete all documents in one round trip
+      final batch = _firestore.batch();
+      for (final doc in allDocs) {
+        batch.delete(doc.reference);
       }
+      await batch.commit();
 
       // 4. Leave any study groups linked to this subject
       if (subjectId != null) {
@@ -1611,30 +2065,37 @@ class _CalendarScreenState extends State<CalendarScreen> {
             .collection('study_groups')
             .where('subjectId', isEqualTo: subjectId)
             .get();
-        for (final groupDoc in groupsSnap.docs) {
-          final memberIds =
-              List<String>.from(groupDoc.data()['memberIds'] ?? []);
-          if (memberIds.contains(user.uid)) {
-            await groupDoc.reference.update({
-              'memberIds': FieldValue.arrayRemove([user.uid]),
-            });
-          }
-        }
+        final memberGroups = groupsSnap.docs.where(
+          (doc) => (List<String>.from(doc.data()['memberIds'] ?? [])).contains(user.uid),
+        );
+        await Future.wait(
+          memberGroups.map((doc) => doc.reference.update({
+            'memberIds': FieldValue.arrayRemove([user.uid]),
+          })),
+        );
       }
 
       if (mounted) {
+        Navigator.pop(context);
         messenger.showSnackBar(SnackBar(
-          content:
-              Text('"$className" deleted', style: GoogleFonts.dmMono()),
+          content: Text('"$className" deleted',
+              style: GoogleFonts.dmMono(fontWeight: FontWeight.bold, color: Colors.white)),
           backgroundColor: const Color(0xFFB90000),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          duration: const Duration(seconds: 3),
         ));
       }
     } catch (e) {
       if (mounted) {
+        Navigator.pop(context);
         messenger.showSnackBar(SnackBar(
           content: Text('Failed to delete subject',
-              style: GoogleFonts.dmMono()),
-          backgroundColor: Colors.red.shade900,
+              style: GoogleFonts.dmMono(fontWeight: FontWeight.bold, color: Colors.white)),
+          backgroundColor: const Color(0xFFB90000),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          duration: const Duration(seconds: 3),
         ));
       }
     }
@@ -1712,10 +2173,11 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
   // Show task details modal
   void _showTaskDetails(Map<String, dynamic> task) {
+    final stateCtx = context;
     final dueDate = (task['dueDate'] as Timestamp).toDate();
 
     showModalBottomSheet(
-      context: context,
+      context: stateCtx,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
       builder: (context) {
@@ -1789,9 +2251,9 @@ class _CalendarScreenState extends State<CalendarScreen> {
                           Expanded(
                             child: OutlinedButton.icon(
                               onPressed: () async {
-                                Navigator.pop(context);
+                                Navigator.pop(stateCtx);
                                 final result = await Navigator.push(
-                                  context,
+                                  stateCtx,
                                   MaterialPageRoute(
                                     builder: (_) =>
                                         EditTaskScreen(taskData: task),
@@ -1822,21 +2284,28 @@ class _CalendarScreenState extends State<CalendarScreen> {
                           Expanded(
                             child: ElevatedButton.icon(
                               onPressed: () async {
-                                final messenger = ScaffoldMessenger.of(context);
-                                Navigator.pop(context);
-                                await _firestore
-                                    .collection('tasks')
-                                    .doc(task['id'])
-                                    .delete();
-                                messenger.showSnackBar(
-                                  SnackBar(
-                                    content: Text(
-                                      'Task deleted',
-                                      style: GoogleFonts.dmMono(),
-                                    ),
-                                    backgroundColor: const Color(0xFFB90000),
-                                  ),
+                                Navigator.pop(stateCtx);
+                                final messenger = ScaffoldMessenger.of(stateCtx);
+                                bool deleted = false;
+                                await confirmAndDeleteDialog(
+                                  stateCtx,
+                                  title: 'Delete Task',
+                                  message: 'Are you sure you want to delete this task? This cannot be undone.',
+                                  onDelete: () async {
+                                    await _firestore.collection('tasks').doc(task['id']).delete();
+                                    deleted = true;
+                                  },
                                 );
+                                if (deleted) {
+                                  messenger.showSnackBar(SnackBar(
+                                    content: Text('Task deleted',
+                                        style: GoogleFonts.dmMono(fontWeight: FontWeight.bold, color: Colors.white)),
+                                    backgroundColor: const Color(0xFFB90000),
+                                    behavior: SnackBarBehavior.floating,
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                    duration: const Duration(seconds: 3),
+                                  ));
+                                }
                               },
                               icon: const Icon(Icons.delete_outline),
                               label: Text(
@@ -1992,12 +2461,13 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
   // Show exam details modal
   void _showExamDetails(Map<String, dynamic> exam) {
+    final stateCtx = context;
     final examDate = (exam['examDate'] as Timestamp).toDate();
     final startTime = (exam['startTime'] as Timestamp).toDate();
     final endTime = (exam['endTime'] as Timestamp).toDate();
 
     showModalBottomSheet(
-      context: context,
+      context: stateCtx,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
       builder: (context) {
@@ -2065,9 +2535,9 @@ class _CalendarScreenState extends State<CalendarScreen> {
                       Expanded(
                         child: OutlinedButton.icon(
                           onPressed: () async {
-                            Navigator.pop(context);
+                            Navigator.pop(stateCtx);
                             final result = await Navigator.push(
-                              context,
+                              stateCtx,
                               MaterialPageRoute(
                                 builder: (_) => EditExamScreen(examData: exam),
                               ),
@@ -2095,21 +2565,28 @@ class _CalendarScreenState extends State<CalendarScreen> {
                       Expanded(
                         child: ElevatedButton.icon(
                           onPressed: () async {
-                            final messenger = ScaffoldMessenger.of(context);
-                            Navigator.pop(context);
-                            await _firestore
-                                .collection('exams')
-                                .doc(exam['id'])
-                                .delete();
-                            messenger.showSnackBar(
-                              SnackBar(
-                                content: Text(
-                                  'Exam deleted',
-                                  style: GoogleFonts.dmMono(),
-                                ),
-                                backgroundColor: const Color(0xFFB90000),
-                              ),
+                            Navigator.pop(stateCtx);
+                            final messenger = ScaffoldMessenger.of(stateCtx);
+                            bool deleted = false;
+                            await confirmAndDeleteDialog(
+                              stateCtx,
+                              title: 'Delete Exam',
+                              message: 'Are you sure you want to delete this exam? This cannot be undone.',
+                              onDelete: () async {
+                                await _firestore.collection('exams').doc(exam['id']).delete();
+                                deleted = true;
+                              },
                             );
+                            if (deleted) {
+                              messenger.showSnackBar(SnackBar(
+                                content: Text('Exam deleted',
+                                    style: GoogleFonts.dmMono(fontWeight: FontWeight.bold, color: Colors.white)),
+                                backgroundColor: const Color(0xFFB90000),
+                                behavior: SnackBarBehavior.floating,
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                duration: const Duration(seconds: 3),
+                              ));
+                            }
                           },
                           icon: const Icon(Icons.delete_outline),
                           label: Text('Delete', style: GoogleFonts.dmMono()),
@@ -2137,8 +2614,9 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
   // Show class details modal
   void _showClassDetails(Map<String, dynamic> event) {
+    final stateCtx = context;
     showModalBottomSheet(
-      context: context,
+      context: stateCtx,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
       builder: (context) {
@@ -2203,9 +2681,9 @@ class _CalendarScreenState extends State<CalendarScreen> {
                       Expanded(
                         child: OutlinedButton.icon(
                           onPressed: () async {
-                            Navigator.pop(context);
+                            Navigator.pop(stateCtx);
                             final result = await Navigator.push(
-                              context,
+                              stateCtx,
                               MaterialPageRoute(
                                 builder: (_) =>
                                     EditClassScreen(classData: event),
@@ -2234,21 +2712,28 @@ class _CalendarScreenState extends State<CalendarScreen> {
                       Expanded(
                         child: ElevatedButton.icon(
                           onPressed: () async {
-                            final messenger = ScaffoldMessenger.of(context);
-                            Navigator.pop(context);
-                            await _firestore
-                                .collection('timetable')
-                                .doc(event['id'])
-                                .delete();
-                            messenger.showSnackBar(
-                              SnackBar(
-                                content: Text(
-                                  'Class deleted',
-                                  style: GoogleFonts.dmMono(),
-                                ),
-                                backgroundColor: const Color(0xFFB90000),
-                              ),
+                            Navigator.pop(stateCtx);
+                            final messenger = ScaffoldMessenger.of(stateCtx);
+                            bool deleted = false;
+                            await confirmAndDeleteDialog(
+                              stateCtx,
+                              title: 'Delete Class',
+                              message: 'Are you sure you want to delete this class? This cannot be undone.',
+                              onDelete: () async {
+                                await _firestore.collection('timetable').doc(event['id']).delete();
+                                deleted = true;
+                              },
                             );
+                            if (deleted) {
+                              messenger.showSnackBar(SnackBar(
+                                content: Text('Class deleted',
+                                    style: GoogleFonts.dmMono(fontWeight: FontWeight.bold, color: Colors.white)),
+                                backgroundColor: const Color(0xFFB90000),
+                                behavior: SnackBarBehavior.floating,
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                duration: const Duration(seconds: 3),
+                              ));
+                            }
                           },
                           icon: const Icon(Icons.delete_outline),
                           label: Text('Delete', style: GoogleFonts.dmMono()),
@@ -2325,7 +2810,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
                 decoration: BoxDecoration(
                   color: AppColors.card(context),
                   borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: const Color(0xFF3859FF), width: 2),
+                  border: Border.all(color: const Color(0xFF7C3AED), width: 2),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -2339,12 +2824,12 @@ class _CalendarScreenState extends State<CalendarScreen> {
                             width: 44,
                             height: 44,
                             decoration: BoxDecoration(
-                              color: const Color(0xFFBFCAFF),
+                              color: const Color(0xFFEDE9FE),
                               borderRadius: BorderRadius.circular(10),
                             ),
                             child: const Icon(
                               Icons.group,
-                              color: Color(0xFF3859FF),
+                              color: Color(0xFF7C3AED),
                               size: 24,
                             ),
                           ),
@@ -2365,7 +2850,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
                                   data['subject'] ?? '',
                                   style: GoogleFonts.dmMono(
                                     fontSize: 11,
-                                    color: const Color(0xFF3859FF),
+                                    color: const Color(0xFF7C3AED),
                                   ),
                                 ),
                                 const SizedBox(height: 2),
@@ -3366,8 +3851,11 @@ class _CalendarScreenState extends State<CalendarScreen> {
       final summary = parts.isEmpty ? '' : ' (${parts.join(', ')} added)';
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Joined $groupName!$summary', style: GoogleFonts.dmMono()),
+          content: Text('Joined $groupName!$summary',
+              style: GoogleFonts.dmMono(fontWeight: FontWeight.bold, color: Colors.white)),
           backgroundColor: const Color(0xFF34A853),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
           duration: const Duration(seconds: 5),
         ),
       );

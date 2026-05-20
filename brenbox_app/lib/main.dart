@@ -1,10 +1,7 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:firebase_core/firebase_core.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
-import 'package:permission_handler/permission_handler.dart';
 import 'firebase_options.dart';
 import 'authenticate/login.dart';
 import 'authenticate/signup.dart';
@@ -14,7 +11,6 @@ import 'authenticate/auth_gate.dart';
 import 'authenticate/forgot_password_screen.dart';
 
 import 'services/notification_service.dart';
-import 'services/notification_scheduler.dart';
 import 'app_preferences.dart';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
@@ -36,16 +32,6 @@ Future<void> main() async {
   // Initialize notification service and register navigator key for tap navigation
   await NotificationService().initialize();
   NotificationService().setNavigatorKey(navigatorKey);
-
-  // Request storage permission on Android at startup (like notification permission)
-  if (Platform.isAndroid) {
-    await Permission.storage.request();
-  }
-
-  // Reschedule notifications if user is already logged in
-  if (FirebaseAuth.instance.currentUser != null) {
-    await NotificationScheduler().rescheduleAllNotifications();
-  }
 
   runApp(const BrenBoxApp());
 }

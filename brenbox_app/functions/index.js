@@ -108,11 +108,11 @@ exports.onGroupMessage = functions.firestore
 
       const recipients = members.filter((id) => id !== sender);
       for (const uid of recipients) {
-        const token = await getUserToken(uid);
-        if (!token) continue;
         const historyDocId = await writeHistory(uid, title, body, notifType, {
           groupId, groupName: gName, subject: gSubject, tab: 0,
         });
+        const token = await getUserToken(uid);
+        if (!token) continue;
         await sendFcm(token, title, body, {
           type: notifType, groupId, tab: "0", historyDocId,
           channelId: "group_channel",
@@ -141,11 +141,11 @@ exports.onGroupMilestone = functions.firestore
       const body  = `${data.createdByUsername || "Someone"} added: ${data.title || "a task"}`;
 
       for (const uid of members.filter((id) => id !== creator)) {
-        const token = await getUserToken(uid);
-        if (!token) continue;
         const historyDocId = await writeHistory(uid, title, body, "group_milestone", {
           groupId, groupName: gName, subject: gSub, tab: 1,
         });
+        const token = await getUserToken(uid);
+        if (!token) continue;
         await sendFcm(token, title, body, {
           type: "group_milestone", groupId, tab: "1", historyDocId,
           channelId: "group_channel",
@@ -173,11 +173,11 @@ exports.onGroupUpdate = functions.firestore
       const body  = `${data.postedByUsername || "Someone"} posted: ${data.title || "an update"}`;
 
       for (const uid of members.filter((id) => id !== poster)) {
-        const token = await getUserToken(uid);
-        if (!token) continue;
         const historyDocId = await writeHistory(uid, title, body, "group_update", {
           groupId, groupName: gName, subject: gSub, tab: 2,
         });
+        const token = await getUserToken(uid);
+        if (!token) continue;
         await sendFcm(token, title, body, {
           type: "group_update", groupId, tab: "2", historyDocId,
           channelId: "group_channel",
@@ -205,11 +205,11 @@ exports.onGroupNote = functions.firestore
       const body  = `${data.authorUsername || "Someone"} added: ${data.title || "a note"}`;
 
       for (const uid of members.filter((id) => id !== author)) {
-        const token = await getUserToken(uid);
-        if (!token) continue;
         const historyDocId = await writeHistory(uid, title, body, "group_note", {
           groupId, groupName: gName, subject: gSub, tab: 3,
         });
+        const token = await getUserToken(uid);
+        if (!token) continue;
         await sendFcm(token, title, body, {
           type: "group_note", groupId, tab: "3", historyDocId,
           channelId: "group_channel",
@@ -226,9 +226,6 @@ exports.onGroupInvite = functions.firestore
       const inviteeId = data.inviteeId;
       if (!inviteeId) return;
 
-      const token = await getUserToken(inviteeId);
-      if (!token) return;
-
       const inviter   = data.inviterUsername || "Someone";
       const groupName = data.groupName       || "a study group";
       const title     = "New Group Invite";
@@ -237,8 +234,11 @@ exports.onGroupInvite = functions.firestore
       const historyDocId = await writeHistory(inviteeId, title, body, "group_invite", {
         eventId: context.params.inviteId,
       });
+      const token = await getUserToken(inviteeId);
+      if (!token) return;
       await sendFcm(token, title, body, {
         type: "group_invite", historyDocId, channelId: "invite_channel",
+        senderId: data.inviterId || "",
       });
     });
 
@@ -251,9 +251,6 @@ exports.onTimetableShare = functions.firestore
       const recipientId = data.recipientId;
       if (!recipientId) return;
 
-      const token = await getUserToken(recipientId);
-      if (!token) return;
-
       const sender  = data.senderUsername || "Someone";
       const subject = data.subject        || "a subject";
       const title   = "Timetable Shared With You";
@@ -262,7 +259,10 @@ exports.onTimetableShare = functions.firestore
       const historyDocId = await writeHistory(recipientId, title, body, "timetable_invite", {
         eventId: context.params.shareId,
       });
+      const token = await getUserToken(recipientId);
+      if (!token) return;
       await sendFcm(token, title, body, {
         type: "timetable_invite", historyDocId, channelId: "invite_channel",
+        senderId: data.senderId || "",
       });
     });

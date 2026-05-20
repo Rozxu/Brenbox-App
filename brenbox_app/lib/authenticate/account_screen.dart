@@ -111,6 +111,15 @@ class _AccountScreenState extends State<AccountScreen> {
     );
 
     if (shouldLogout == true) {
+      final uid = _auth.currentUser?.uid;
+      if (uid != null) {
+        try {
+          await FirebaseFirestore.instance
+              .collection('users')
+              .doc(uid)
+              .update({'fcmToken': null});
+        } catch (_) {}
+      }
       await _auth.signOut();
       if (mounted) {
         Navigator.pushReplacementNamed(context, '/login');
@@ -613,8 +622,12 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Profile updated successfully', style: GoogleFonts.dmMono()),
+          content: Text('Profile updated successfully',
+              style: GoogleFonts.dmMono(fontWeight: FontWeight.bold, color: Colors.white)),
           backgroundColor: const Color(0xFF34A853),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          duration: const Duration(seconds: 3),
         ));
         Navigator.pop(context);
       }
@@ -627,8 +640,12 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       }
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(message, style: GoogleFonts.dmMono()),
+          content: Text(message,
+              style: GoogleFonts.dmMono(fontWeight: FontWeight.bold, color: Colors.white)),
           backgroundColor: const Color(0xFFB90000),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          duration: const Duration(seconds: 3),
         ));
       }
     } finally {
@@ -735,13 +752,15 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     final uid = user.uid;
 
     try {
-      // Delete all user-owned collections
-      await _deleteCollectionByUser('tasks', 'userId', uid);
-      await _deleteCollectionByUser('timetable', 'userId', uid);
-      await _deleteCollectionByUser('exams', 'userId', uid);
-      await _deleteCollectionByUser('grade_results', 'userId', uid);
-      await _deleteCollectionByUser('notification_history', 'userId', uid);
-      await _deleteCollectionByUser('scheduled_notifications', 'userId', uid);
+      // Delete all user-owned collections in parallel
+      await Future.wait([
+        _deleteCollectionByUser('tasks', 'userId', uid),
+        _deleteCollectionByUser('timetable', 'userId', uid),
+        _deleteCollectionByUser('exams', 'userId', uid),
+        _deleteCollectionByUser('grade_results', 'userId', uid),
+        _deleteCollectionByUser('notification_history', 'userId', uid),
+        _deleteCollectionByUser('scheduled_notifications', 'userId', uid),
+      ]);
 
       // Delete grade settings (keyed by uid)
       await _firestore.collection('grade_settings').doc(uid).delete().catchError((_) {});
@@ -751,8 +770,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           .collection('study_groups')
           .where('memberIds', arrayContains: uid)
           .get();
-      for (final group in groups.docs) {
-        final data = group.data();
+      await Future.wait(groups.docs.map((group) async {
+        final data    = group.data();
         final members = List<String>.from(data['memberIds'] ?? []);
         if (data['createdBy'] == uid && members.length <= 1) {
           await group.reference.delete();
@@ -760,7 +779,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           members.remove(uid);
           await group.reference.update({'memberIds': members});
         }
-      }
+      }));
 
       // Delete user Firestore document
       await _firestore.collection('users').doc(uid).delete();
@@ -768,16 +787,23 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       // Delete Firebase Auth account
       await user.delete();
 
-      if (mounted) Navigator.pushReplacementNamed(context, '/login');
+      if (mounted) {
+        Navigator.of(context).pushNamedAndRemoveUntil(
+          '/login',
+          (route) => false,
+        );
+      }
     } on FirebaseAuthException catch (e) {
       if (e.code == 'requires-recent-login') {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             content: Text(
               'Please log out and log back in, then try deleting your account again.',
-              style: GoogleFonts.dmMono(),
+              style: GoogleFonts.dmMono(fontWeight: FontWeight.bold, color: Colors.white),
             ),
             backgroundColor: const Color(0xFFB90000),
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
             duration: const Duration(seconds: 5),
           ));
         }
@@ -786,8 +812,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text('Failed to delete account. Please try again.',
-              style: GoogleFonts.dmMono()),
+              style: GoogleFonts.dmMono(fontWeight: FontWeight.bold, color: Colors.white)),
           backgroundColor: const Color(0xFFB90000),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          duration: const Duration(seconds: 3),
         ));
       }
     } finally {

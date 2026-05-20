@@ -27,6 +27,7 @@ class _AddClassScreenState extends State<AddClassScreen> {
   DateTime? _endDate;
   TimeOfDay? _startTime;
   TimeOfDay? _endTime;
+  bool _isSaving = false;
 
   int _selectedSemester = 1;
   int _selectedYear = DateTime.now().year;
@@ -40,6 +41,22 @@ class _AddClassScreenState extends State<AddClassScreen> {
     _buildingController.dispose();
     _lecturerController.dispose();
     super.dispose();
+  }
+
+  /// Returns the set of weekday numbers (1=Mon…7=Sun) that actually
+  /// occur at least once in the [_startDate]..[_endDate] range.
+  /// Used by Manual mode to disable days outside the selected window.
+  Set<int> _getAvailableDays() {
+    if (_startDate == null || _endDate == null) return {1, 2, 3, 4, 5, 6, 7};
+    final diff = _endDate!.difference(_startDate!).inDays;
+    if (diff >= 6) return {1, 2, 3, 4, 5, 6, 7};
+    final available = <int>{};
+    DateTime current = _startDate!;
+    while (!current.isAfter(_endDate!)) {
+      available.add(current.weekday);
+      current = current.add(const Duration(days: 1));
+    }
+    return available;
   }
 
   Future<void> _selectDate(BuildContext context, bool isStartDate) async {
@@ -74,6 +91,7 @@ class _AddClassScreenState extends State<AddClassScreen> {
           _startDate = picked;
           if (_endDate != null && _endDate!.isBefore(picked)) {
             _endDate = null;
+            _selectedDays.clear();
           }
         } else {
           if (_startDate != null && picked.isBefore(_startDate!)) {
@@ -81,6 +99,11 @@ class _AddClassScreenState extends State<AddClassScreen> {
             return;
           }
           _endDate = picked;
+        }
+        // Drop any selected day that no longer falls in the chosen date range
+        if (_dateOption == 'Manual' ||
+            (_dateOption == 'Academic Year/Term' && _occurrence == 'Repeating')) {
+          _selectedDays = _selectedDays.intersection(_getAvailableDays());
         }
       });
     }
@@ -141,55 +164,42 @@ class _AddClassScreenState extends State<AddClassScreen> {
     });
   }
 
-  Future<Map<String, dynamic>?> _checkClassClash(
+  // Synchronous clash check against a pre-fetched list — call once before
+  // any loop so we only hit Firestore once regardless of how many dates.
+  Map<String, dynamic>? _checkClashInMemory(
+    List<Map<String, dynamic>> existing,
     DateTime date,
     String startTime,
     String endTime,
-  ) async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return null;
-
-    final existingClasses = await FirebaseFirestore.instance
-        .collection('timetable')
-        .where('userId', isEqualTo: user.uid)
-        .get();
-
-    for (var doc in existingClasses.docs) {
+  ) {
+    for (final data in existing) {
       try {
-        final data = doc.data();
         final timestamp = data['date'] as Timestamp?;
+        if (timestamp == null) continue;
+        final eventDate = timestamp.toDate();
+        if (eventDate.year != date.year ||
+            eventDate.month != date.month ||
+            eventDate.day != date.day) continue;
 
-        if (timestamp != null) {
-          final eventDate = timestamp.toDate();
+        final existingStart = data['startTime'] as String;
+        final existingEnd = data['endTime'] as String;
+        final newStart = _timeToMinutes(startTime);
+        final newEnd = _timeToMinutes(endTime);
+        final exStart = _timeToMinutes(existingStart);
+        final exEnd = _timeToMinutes(existingEnd);
 
-          if (eventDate.year == date.year &&
-              eventDate.month == date.month &&
-              eventDate.day == date.day) {
-            final existingStart = data['startTime'] as String;
-            final existingEnd = data['endTime'] as String;
-
-            final newStartMinutes = _timeToMinutes(startTime);
-            final newEndMinutes = _timeToMinutes(endTime);
-            final existingStartMinutes = _timeToMinutes(existingStart);
-            final existingEndMinutes = _timeToMinutes(existingEnd);
-
-            if (newStartMinutes < existingEndMinutes &&
-                newEndMinutes > existingStartMinutes) {
-              return {
-                'className': data['className'] ?? 'Untitled Class',
-                'startTime': existingStart,
-                'endTime': existingEnd,
-                'date': eventDate,
-              };
-            }
-          }
+        if (newStart < exEnd && newEnd > exStart) {
+          return {
+            'className': data['className'] ?? 'Untitled Class',
+            'startTime': existingStart,
+            'endTime': existingEnd,
+            'date': eventDate,
+          };
         }
-      } catch (e) {
-        print('Error checking clash: $e');
+      } catch (_) {
         continue;
       }
     }
-
     return null;
   }
 
@@ -252,12 +262,47 @@ class _AddClassScreenState extends State<AddClassScreen> {
       return;
     }
 
+    if (mounted) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => PopScope(
+          canPop: false,
+          child: AlertDialog(
+            backgroundColor: AppColors.card(context),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+              side: BorderSide(color: AppColors.border(context), width: 2),
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                const CircularProgressIndicator(),
+                const SizedBox(height: 16),
+                Text('Saving...', style: GoogleFonts.dmMono(fontSize: 14)),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+    setState(() => _isSaving = true);
     try {
       List<Map<String, dynamic>> classEvents = [];
       final startTimeStr =
           '${_startTime!.hour.toString().padLeft(2, '0')}:${_startTime!.minute.toString().padLeft(2, '0')}';
       final endTimeStr =
           '${_endTime!.hour.toString().padLeft(2, '0')}:${_endTime!.minute.toString().padLeft(2, '0')}';
+
+      // Fetch existing timetable entries once — reused for all clash checks
+      // below so repeating classes don't each trigger their own Firestore query.
+      final existingSnap = await FirebaseFirestore.instance
+          .collection('timetable')
+          .where('userId', isEqualTo: user.uid)
+          .get();
+      final existingDocs =
+          existingSnap.docs.map((d) => d.data()).toList();
 
       if (_dateOption == 'None') {
         final eventDate = _startDate ?? DateTime.now();
@@ -267,12 +312,14 @@ class _AddClassScreenState extends State<AddClassScreen> {
           eventDate.day,
         );
 
-        final clash = await _checkClassClash(
+        final clash = _checkClashInMemory(
+          existingDocs,
           normalizedDate,
           startTimeStr,
           endTimeStr,
         );
         if (clash != null) {
+          if (mounted) Navigator.pop(context);
           _showError(
             'Time Clash',
             'Class time clashes with:\n\n'
@@ -303,12 +350,14 @@ class _AddClassScreenState extends State<AddClassScreen> {
           eventDate.day,
         );
 
-        final clash = await _checkClassClash(
+        final clash = _checkClashInMemory(
+          existingDocs,
           normalizedDate,
           startTimeStr,
           endTimeStr,
         );
         if (clash != null) {
+          if (mounted) Navigator.pop(context);
           _showError(
             'Time Clash',
             'Class time clashes with:\n\n'
@@ -354,7 +403,8 @@ class _AddClassScreenState extends State<AddClassScreen> {
               currentDate.day,
             );
 
-            final clash = await _checkClassClash(
+            final clash = _checkClashInMemory(
+              existingDocs,
               normalizedDate,
               startTimeStr,
               endTimeStr,
@@ -394,6 +444,7 @@ class _AddClassScreenState extends State<AddClassScreen> {
 
         if (clashInfo.isNotEmpty && classEvents.isEmpty) {
           final firstClash = clashInfo.first;
+          if (mounted) Navigator.pop(context);
           _showError(
             'All Dates Clash',
             'All selected dates have time clashes.\n\n'
@@ -469,11 +520,15 @@ class _AddClassScreenState extends State<AddClassScreen> {
             ),
           );
 
-          if (shouldContinue != true) return;
+          if (shouldContinue != true) {
+            if (mounted) Navigator.pop(context);
+            return;
+          }
         }
       }
 
       if (classEvents.isEmpty) {
+        if (mounted) Navigator.pop(context);
         _showMessage('No classes to save. Please check your settings.');
         return;
       }
@@ -487,9 +542,10 @@ class _AddClassScreenState extends State<AddClassScreen> {
 
       await batch.commit();
 
-      await NotificationScheduler().rescheduleAllNotifications();
+      NotificationScheduler().rescheduleAllNotifications().catchError((_) {});
 
       if (!mounted) return;
+      if (mounted) Navigator.pop(context);
 
       final shouldNavigate = await showDialog<bool>(
         context: context,
@@ -551,9 +607,12 @@ class _AddClassScreenState extends State<AddClassScreen> {
       }
     } catch (e) {
       print('Error saving class: $e');
+      if (mounted) Navigator.pop(context);
       if (mounted) {
         _showError('Save Error', 'Error saving class. Please try again.');
       }
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
     }
   }
 
@@ -680,8 +739,7 @@ class _AddClassScreenState extends State<AddClassScreen> {
           ] else if (_dateOption == 'Manual') ...[
             _buildDateField('Start Date', _startDate, true),
             _buildDateField('End Date', _endDate, false),
-            _buildOccurrenceSection(),
-            if (_occurrence == 'Repeating') _buildDaySelector(),
+            _buildDaySelector(),
             _buildTimeFields(),
           ] else if (_dateOption == 'Academic Year/Term') ...[
             _buildSemesterYearSelector(),
@@ -718,7 +776,7 @@ class _AddClassScreenState extends State<AddClassScreen> {
               const SizedBox(width: 16),
               Expanded(
                 child: ElevatedButton(
-                  onPressed: _saveClass,
+                  onPressed: _isSaving ? null : _saveClass,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFFB90000),
                     padding: const EdgeInsets.symmetric(vertical: 16),
@@ -726,13 +784,9 @@ class _AddClassScreenState extends State<AddClassScreen> {
                       borderRadius: BorderRadius.circular(12),
                     ),
                   ),
-                  child: Text(
-                    'Save Class',
-                    style: GoogleFonts.dmMono(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
+                  child: _isSaving
+                      ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                      : Text('Save Class', style: GoogleFonts.dmMono(color: Colors.white, fontWeight: FontWeight.bold)),
                 ),
               ),
             ],
@@ -787,6 +841,13 @@ class _AddClassScreenState extends State<AddClassScreen> {
           setState(() {
             _dateOption = label;
             if (label == 'None') _endDate = null;
+            if (label == 'Manual') {
+              _occurrence = 'Repeating';
+              _selectedDays = _selectedDays.intersection(_getAvailableDays());
+            }
+            if (label == 'Academic Year/Term') {
+              _selectedDays = _selectedDays.intersection(_getAvailableDays());
+            }
           });
         },
         child: Container(
@@ -1074,10 +1135,14 @@ class _AddClassScreenState extends State<AddClassScreen> {
 
   Widget _buildDaySelector() {
     final days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    final availableDays = (_dateOption == 'Manual' || _dateOption == 'Academic Year/Term')
+        ? _getAvailableDays()
+        : {1, 2, 3, 4, 5, 6, 7};
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _buildLabel('Date*'),
+        _buildLabel('Days*'),
         const SizedBox(height: 8),
         Wrap(
           spacing: 8,
@@ -1085,33 +1150,39 @@ class _AddClassScreenState extends State<AddClassScreen> {
           children: List.generate(7, (index) {
             final dayIndex = index + 1;
             final isSelected = _selectedDays.contains(dayIndex);
+            final isAvailable = availableDays.contains(dayIndex);
             return GestureDetector(
-              onTap: () {
-                setState(() {
-                  if (isSelected) {
-                    _selectedDays.remove(dayIndex);
-                  } else {
-                    _selectedDays.add(dayIndex);
-                  }
-                });
-              },
-              child: Container(
-                width: 70,
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                decoration: BoxDecoration(
-                  color: isSelected
-                      ? const Color(0xFF6B7280)
-                      : AppColors.card(context),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: AppColors.border(context), width: 2),
-                ),
-                child: Text(
-                  days[index],
-                  textAlign: TextAlign.center,
-                  style: GoogleFonts.dmMono(
-                    fontSize: 13,
-                    fontWeight: FontWeight.bold,
-                    color: isSelected ? Colors.white : AppColors.text(context),
+              onTap: isAvailable
+                  ? () {
+                      setState(() {
+                        if (isSelected) {
+                          _selectedDays.remove(dayIndex);
+                        } else {
+                          _selectedDays.add(dayIndex);
+                        }
+                      });
+                    }
+                  : null,
+              child: Opacity(
+                opacity: isAvailable ? 1.0 : 0.35,
+                child: Container(
+                  width: 70,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  decoration: BoxDecoration(
+                    color: isSelected
+                        ? const Color(0xFF6B7280)
+                        : AppColors.card(context),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppColors.border(context), width: 2),
+                  ),
+                  child: Text(
+                    days[index],
+                    textAlign: TextAlign.center,
+                    style: GoogleFonts.dmMono(
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                      color: isSelected ? Colors.white : AppColors.text(context),
+                    ),
                   ),
                 ),
               ),

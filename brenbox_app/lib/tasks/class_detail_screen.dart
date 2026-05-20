@@ -24,73 +24,45 @@ class ClassDetailScreen extends StatelessWidget {
   }) : super(key: key);
 
   Future<void> _deleteClass(BuildContext context) async {
-    // Show confirmation dialog
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        backgroundColor: AppColors.card(context),
-        title: Text(
-          'Delete Class',
-          style: GoogleFonts.dmMono(fontWeight: FontWeight.bold),
-        ),
-        content: Text(
-          'Are you sure you want to delete this class?',
-          style: GoogleFonts.dmMono(fontSize: 12),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text(
-              'Cancel',
-              style: GoogleFonts.dmMono(color: AppColors.subtext(context)),
-            ),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: Text(
-              'Delete',
-              style: GoogleFonts.dmMono(
-                fontWeight: FontWeight.bold,
-                color: const Color(0xFFB90000),
-              ),
-            ),
-          ),
-        ],
-      ),
+    final messenger = ScaffoldMessenger.of(context);
+    bool deleted = false;
+    Object? deleteError;
+    await confirmAndDeleteDialog(
+      context,
+      title: 'Delete Class',
+      message: 'Are you sure you want to delete this class?',
+      onDelete: () async {
+        try {
+          await FirebaseFirestore.instance
+              .collection('timetable')
+              .doc(classId)
+              .delete();
+          deleted = true;
+        } catch (e) {
+          deleteError = e;
+        }
+      },
     );
-
-    if (confirmed == true) {
-      try {
-        await FirebaseFirestore.instance
-            .collection('timetable')
-            .doc(classId)
-            .delete();
-
-        if (context.mounted) {
-          Navigator.pop(context);
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                'Class deleted successfully',
-                style: GoogleFonts.dmMono(),
-              ),
-              backgroundColor: Colors.green,
-            ),
-          );
-        }
-      } catch (e) {
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                'Error deleting class: ${e.toString()}',
-                style: GoogleFonts.dmMono(),
-              ),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
-      }
+    if (!context.mounted) return;
+    if (deleted) {
+      Navigator.pop(context);
+      messenger.showSnackBar(SnackBar(
+        content: Text('Class deleted successfully',
+            style: GoogleFonts.dmMono(fontWeight: FontWeight.bold, color: Colors.white)),
+        backgroundColor: const Color(0xFF34A853),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        duration: const Duration(seconds: 3),
+      ));
+    } else if (deleteError != null) {
+      messenger.showSnackBar(SnackBar(
+        content: Text('Error deleting class: $deleteError',
+            style: GoogleFonts.dmMono(fontWeight: FontWeight.bold, color: Colors.white)),
+        backgroundColor: const Color(0xFFB90000),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        duration: const Duration(seconds: 3),
+      ));
     }
   }
 

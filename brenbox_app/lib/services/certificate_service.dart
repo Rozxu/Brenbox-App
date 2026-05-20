@@ -1,16 +1,28 @@
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:permission_handler/permission_handler.dart';
 
 class CertificateService {
   final _auth = FirebaseAuth.instance;
   final _storage = FirebaseStorage.instance;
   final _firestore = FirebaseFirestore.instance;
+
+  static const _channel = MethodChannel('com.brenbox/file_saver');
+
+  static String _mimeType(String fileName) {
+    final ext = fileName.split('.').last.toLowerCase();
+    return switch (ext) {
+      'jpg' || 'jpeg' => 'image/jpeg',
+      'png'           => 'image/png',
+      'gif'           => 'image/gif',
+      'webp'          => 'image/webp',
+      _               => 'application/pdf',
+    };
+  }
 
   // ── Step 1: Just pick a PDF and return its bytes + name ───────────────────
   Future<({Uint8List bytes, String name})?> pickPdf() async {
@@ -174,44 +186,42 @@ class CertificateService {
   // iOS:     <AppDocuments>/Brenbox/<subfolder>/
   //
   // Returns null if permission is denied, the saved path on success.
-  Future<String?> savePdfToDevice({
+  // Returns the saved path on success, throws on failure.
+  Future<String> savePdfToDevice({
     required String storagePath,
     required String fileName,
     String subfolder = 'PDFs',
   }) async {
-    try {
-      // Request storage permission on Android (system dialog, same as notifications).
-      if (Platform.isAndroid) {
-        final status = await Permission.storage.request();
-        if (status.isPermanentlyDenied) {
-          await openAppSettings();
-          return null;
-        }
-        if (!status.isGranted) return null;
-      }
+    final bytes = await downloadCertificateBytes(storagePath);
+    if (bytes == null) throw Exception('Failed to download file from storage.');
 
-      final bytes = await downloadCertificateBytes(storagePath);
-      if (bytes == null) return null;
+    final safe = fileName.replaceAll(RegExp(r'[^\w\-.]'), '_');
 
-      final Directory dir;
-      if (Platform.isAndroid) {
-        final downloads = Directory('/storage/emulated/0/Download');
-        final base = await downloads.exists()
-            ? downloads
-            : await getApplicationDocumentsDirectory();
-        dir = Directory('${base.path}/Brenbox/$subfolder');
-      } else {
-        final appDocs = await getApplicationDocumentsDirectory();
-        dir = Directory('${appDocs.path}/Brenbox/$subfolder');
+    if (Platform.isAndroid) {
+      // Write to temp file first — avoids passing large byte arrays over IPC
+      final tempDir = await getTemporaryDirectory();
+      final tempFile = File('${tempDir.path}/$safe');
+      await tempFile.writeAsBytes(bytes);
+      try {
+        final result = await _channel.invokeMethod<String>('saveToDownloads', {
+          'tempPath':  tempFile.path,
+          'fileName':  safe,
+          'subfolder': subfolder,
+          'mimeType':  _mimeType(fileName),
+        });
+        if (result == null) throw Exception('Native save returned null.');
+        return result;
+      } finally {
+        try { await tempFile.delete(); } catch (_) {}
       }
+    } else {
+      // iOS: app documents directory
+      final appDocs = await getApplicationDocumentsDirectory();
+      final dir = Directory('${appDocs.path}/Brenbox/$subfolder');
       if (!await dir.exists()) await dir.create(recursive: true);
-
-      final safe = fileName.replaceAll(RegExp(r'[^\w\-.]'), '_');
       final filePath = '${dir.path}/$safe';
       await File(filePath).writeAsBytes(bytes);
       return filePath;
-    } catch (_) {
-      return null;
     }
   }
   static Reference storageRef(String path) =>

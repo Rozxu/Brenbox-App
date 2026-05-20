@@ -27,6 +27,7 @@ class _AddExamScreenState extends State<AddExamScreen> {
 
   List<String> _availableSubjects = [];
   bool _isLoadingSubjects = true;
+  bool _isSaving = false;
 
   final List<String> _examTypes = ['Final Exam', 'Quiz', 'Test'];
   final List<String> _examModes = ['In Person', 'Online'];
@@ -288,10 +289,37 @@ class _AddExamScreenState extends State<AddExamScreen> {
       return;
     }
 
+    if (mounted) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => PopScope(
+          canPop: false,
+          child: AlertDialog(
+            backgroundColor: AppColors.card(context),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+              side: BorderSide(color: AppColors.border(context), width: 2),
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                const CircularProgressIndicator(),
+                const SizedBox(height: 16),
+                Text('Saving...', style: GoogleFonts.dmMono(fontSize: 14)),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+    setState(() => _isSaving = true);
     try {
       final startMinutes = _startTime!.hour * 60 + _startTime!.minute;
       final endMinutes = _endTime!.hour * 60 + _endTime!.minute;
       if (endMinutes <= startMinutes) {
+        if (mounted) Navigator.pop(context);
         _showError('Validation Error', 'End time must be after start time');
         return;
       }
@@ -314,6 +342,7 @@ class _AddExamScreenState extends State<AddExamScreen> {
       );
 
       if (clash != null) {
+        if (mounted) Navigator.pop(context);
         _showError(
           'Time Clash',
           'Exam time clashes with:\n\n'
@@ -354,9 +383,10 @@ class _AddExamScreenState extends State<AddExamScreen> {
         'createdAt': Timestamp.now(),
       });
 
-      await NotificationScheduler().rescheduleAllNotifications();
+      NotificationScheduler().rescheduleAllNotifications().catchError((_) {});
 
       if (!mounted) return;
+      if (mounted) Navigator.pop(context);
 
       final shouldNavigate = await showDialog<bool>(
         context: context,
@@ -411,9 +441,12 @@ class _AddExamScreenState extends State<AddExamScreen> {
       }
     } catch (e) {
       print('Error saving exam: $e');
+      if (mounted) Navigator.pop(context);
       if (mounted) {
         _showError('Save Error', 'Error saving exam. Please try again.');
       }
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
     }
   }
 
@@ -636,7 +669,7 @@ class _AddExamScreenState extends State<AddExamScreen> {
               const SizedBox(width: 16),
               Expanded(
                 child: ElevatedButton(
-                  onPressed: _saveExam,
+                  onPressed: _isSaving ? null : _saveExam,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF9AB900),
                     padding: const EdgeInsets.symmetric(vertical: 16),
@@ -644,13 +677,9 @@ class _AddExamScreenState extends State<AddExamScreen> {
                       borderRadius: BorderRadius.circular(12),
                     ),
                   ),
-                  child: Text(
-                    'Save Exam',
-                    style: GoogleFonts.dmMono(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
+                  child: _isSaving
+                      ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                      : Text('Save Exam', style: GoogleFonts.dmMono(color: Colors.white, fontWeight: FontWeight.bold)),
                 ),
               ),
             ],

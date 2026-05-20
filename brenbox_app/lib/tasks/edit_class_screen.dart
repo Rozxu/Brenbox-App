@@ -5,6 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
 
 import '../services/notification_scheduler.dart';
+import '../services/notification_service.dart';
 import '../app_preferences.dart';
 
 class EditClassScreen extends StatefulWidget {
@@ -26,6 +27,7 @@ class _EditClassScreenState extends State<EditClassScreen> {
   late TimeOfDay _startTime;
   late TimeOfDay _endTime;
 
+  bool _isSaving = false;
   int? _selectedSemester;
   int? _selectedYear;
   String? _academicYear;
@@ -156,6 +158,32 @@ class _EditClassScreenState extends State<EditClassScreen> {
       return;
     }
 
+    setState(() => _isSaving = true);
+    if (mounted) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => PopScope(
+          canPop: false,
+          child: AlertDialog(
+            backgroundColor: AppColors.card(context),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+              side: BorderSide(color: AppColors.border(context), width: 2),
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                const CircularProgressIndicator(),
+                const SizedBox(height: 16),
+                Text('Updating...', style: GoogleFonts.dmMono(fontSize: 14)),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
     try {
       final startTimeStr =
           '${_startTime.hour.toString().padLeft(2, '0')}:${_startTime.minute.toString().padLeft(2, '0')}';
@@ -168,6 +196,7 @@ class _EditClassScreenState extends State<EditClassScreen> {
       final clash =
           await _checkClassClash(normalizedDate, startTimeStr, endTimeStr);
       if (clash != null) {
+        if (mounted) Navigator.pop(context);
         _showError(
           'Time Clash',
           'Class time clashes with:\n\n'
@@ -201,9 +230,11 @@ class _EditClassScreenState extends State<EditClassScreen> {
           .doc(widget.classData['id'])
           .update(updateData);
 
-      await NotificationScheduler().rescheduleAllNotifications();
+      await NotificationService().cancelNotificationsForEvent(widget.classData['id'] as String? ?? '');
+      NotificationScheduler().rescheduleAllNotifications().catchError((_) {});
 
       if (!mounted) return;
+      if (mounted) Navigator.pop(context);
 
       await showDialog(
         context: context,
@@ -250,9 +281,12 @@ class _EditClassScreenState extends State<EditClassScreen> {
       if (mounted) Navigator.of(context).pop(true);
     } catch (e) {
       print('Error updating class: $e');
+      if (mounted) Navigator.pop(context);
       if (mounted) {
         _showError('Update Error', 'Error updating class. Please try again.');
       }
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
     }
   }
 
@@ -558,7 +592,7 @@ class _EditClassScreenState extends State<EditClassScreen> {
                 const SizedBox(width: 16),
                 Expanded(
                   child: ElevatedButton(
-                    onPressed: _updateClass,
+                    onPressed: _isSaving ? null : _updateClass,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFFB90000),
                       padding: const EdgeInsets.symmetric(vertical: 16),
@@ -566,13 +600,15 @@ class _EditClassScreenState extends State<EditClassScreen> {
                         borderRadius: BorderRadius.circular(12),
                       ),
                     ),
-                    child: Text(
-                      'Update Class',
-                      style: GoogleFonts.dmMono(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
+                    child: _isSaving
+                        ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                        : Text(
+                            'Update Class',
+                            style: GoogleFonts.dmMono(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
                   ),
                 ),
               ],

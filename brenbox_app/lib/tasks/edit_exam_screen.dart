@@ -5,6 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
 
 import '../services/notification_scheduler.dart';
+import '../services/notification_service.dart';
 import '../app_preferences.dart';
 
 class EditExamScreen extends StatefulWidget {
@@ -23,6 +24,7 @@ class _EditExamScreenState extends State<EditExamScreen> {
   String? _selectedSubject;
   String? _selectedType;
   String? _selectedMode;
+  bool _isSaving = false;
   late DateTime _examDate;
   late TimeOfDay _startTime;
   late TimeOfDay _endTime;
@@ -304,10 +306,37 @@ class _EditExamScreenState extends State<EditExamScreen> {
       return;
     }
 
+    if (mounted) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => PopScope(
+          canPop: false,
+          child: AlertDialog(
+            backgroundColor: AppColors.card(context),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+              side: BorderSide(color: AppColors.border(context), width: 2),
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                const CircularProgressIndicator(),
+                const SizedBox(height: 16),
+                Text('Updating...', style: GoogleFonts.dmMono(fontSize: 14)),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+    setState(() => _isSaving = true);
     try {
       final startMinutes = _startTime.hour * 60 + _startTime.minute;
       final endMinutes = _endTime.hour * 60 + _endTime.minute;
       if (endMinutes <= startMinutes) {
+        if (mounted) Navigator.pop(context);
         _showError('Validation Error', 'End time must be after start time');
         return;
       }
@@ -323,6 +352,7 @@ class _EditExamScreenState extends State<EditExamScreen> {
       final clash =
           await _checkExamClash(normalizedDate, startTimeStr, endTimeStr);
       if (clash != null) {
+        if (mounted) Navigator.pop(context);
         _showError(
           'Time Clash',
           'Exam time clashes with:\n\n'
@@ -383,10 +413,12 @@ class _EditExamScreenState extends State<EditExamScreen> {
         });
       }
 
-      // Reschedule notifications in background — don't block the UI.
-      NotificationScheduler().rescheduleAllNotifications();
+      // Cancel stale dedupe records for this exam, then reschedule fresh.
+      await NotificationService().cancelNotificationsForEvent(widget.examData['id'] as String? ?? '');
+      NotificationScheduler().rescheduleAllNotifications().catchError((_) {});
 
       if (!mounted) return;
+      if (mounted) Navigator.pop(context);
 
       await showDialog(
         context: context,
@@ -425,9 +457,12 @@ class _EditExamScreenState extends State<EditExamScreen> {
       if (mounted) Navigator.of(context).pop(true);
     } catch (e) {
       print('Error updating exam: $e');
+      if (mounted) Navigator.pop(context);
       if (mounted) {
         _showError('Update Error', 'Error updating exam. Please try again.');
       }
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
     }
   }
 
@@ -642,16 +677,16 @@ class _EditExamScreenState extends State<EditExamScreen> {
                 const SizedBox(width: 16),
                 Expanded(
                   child: ElevatedButton(
-                    onPressed: _updateExam,
+                    onPressed: _isSaving ? null : _updateExam,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF9AB900),
                       padding: const EdgeInsets.symmetric(vertical: 16),
                       shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12)),
                     ),
-                    child: Text('Update Exam',
-                        style: GoogleFonts.dmMono(
-                            color: Colors.white, fontWeight: FontWeight.bold)),
+                    child: _isSaving
+                        ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                        : Text('Update Exam', style: GoogleFonts.dmMono(color: Colors.white, fontWeight: FontWeight.bold)),
                   ),
                 ),
               ],

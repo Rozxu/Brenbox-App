@@ -455,10 +455,37 @@ class _GradeCalculatorScreenState extends State<GradeCalculatorScreen> {
   }
 
   Future<void> _deleteResult(String docId) async {
+    if (mounted) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => PopScope(
+          canPop: false,
+          child: AlertDialog(
+            backgroundColor: AppColors.card(context),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+              side: BorderSide(color: AppColors.border(context), width: 2),
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                const CircularProgressIndicator(),
+                const SizedBox(height: 16),
+                Text('Deleting...', style: GoogleFonts.dmMono(fontSize: 14)),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
     try {
       await _firestore.collection('grade_results').doc(docId).delete();
+      if (mounted) Navigator.pop(context);
       _snack('Result deleted.', AppColors.text(context));
     } catch (e) {
+      if (mounted) Navigator.pop(context);
       _snack('Failed to delete: $e', _gradeRed);
     }
   }
@@ -622,12 +649,14 @@ class _GradeCalculatorScreenState extends State<GradeCalculatorScreen> {
           borderRadius: BorderRadius.circular(16),
           side: BorderSide(color: AppColors.border(context), width: 2),
         ),
-        title: Row(
+        title: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.check_circle, color: _gradeGreen, size: 26),
-            const SizedBox(width: 10),
+            const Icon(Icons.check_circle, color: _gradeGreen, size: 48),
+            const SizedBox(height: 12),
             Text(
-              'Saved!',
+              'Results has been saved',
+              textAlign: TextAlign.center,
               style: GoogleFonts.dmMono(
                 fontWeight: FontWeight.bold,
                 fontSize: 16,
@@ -635,26 +664,7 @@ class _GradeCalculatorScreenState extends State<GradeCalculatorScreen> {
             ),
           ],
         ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _resultRow(
-              'Current total',
-              '${_totalPercentage.toStringAsFixed(1)}%  •  Grade $grade',
-              color,
-            ),
-            const SizedBox(height: 8),
-            if (target != null && needed > 0)
-              _resultRow(
-                'Still needed for $target',
-                '${needed.toStringAsFixed(1)}% more',
-                _gradeYellow,
-              )
-            else if (target != null && needed <= 0)
-              _resultRow('Target $target', 'Already achieved! 🎉', _gradeGreen),
-          ],
-        ),
+        actionsAlignment: MainAxisAlignment.center,
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
@@ -1260,7 +1270,12 @@ class _GradeCalculatorScreenState extends State<GradeCalculatorScreen> {
                           ? _targetNeededPct.toStringAsFixed(1)
                           : '0',
                       grade: null,
-                      gradeColor: _gradeYellow,
+                      gradeColor:
+                          _targetNeededPct <= 0 &&
+                              _selectedTargetGrade != null &&
+                              _percentSumValid
+                          ? _gradeGreen
+                          : _gradeYellow,
                       valueColor:
                           _targetNeededPct <= 0 &&
                               _selectedTargetGrade != null &&

@@ -14,6 +14,8 @@ import 'package:flutter_pdfview/flutter_pdfview.dart';
 import 'package:image/image.dart' as img;
 import 'package:cached_network_image/cached_network_image.dart';
 import '../services/certificate_service.dart';
+import '../services/notification_scheduler.dart';
+import '../services/notification_service.dart';
 import '../app_preferences.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -23,6 +25,7 @@ const _kBlue  = Color(0xFF3859FF);
 const _kRed   = Color(0xFFB90000);
 const _kGreen = Color(0xFF34A853);
 const _kYellow = Color(0xFFFBBC05);
+const _kGroup = Color(0xFF7C3AED);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SHARED HELPER WIDGETS (defined at top level so all tabs can use them)
@@ -174,35 +177,35 @@ class _GroupPdfViewerScreenState extends State<_GroupPdfViewerScreen> {
         subfolder:   'PDFs',
       );
       if (!mounted) return;
-      if (savedPath != null) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Saved to device!',
-                  style: GoogleFonts.dmMono(
-                      fontSize: 12, fontWeight: FontWeight.bold,
-                      color: Colors.white)),
-              Text(savedPath,
-                  style: GoogleFonts.dmMono(fontSize: 10, color: Colors.white70),
-                  maxLines: 2, overflow: TextOverflow.ellipsis),
-            ],
-          ),
-          backgroundColor: _kGreen,
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-          duration: const Duration(seconds: 4),
-        ));
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Download failed. Please try again.',
-              style: GoogleFonts.dmMono(fontSize: 12)),
-          backgroundColor: _kRed,
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-        ));
-      }
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Saved to Downloads/Brenbox/PDFs!',
+                style: GoogleFonts.dmMono(
+                    fontSize: 12, fontWeight: FontWeight.bold,
+                    color: Colors.white)),
+            Text(savedPath,
+                style: GoogleFonts.dmMono(fontSize: 10, color: Colors.white70),
+                maxLines: 2, overflow: TextOverflow.ellipsis),
+          ],
+        ),
+        backgroundColor: _kGreen,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        duration: const Duration(seconds: 4),
+      ));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Download failed: $e',
+            style: GoogleFonts.dmMono(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white)),
+        backgroundColor: _kRed,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        duration: const Duration(seconds: 5),
+      ));
     } finally {
       if (mounted) setState(() => _downloading = false);
     }
@@ -365,37 +368,35 @@ class _GroupImageViewerScreenState extends State<_GroupImageViewerScreen> {
         subfolder:   'Images',
       );
       if (!mounted) return;
-      if (savedPath != null) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Saved to Downloads/Brenbox/Images!',
-                  style: GoogleFonts.dmMono(
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white)),
-              Text(savedPath,
-                  style: GoogleFonts.dmMono(fontSize: 10, color: Colors.white70),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis),
-            ],
-          ),
-          backgroundColor: _kGreen,
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-          duration: const Duration(seconds: 4),
-        ));
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Download failed. Please try again.',
-              style: GoogleFonts.dmMono(fontSize: 12)),
-          backgroundColor: _kRed,
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-        ));
-      }
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Saved to Downloads/Brenbox/Images!',
+                style: GoogleFonts.dmMono(
+                    fontSize: 12, fontWeight: FontWeight.bold,
+                    color: Colors.white)),
+            Text(savedPath,
+                style: GoogleFonts.dmMono(fontSize: 10, color: Colors.white70),
+                maxLines: 2, overflow: TextOverflow.ellipsis),
+          ],
+        ),
+        backgroundColor: _kGreen,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        duration: const Duration(seconds: 4),
+      ));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Download failed: $e',
+            style: GoogleFonts.dmMono(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white)),
+        backgroundColor: _kRed,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        duration: const Duration(seconds: 5),
+      ));
     } finally {
       if (mounted) setState(() => _downloading = false);
     }
@@ -541,8 +542,11 @@ class _StudyGroupScreenState extends State<StudyGroupScreen>
           if (!snap.exists) {
             ScaffoldMessenger.of(context).showSnackBar(SnackBar(
               content: Text('This group no longer exists.',
-                  style: GoogleFonts.dmMono()),
+                  style: GoogleFonts.dmMono(fontWeight: FontWeight.bold, color: Colors.white)),
               backgroundColor: _kRed,
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              duration: const Duration(seconds: 3),
             ));
             Navigator.pop(context);
             return;
@@ -555,8 +559,10 @@ class _StudyGroupScreenState extends State<StudyGroupScreen>
           if (!memberIds.contains(uid)) {
             ScaffoldMessenger.of(context).showSnackBar(SnackBar(
               content: Text('You have been removed from this group.',
-                  style: GoogleFonts.dmMono()),
+                  style: GoogleFonts.dmMono(fontWeight: FontWeight.bold, color: Colors.white)),
               backgroundColor: _kRed,
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
               duration: const Duration(seconds: 4),
             ));
             Navigator.pop(context);
@@ -704,9 +710,9 @@ class _StudyGroupScreenState extends State<StudyGroupScreen>
                                         .where('inviteeId', isEqualTo: uid)
                                         .where('status', isEqualTo: 'pending')
                                         .get();
-                                    for (final d in pending.docs) {
-                                      await d.reference.update({'status': 'cancelled'});
-                                    }
+                                    await Future.wait(pending.docs.map(
+                                      (d) => d.reference.update({'status': 'cancelled'}),
+                                    ));
                                   }
                                 },
                                 child: Container(
@@ -891,7 +897,7 @@ class _StudyGroupScreenState extends State<StudyGroupScreen>
       body: TabBarView(
         controller: _tabController,
         children: [
-          _ChatTab(groupId: widget.groupId, subject: widget.subject,
+          _ChatTab(groupId: widget.groupId, groupName: widget.groupName, subject: widget.subject,
               getUsername: _getMyUsername),
           _MilestonesTab(groupId: widget.groupId, getUsername: _getMyUsername),
           _UpdatesTab(groupId: widget.groupId, getUsername: _getMyUsername),
@@ -908,11 +914,13 @@ class _StudyGroupScreenState extends State<StudyGroupScreen>
 
 class _ChatTab extends StatefulWidget {
   final String groupId;
+  final String groupName;
   final String subject;
   final Future<String> Function() getUsername;
 
   const _ChatTab({
     required this.groupId,
+    required this.groupName,
     required this.subject,
     required this.getUsername,
   });
@@ -1117,9 +1125,9 @@ class _ChatTabState extends State<_ChatTab> {
                       Container(
                         padding: const EdgeInsets.all(10),
                         decoration: BoxDecoration(
-                            color: _kGreen.withValues(alpha: 0.1),
+                            color: _kGroup.withValues(alpha: 0.1),
                             borderRadius: BorderRadius.circular(10)),
-                        child: const Icon(Icons.event, color: _kGreen, size: 22),
+                        child: const Icon(Icons.event, color: _kGroup, size: 22),
                       ),
                       const SizedBox(width: 12),
                       Expanded(child: Text('Schedule Group Event',
@@ -1140,10 +1148,10 @@ class _ChatTabState extends State<_ChatTab> {
                           padding: const EdgeInsets.symmetric(
                               horizontal: 14, vertical: 7),
                           decoration: BoxDecoration(
-                            color: evType == t ? _kGreen : AppColors.card(ctx),
+                            color: evType == t ? _kGroup : AppColors.card(ctx),
                             borderRadius: BorderRadius.circular(20),
                             border: Border.all(
-                                color: evType == t ? _kGreen : AppColors.border(ctx),
+                                color: evType == t ? _kGroup : AppColors.border(ctx),
                                 width: evType == t ? 2 : 1),
                           ),
                           child: Text(t, style: GoogleFonts.dmMono(
@@ -1172,7 +1180,7 @@ class _ChatTabState extends State<_ChatTab> {
                             data: isDark
                                 ? ThemeData.dark().copyWith(
                                     colorScheme: const ColorScheme.dark(
-                                      primary: _kGreen,
+                                      primary: _kGroup,
                                       onPrimary: Colors.white,
                                       surface: Color(0xFF252D47),
                                       onSurface: Colors.white,
@@ -1180,7 +1188,7 @@ class _ChatTabState extends State<_ChatTab> {
                                   )
                                 : ThemeData.light().copyWith(
                                     colorScheme: const ColorScheme.light(
-                                      primary: _kGreen,
+                                      primary: _kGroup,
                                     ),
                                   ),
                             child: ch!,
@@ -1194,7 +1202,7 @@ class _ChatTabState extends State<_ChatTab> {
                             ? DateFormat('EEE, dd MMM yyyy').format(evDate!)
                             : 'Select date *',
                         active: evDate != null,
-                        color: _kGreen,
+                        color: _kGroup,
                       ),
                     ),
                     const SizedBox(height: 10),
@@ -1211,7 +1219,7 @@ class _ChatTabState extends State<_ChatTab> {
                         icon: Icons.access_time,
                         label: evTime != null ? evTime!.format(ctx) : 'Select time *',
                         active: evTime != null,
-                        color: _kGreen,
+                        color: _kGroup,
                         showArrow: true,
                       ),
                     ),
@@ -1253,7 +1261,7 @@ class _ChatTabState extends State<_ChatTab> {
                         label: Text('Send to Group', style: GoogleFonts.dmMono(
                             fontSize: 14, fontWeight: FontWeight.bold)),
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: _kGreen,
+                          backgroundColor: _kGroup,
                           foregroundColor: Colors.white,
                           padding: const EdgeInsets.symmetric(vertical: 15),
                           shape: RoundedRectangleBorder(
@@ -1424,10 +1432,12 @@ class _ChatTabState extends State<_ChatTab> {
                   style: GoogleFonts.dmMono(fontSize: 14, color: _kRed)),
               onTap: () async {
                 Navigator.pop(context);
-                final ok = await confirmDeleteDialog(context,
-                    title: 'Delete Message',
-                    message: 'Are you sure you want to delete this message? This cannot be undone.');
-                if (ok) await doc.reference.delete();
+                await confirmAndDeleteDialog(
+                  context,
+                  title: 'Delete Message',
+                  message: 'Are you sure you want to delete this message? This cannot be undone.',
+                  onDelete: () => doc.reference.delete(),
+                );
               },
             ),
             const SizedBox(height: 8),
@@ -1473,10 +1483,12 @@ class _ChatTabState extends State<_ChatTab> {
                   style: GoogleFonts.dmMono(fontSize: 14, color: _kRed)),
               onTap: () async {
                 Navigator.pop(context);
-                final ok = await confirmDeleteDialog(context,
-                    title: 'Delete Message',
-                    message: 'Are you sure you want to delete this message? This cannot be undone.');
-                if (ok) await doc.reference.delete();
+                await confirmAndDeleteDialog(
+                  context,
+                  title: 'Delete Message',
+                  message: 'Are you sure you want to delete this message? This cannot be undone.',
+                  onDelete: () => doc.reference.delete(),
+                );
               },
             ),
             const SizedBox(height: 8),
@@ -2109,30 +2121,37 @@ class _ChatTabState extends State<_ChatTab> {
                         'accepted': FieldValue.arrayUnion([myUid]),
                         'declined': FieldValue.arrayRemove([myUid]),
                       });
-                      if (evTs != null) {
-                        final user = _auth.currentUser;
-                        if (user != null) {
-                          await _db.collection('tasks').add({
-                            'userId':      user.uid,
-                            'taskTitle':   title,
-                            'taskDetails': details,
-                            'subject':     widget.subject,
-                            'taskType':    eType,
-                            'dueDate':     Timestamp.fromDate(evTs),
-                            'completed':   false,
-                            'createdAt':   FieldValue.serverTimestamp(),
-                          });
-                          if (mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                              content: Text(
-                                '"$title" has been added to your tasks!',
-                                style: GoogleFonts.dmMono(),
-                              ),
-                              backgroundColor: _kGreen,
-                              duration: const Duration(seconds: 3),
-                            ));
-                          }
-                        }
+                      final personalDocId = '${myUid}__${doc.id}';
+                      await FirebaseFirestore.instance
+                          .collection('user_group_events')
+                          .doc(personalDocId)
+                          .set({
+                        'userId': myUid,
+                        'messageId': doc.id,
+                        'groupId': widget.groupId,
+                        'groupName': widget.groupName,
+                        'subject': widget.subject,
+                        'title': data['title'] ?? 'Group Event',
+                        'details': data['details'] ?? '',
+                        'eventType': data['eventType'] ?? 'Meeting',
+                        'eventDate': data['eventDate'],
+                        'senderUsername': data['senderUsername'] ?? '',
+                        'senderId': data['senderId'] ?? '',
+                        'isCompleted': false,
+                        'createdAt': FieldValue.serverTimestamp(),
+                      }, SetOptions(merge: false));
+                      NotificationScheduler().scheduleGroupEventsOnly().catchError((_) {});
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                          content: Text(
+                            'You accepted "$title"!',
+                            style: GoogleFonts.dmMono(fontWeight: FontWeight.bold, color: Colors.white),
+                          ),
+                          backgroundColor: _kGreen,
+                          behavior: SnackBarBehavior.floating,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          duration: const Duration(seconds: 2),
+                        ));
                       }
                     },
                     child: Container(
@@ -2157,6 +2176,13 @@ class _ChatTabState extends State<_ChatTab> {
                         'declined': FieldValue.arrayUnion([myUid]),
                         'accepted': FieldValue.arrayRemove([myUid]),
                       });
+                      final personalDocId = '${myUid}__${doc.id}';
+                      await NotificationService().cancelNotificationsForEvent(personalDocId);
+                      await FirebaseFirestore.instance
+                          .collection('user_group_events')
+                          .doc(personalDocId)
+                          .delete()
+                          .catchError((_) {});
                     },
                     child: Container(
                       padding: const EdgeInsets.symmetric(vertical: 10),
@@ -2626,24 +2652,26 @@ class _MilestonesTabState extends State<_MilestonesTab> {
                     data['createdByUsername'] ?? 'Unknown', _kBlue,
                     textColor: AppColors.isDark(context) ? const Color(0xFF82B4FF) : _kBlue),
                 if (dueDate != null)
-                  _infoChip(Icons.schedule,
+                  _infoChip(
+                      Icons.schedule,
                       DateFormat('dd MMM, h:mm a').format(dueDate),
-                      isOverdue ? _kRed : _kGreen,
+                      (!done && isOverdue) ? _kRed : _kGreen,
                       bold: true,
+                      solid: !done && isOverdue,
                       textColor: AppColors.isDark(context)
-                          ? (done ? const Color(0xFF4ADE80) : const Color(0xFFFF6B6B))
-                          : (done ? _kGreen : _kRed)),
+                          ? const Color(0xFF4ADE80)
+                          : _kGreen),
               ]),
             ],
           )),
           IconButton(
             icon: const Icon(Icons.delete_outline, color: _kRed, size: 22),
-            onPressed: () async {
-              final ok = await confirmDeleteDialog(context,
-                  title: 'Delete Task',
-                  message: 'Are you sure you want to delete this task? This cannot be undone.');
-              if (ok) await doc.reference.delete();
-            },
+            onPressed: () => confirmAndDeleteDialog(
+              context,
+              title: 'Delete Task',
+              message: 'Are you sure you want to delete this task? This cannot be undone.',
+              onDelete: () => doc.reference.delete(),
+            ),
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(),
           ),
@@ -2653,16 +2681,18 @@ class _MilestonesTabState extends State<_MilestonesTab> {
   }
 
   Widget _infoChip(IconData icon, String label, Color color,
-      {bool bold = false, Color? textColor}) {
+      {bool bold = false, Color? textColor, bool solid = false}) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
-          color: color.withOpacity(0.2), borderRadius: BorderRadius.circular(20)),
+          color: solid ? color : color.withValues(alpha: 0.2),
+          borderRadius: BorderRadius.circular(20)),
       child: Row(mainAxisSize: MainAxisSize.min, children: [
-        Icon(icon, size: 13, color: color),
+        Icon(icon, size: 13, color: solid ? Colors.white : color),
         const SizedBox(width: 4),
         Text(label, style: GoogleFonts.dmMono(
-            fontSize: 11, color: textColor ?? color,
+            fontSize: 11,
+            color: solid ? Colors.white : (textColor ?? color),
             fontWeight: bold ? FontWeight.bold : FontWeight.normal)),
       ]),
     );
@@ -2947,12 +2977,12 @@ class _UpdatesTabState extends State<_UpdatesTab> {
                         if (isMe) ...[
                           const SizedBox(width: 10),
                           GestureDetector(
-                            onTap: () async {
-                              final ok = await confirmDeleteDialog(ctx,
-                                  title: 'Delete Note',
-                                  message: 'Are you sure you want to delete this note? This cannot be undone.');
-                              if (ok) await doc.reference.delete();
-                            },
+                            onTap: () => confirmAndDeleteDialog(
+                              context,
+                              title: 'Delete Note',
+                              message: 'Are you sure you want to delete this note? This cannot be undone.',
+                              onDelete: () => doc.reference.delete(),
+                            ),
                             child: const Icon(Icons.delete_outline,
                                 color: _kRed, size: 20),
                           ),
@@ -3206,10 +3236,12 @@ class _NotesTabState extends State<_NotesTab> {
                         color: _kRed, size: 24),
                     onPressed: () async {
                       Navigator.pop(ctx);
-                      final ok = await confirmDeleteDialog(context,
-                          title: 'Delete Note',
-                          message: 'Are you sure you want to delete this note? This cannot be undone.');
-                      if (ok) await doc.reference.delete();
+                      await confirmAndDeleteDialog(
+                        context,
+                        title: 'Delete Note',
+                        message: 'Are you sure you want to delete this note? This cannot be undone.',
+                        onDelete: () => doc.reference.delete(),
+                      );
                     },
                   ),
               ]),

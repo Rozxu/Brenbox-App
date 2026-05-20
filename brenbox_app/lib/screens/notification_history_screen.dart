@@ -20,28 +20,68 @@ class NotificationHistoryScreen extends StatefulWidget {
 }
 
 class _NotificationHistoryScreenState
-    extends State<NotificationHistoryScreen> {
+    extends State<NotificationHistoryScreen>
+    with WidgetsBindingObserver {
   DateTime _now = DateTime.now();
   Timer? _ticker;
+
+  // Single stable subscription — avoids re-creating the Firestore stream on
+  // every setState call (which would cause a loading-spinner flash each tick).
+  StreamSubscription<QuerySnapshot>? _histSub;
+  List<QueryDocumentSnapshot> _docs   = [];
+  bool _loading  = true;
+  bool _hasError = false;
 
   @override
   void initState() {
     super.initState();
-    // Advance _now every 60 s so notifications whose scheduledFor time arrives
-    // while the screen is open appear automatically — same mechanism as _BellDot.
-    _ticker = Timer.periodic(const Duration(seconds: 60), (_) {
+    WidgetsBinding.instance.addObserver(this);
+
+    _ticker = Timer.periodic(const Duration(seconds: 15), (_) {
       if (mounted) setState(() => _now = DateTime.now());
     });
+
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      _histSub = FirebaseFirestore.instance
+          .collection('notification_history')
+          .where('userId', isEqualTo: user.uid)
+          .snapshots()
+          .listen((snap) {
+        if (mounted) {
+          setState(() {
+            _docs     = List<QueryDocumentSnapshot>.from(snap.docs);
+            _loading  = false;
+            _hasError = false;
+          });
+        }
+      }, onError: (_) {
+        if (mounted) setState(() { _loading = false; _hasError = true; });
+      });
+
+    } else {
+      _loading = false;
+    }
+  }
+
+  // Fires immediately when the user returns to the app — no ticker delay.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && mounted) {
+      setState(() => _now = DateTime.now());
+    }
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _histSub?.cancel();
     _ticker?.cancel();
     super.dispose();
   }
 
   Future<void> _refresh() async {
-    await Future.delayed(const Duration(milliseconds: 400));
+    await Future.delayed(const Duration(milliseconds: 300));
     if (mounted) setState(() => _now = DateTime.now());
   }
 
@@ -70,16 +110,13 @@ class _NotificationHistoryScreenState
         actions: [
           TextButton(
             onPressed: () async {
+              // Mark only already-fired (past) unread docs as read — uses the
+              // cached _docs so no extra Firestore round-trip is needed.
               final batch = firestore.batch();
-              final snapshot = await firestore
-                  .collection('notification_history')
-                  .where('userId', isEqualTo: user.uid)
-                  .where('isRead', isEqualTo: false)
-                  .get();
-              for (var doc in snapshot.docs) {
-                // Only mark docs whose scheduledFor has already passed
-                final ts =
-                    (doc.data()['scheduledFor'] as Timestamp?)?.toDate();
+              for (final doc in _docs) {
+                final data = doc.data() as Map<String, dynamic>;
+                if (data['isRead'] as bool? ?? false) continue;
+                final ts = (data['scheduledFor'] as Timestamp?)?.toDate();
                 if (ts != null && !ts.isAfter(_now)) {
                   batch.update(doc.reference, {'isRead': true});
                 }
@@ -94,99 +131,78 @@ class _NotificationHistoryScreenState
           ),
         ],
       ),
-      body: StreamBuilder<QuerySnapshot>(
-        // Single-field query — no composite index needed.
-        // The stream is real-time: any new doc written by NotificationService
-        // appears here immediately. We sort client-side.
-        stream: firestore
-            .collection('notification_history')
-            .where('userId', isEqualTo: user.uid)
-            .snapshots(),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(
-                child: CircularProgressIndicator(
-                    color: Color(0xFF6B7280)));
-          }
+      body: _buildBody(context, firestore),
+    );
+  }
 
-          if (snapshot.hasError) {
-            return _scrollableEmpty(
-              context,
-              icon: Icons.error_outline,
-              message: 'Could not load notifications',
-              sub: 'Pull down to retry',
-            );
-          }
+  Widget _buildBody(BuildContext context, FirebaseFirestore firestore) {
+    if (_loading) {
+      return const Center(
+          child: CircularProgressIndicator(color: Color(0xFF6B7280)));
+    }
 
-          final allDocs = List<QueryDocumentSnapshot>.from(
-              snapshot.data?.docs ?? []);
+    if (_hasError) {
+      return _scrollableEmpty(
+        context,
+        icon: Icons.error_outline,
+        message: 'Could not load notifications',
+        sub: 'Pull down to retry',
+      );
+    }
 
-          // Only show notifications that have already fired
-          // Use _now (updated on refresh) so swipe-down reveals new notifications
-          final fired = allDocs.where((doc) {
-            final ts = (doc.data()
-                    as Map<String, dynamic>)['scheduledFor'] as Timestamp?;
-            if (ts == null) return false;
-            return !ts.toDate().isAfter(_now);
-          }).toList();
+    int tsMs(QueryDocumentSnapshot d) =>
+        ((d.data() as Map)['scheduledFor'] as Timestamp?)
+            ?.millisecondsSinceEpoch ?? 0;
 
-          if (fired.isEmpty) {
-            return _scrollableEmpty(
-              context,
-              icon: Icons.notifications_none,
-              message: 'No notifications yet',
-              sub: 'Pull down to refresh',
-            );
-          }
+    // Only show notifications that have already fired (scheduledFor <= now).
+    final fired = _docs.where((doc) {
+      final ts = (doc.data() as Map<String, dynamic>)['scheduledFor'] as Timestamp?;
+      return ts != null && !ts.toDate().isAfter(_now);
+    }).toList()
+      ..sort((a, b) => tsMs(b).compareTo(tsMs(a))); // most-recent first
 
-          // Sort most-recent first
-          fired.sort((a, b) {
-            final aMs =
-                ((a.data() as Map)['scheduledFor'] as Timestamp?)
-                        ?.millisecondsSinceEpoch ??
-                    0;
-            final bMs =
-                ((b.data() as Map)['scheduledFor'] as Timestamp?)
-                        ?.millisecondsSinceEpoch ??
-                    0;
-            return bMs.compareTo(aMs);
-          });
+    if (fired.isEmpty) {
+      return _scrollableEmpty(
+        context,
+        icon: Icons.notifications_none,
+        message: 'No notifications yet',
+        sub: 'Pull down to refresh',
+      );
+    }
 
-          return RefreshIndicator(
-            onRefresh: _refresh,
-            color: const Color(0xFFB90000),
-            child: ListView.builder(
-              physics: const AlwaysScrollableScrollPhysics(),
-              padding: const EdgeInsets.all(16),
-              itemCount: fired.take(50).length,
-              itemBuilder: (context, index) {
-                final data =
-                    fired[index].data() as Map<String, dynamic>;
-                return _NotificationCard(
-                  docId: fired[index].id,
-                  title: data['title'] ?? '',
-                  body: data['body'] ?? '',
-                  type: data['type'] ?? 'class',
-                  isRead: data['isRead'] ?? false,
-                  scheduledFor:
-                      (data['scheduledFor'] as Timestamp?)?.toDate(),
-                  firestore: firestore,
-                  onGoToCalendar: widget.onGoToCalendar,
-                  groupId:   data['groupId']   as String?,
-                  groupName: data['groupName'] as String?,
-                  subject:   data['subject']   as String?,
-                  tab:       data['tab']       as int?,
-                  eventId:   data['eventId']   as String?,
-                );
-              },
-            ),
+    final items = fired.take(80).map((doc) => _HistoryItem(doc)).toList();
+
+    return RefreshIndicator(
+      onRefresh: _refresh,
+      color: const Color(0xFFB90000),
+      child: ListView.builder(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+        itemCount: items.length,
+        itemBuilder: (context, index) {
+          final doc  = items[index].doc;
+          final data = doc.data() as Map<String, dynamic>;
+          return _NotificationCard(
+            docId:        doc.id,
+            title:        data['title']  ?? '',
+            body:         data['body']   ?? '',
+            type:         data['type']   ?? 'class',
+            isRead:       data['isRead'] ?? false,
+            isUpcoming:   false,
+            scheduledFor: (data['scheduledFor'] as Timestamp?)?.toDate(),
+            firestore:    firestore,
+            onGoToCalendar: widget.onGoToCalendar,
+            groupId:   data['groupId']   as String?,
+            groupName: data['groupName'] as String?,
+            subject:   data['subject']   as String?,
+            tab:       data['tab']       as int?,
+            eventId:   data['eventId']   as String?,
           );
         },
       ),
     );
   }
 
-  /// A scrollable empty state so RefreshIndicator works even when empty.
   Widget _scrollableEmpty(
     BuildContext context, {
     required IconData icon,
@@ -226,6 +242,11 @@ class _NotificationHistoryScreenState
   }
 }
 
+class _HistoryItem {
+  final QueryDocumentSnapshot doc;
+  const _HistoryItem(this.doc);
+}
+
 // =============================================================================
 // Notification card
 // =============================================================================
@@ -236,6 +257,7 @@ class _NotificationCard extends StatelessWidget {
   final String body;
   final String type;
   final bool isRead;
+  final bool isUpcoming;
   final DateTime? scheduledFor;
   final FirebaseFirestore firestore;
   final VoidCallback? onGoToCalendar;
@@ -255,6 +277,7 @@ class _NotificationCard extends StatelessWidget {
     required this.body,
     required this.type,
     required this.isRead,
+    required this.isUpcoming,
     required this.scheduledFor,
     required this.firestore,
     this.onGoToCalendar,
@@ -284,11 +307,11 @@ class _NotificationCard extends StatelessWidget {
       case 'group_invite':     return const Color(0xFF7C3AED);
       case 'timetable_invite': return const Color(0xFF0D9488);
       case 'group_chat':       return const Color(0xFF2563EB);
-      case 'group_event':      return const Color(0xFFEA580C);
+      case 'group_event':      return const Color(0xFF7C3AED);
       case 'group_poll':       return const Color(0xFF7C3AED);
-      case 'group_milestone':  return const Color(0xFF0369A1);
-      case 'group_update':     return const Color(0xFF15803D);
-      case 'group_note':       return const Color(0xFFB45309);
+      case 'group_milestone':  return const Color(0xFF7C3AED);
+      case 'group_update':     return const Color(0xFF7C3AED);
+      case 'group_note':       return const Color(0xFF7C3AED);
       case 'study_plan':       return const Color(0xFF00BCD4);
       default:                 return const Color(0xFF6B7280);
     }
@@ -441,17 +464,41 @@ class _NotificationCard extends StatelessWidget {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Container(
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(
-                  color: isRead
-                      ? _typeColor.withOpacity(0.3)
-                      : _typeColor,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Icon(_typeIcon,
-                    color: isRead ? _typeColor : Colors.white, size: 22),
+              Stack(
+                children: [
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: isUpcoming
+                          ? _typeColor.withValues(alpha: 0.12)
+                          : (isRead ? _typeColor.withValues(alpha: 0.3) : _typeColor),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(
+                      _typeIcon,
+                      color: isUpcoming
+                          ? _typeColor
+                          : (isRead ? _typeColor : Colors.white),
+                      size: 22,
+                    ),
+                  ),
+                  if (isUpcoming)
+                    Positioned(
+                      right: 0,
+                      bottom: 0,
+                      child: Container(
+                        width: 16,
+                        height: 16,
+                        decoration: BoxDecoration(
+                          color: _typeColor,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white, width: 1.5),
+                        ),
+                        child: const Icon(Icons.schedule, color: Colors.white, size: 9),
+                      ),
+                    ),
+                ],
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -464,10 +511,10 @@ class _NotificationCard extends StatelessWidget {
                           padding: const EdgeInsets.symmetric(
                               horizontal: 6, vertical: 2),
                           decoration: BoxDecoration(
-                            color: _typeColor.withOpacity(0.1),
+                            color: _typeColor.withValues(alpha: 0.1),
                             borderRadius: BorderRadius.circular(4),
                             border: Border.all(
-                                color: _typeColor.withOpacity(0.5)),
+                                color: _typeColor.withValues(alpha: 0.5)),
                           ),
                           child: Text(_typeLabel,
                               style: GoogleFonts.dmMono(
@@ -531,10 +578,18 @@ class _NotificationCard extends StatelessWidget {
   String _relativeTime(DateTime dt) {
     final now = DateTime.now();
     final diff = now.difference(dt);
+    if (diff.isNegative) {
+      // Future (upcoming)
+      final ahead = dt.difference(now);
+      if (ahead.inMinutes < 60) return 'in ${ahead.inMinutes}m';
+      if (ahead.inHours < 24)   return 'in ${ahead.inHours}h';
+      if (ahead.inDays < 7)     return 'in ${ahead.inDays}d';
+      return DateFormat('dd MMM, h:mm a').format(dt);
+    }
     if (diff.inSeconds < 60) return 'Just now';
     if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
-    if (diff.inHours < 24) return '${diff.inHours}h ago';
-    if (diff.inDays < 7) return '${diff.inDays}d ago';
+    if (diff.inHours < 24)   return '${diff.inHours}h ago';
+    if (diff.inDays < 7)     return '${diff.inDays}d ago';
     return DateFormat('dd MMM, h:mm a').format(dt);
   }
 }
