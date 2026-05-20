@@ -15,7 +15,6 @@ import 'package:image/image.dart' as img;
 import 'package:cached_network_image/cached_network_image.dart';
 import '../services/certificate_service.dart';
 import '../services/notification_scheduler.dart';
-import '../services/notification_service.dart';
 import '../app_preferences.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -521,7 +520,7 @@ class _StudyGroupScreenState extends State<StudyGroupScreen>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 4, vsync: this, initialIndex: widget.initialTab.clamp(0, 3));
+    _tabController = TabController(length: 3, vsync: this, initialIndex: widget.initialTab.clamp(0, 2));
     _startMembershipWatch();
   }
 
@@ -888,7 +887,6 @@ class _StudyGroupScreenState extends State<StudyGroupScreen>
                 Tab(icon: Icon(Icons.chat_bubble_outline, size: 20), text: 'Chat'),
                 Tab(icon: Icon(Icons.checklist_rtl, size: 20), text: 'Tasks'),
                 Tab(icon: Icon(Icons.bolt_outlined, size: 20), text: 'Updates'),
-                Tab(icon: Icon(Icons.sticky_note_2_outlined, size: 20), text: 'Notes'),
               ],
             ),
           ),
@@ -901,7 +899,6 @@ class _StudyGroupScreenState extends State<StudyGroupScreen>
               getUsername: _getMyUsername),
           _MilestonesTab(groupId: widget.groupId, getUsername: _getMyUsername),
           _UpdatesTab(groupId: widget.groupId, getUsername: _getMyUsername),
-          _NotesTab(groupId: widget.groupId, getUsername: _getMyUsername),
         ],
       ),
     );
@@ -938,6 +935,7 @@ class _ChatTabState extends State<_ChatTab> {
 
   String? _cachedUsername;
   String  _groupCreatedBy = '';
+  List<Map<String, dynamic>> _cachedMembers = [];
 
   @override
   void initState() {
@@ -956,8 +954,18 @@ class _ChatTabState extends State<_ChatTab> {
     setState(() {
       _cachedUsername = results[0].data()?['username'] as String?
           ?? user.email ?? 'Unknown';
-      _groupCreatedBy = results[1].data()?['createdBy'] as String? ?? '';
+      final groupData = results[1].data();
+      _groupCreatedBy = groupData?['createdBy'] as String? ?? '';
+      _cachedMembers  = List<Map<String, dynamic>>.from(
+          (groupData?['members'] as List? ?? []).map((m) => Map<String, dynamic>.from(m as Map)));
     });
+  }
+
+  String _uidToName(String uid) {
+    for (final m in _cachedMembers) {
+      if (m['uid'] == uid) return m['username'] as String? ?? uid;
+    }
+    return uid;
   }
 
   @override
@@ -1991,9 +1999,7 @@ class _ChatTabState extends State<_ChatTab> {
     final evTs     = (data['eventDate'] as Timestamp?)?.toDate();
     final msgTs    = (data['createdAt'] as Timestamp?)?.toDate();
     final accepted = List<String>.from(data['accepted'] ?? []);
-    final declined = List<String>.from(data['declined'] ?? []);
     final myAcc    = accepted.contains(myUid);
-    final myDec    = declined.contains(myUid);
     final isMe     = data['senderId'] == myUid;
     final canAct   = isMe || myUid == _groupCreatedBy;
 
@@ -2069,139 +2075,117 @@ class _ChatTabState extends State<_ChatTab> {
                           color: AppColors.isDark(context) ? const Color(0xFF82B4FF) : _kBlue)),
                 ]),
                 const SizedBox(height: 10),
-                Row(children: [
-                  _rsvpChip(Icons.check, '${accepted.length} Accept', _kGreen),
-                  const SizedBox(width: 8),
-                  _rsvpChip(Icons.close, '${declined.length} Decline', _kRed),
-                ]),
-                const SizedBox(height: 10),
-                Row(children: [
-                  Expanded(child: GestureDetector(
-                    onTap: myAcc ? null : () async {
-                      final confirm = await showDialog<bool>(
-                        context: context,
-                        builder: (ctx) => AlertDialog(
-                          backgroundColor: AppColors.card(ctx),
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(16)),
-                          title: Text('Accept Event',
-                              style: GoogleFonts.dmMono(
-                                  fontWeight: FontWeight.bold)),
-                          content: Text(
-                            'Are you sure you want to accept and add "$title" to your tasks?',
-                            style: GoogleFonts.dmMono(fontSize: 13),
-                          ),
-                          actions: [
-                            TextButton(
-                              onPressed: () => Navigator.pop(ctx, false),
-                              child: Text('CANCEL',
-                                  style: GoogleFonts.dmMono(
-                                      color: AppColors.subtext(ctx),
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 12)),
-                            ),
-                            ElevatedButton(
-                              onPressed: () => Navigator.pop(ctx, true),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: _kGreen,
-                                shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(8)),
-                              ),
-                              child: Text('YES, ACCEPT',
-                                  style: GoogleFonts.dmMono(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 12)),
-                            ),
-                          ],
+                // Accepted members list
+                if (accepted.isNotEmpty) ...[
+                  Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Icon(Icons.check_circle, size: 14, color: _kGreen),
+                    const SizedBox(width: 5),
+                    Expanded(
+                      child: Text(
+                        accepted.map(_uidToName).join(', '),
+                        style: GoogleFonts.dmMono(
+                            fontSize: 11,
+                            color: _kGreen,
+                            fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ]),
+                  const SizedBox(height: 10),
+                ],
+                // Accept button (full width)
+                GestureDetector(
+                  onTap: myAcc ? null : () async {
+                    final confirm = await showDialog<bool>(
+                      context: context,
+                      builder: (ctx) => AlertDialog(
+                        backgroundColor: AppColors.card(ctx),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16)),
+                        title: Text('Accept Event',
+                            style: GoogleFonts.dmMono(
+                                fontWeight: FontWeight.bold)),
+                        content: Text(
+                          'Are you sure you want to accept and add "$title" to your schedule?',
+                          style: GoogleFonts.dmMono(fontSize: 13),
                         ),
-                      );
-                      if (confirm != true) return;
-                      await doc.reference.update({
-                        'accepted': FieldValue.arrayUnion([myUid]),
-                        'declined': FieldValue.arrayRemove([myUid]),
-                      });
-                      final personalDocId = '${myUid}__${doc.id}';
-                      await FirebaseFirestore.instance
-                          .collection('user_group_events')
-                          .doc(personalDocId)
-                          .set({
-                        'userId': myUid,
-                        'messageId': doc.id,
-                        'groupId': widget.groupId,
-                        'groupName': widget.groupName,
-                        'subject': widget.subject,
-                        'title': data['title'] ?? 'Group Event',
-                        'details': data['details'] ?? '',
-                        'eventType': data['eventType'] ?? 'Meeting',
-                        'eventDate': data['eventDate'],
-                        'senderUsername': data['senderUsername'] ?? '',
-                        'senderId': data['senderId'] ?? '',
-                        'isCompleted': false,
-                        'createdAt': FieldValue.serverTimestamp(),
-                      }, SetOptions(merge: false));
-                      NotificationScheduler().scheduleGroupEventsOnly().catchError((_) {});
-                      if (mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                          content: Text(
-                            'You accepted "$title"!',
-                            style: GoogleFonts.dmMono(fontWeight: FontWeight.bold, color: Colors.white),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(ctx, false),
+                            child: Text('CANCEL',
+                                style: GoogleFonts.dmMono(
+                                    color: AppColors.subtext(ctx),
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 12)),
                           ),
-                          backgroundColor: _kGreen,
-                          behavior: SnackBarBehavior.floating,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                          duration: const Duration(seconds: 2),
-                        ));
-                      }
-                    },
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(vertical: 10),
-                      decoration: BoxDecoration(
-                        color: myAcc ? _kGreen : AppColors.card(context),
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: _kGreen, width: myAcc ? 0 : 2),
+                          ElevatedButton(
+                            onPressed: () => Navigator.pop(ctx, true),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: _kGreen,
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(8)),
+                            ),
+                            child: Text('YES, ACCEPT',
+                                style: GoogleFonts.dmMono(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 12)),
+                          ),
+                        ],
                       ),
-                      child: Center(child: Text(
-                        myAcc ? '✓ Accepted' : 'Accept',
-                        style: GoogleFonts.dmMono(fontSize: 13,
-                            fontWeight: FontWeight.bold,
-                            color: myAcc ? Colors.white : _kGreen),
-                      )),
+                    );
+                    if (confirm != true) return;
+                    await doc.reference.update({
+                      'accepted': FieldValue.arrayUnion([myUid]),
+                    });
+                    final personalDocId = '${myUid}__${doc.id}';
+                    await FirebaseFirestore.instance
+                        .collection('user_group_events')
+                        .doc(personalDocId)
+                        .set({
+                      'userId': myUid,
+                      'messageId': doc.id,
+                      'groupId': widget.groupId,
+                      'groupName': widget.groupName,
+                      'subject': widget.subject,
+                      'title': data['title'] ?? 'Group Event',
+                      'details': data['details'] ?? '',
+                      'eventType': data['eventType'] ?? 'Meeting',
+                      'eventDate': data['eventDate'],
+                      'senderUsername': data['senderUsername'] ?? '',
+                      'senderId': data['senderId'] ?? '',
+                      'isCompleted': false,
+                      'createdAt': FieldValue.serverTimestamp(),
+                    }, SetOptions(merge: false));
+                    NotificationScheduler().scheduleGroupEventsOnly().catchError((_) {});
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                        content: Text(
+                          'You accepted "$title"!',
+                          style: GoogleFonts.dmMono(fontWeight: FontWeight.bold, color: Colors.white),
+                        ),
+                        backgroundColor: _kGreen,
+                        behavior: SnackBarBehavior.floating,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        duration: const Duration(seconds: 2),
+                      ));
+                    }
+                  },
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    decoration: BoxDecoration(
+                      color: myAcc ? _kGreen : AppColors.card(context),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: _kGreen, width: myAcc ? 0 : 2),
                     ),
-                  )),
-                  const SizedBox(width: 10),
-                  Expanded(child: GestureDetector(
-                    onTap: (myDec || myAcc) ? null : () async {
-                      await doc.reference.update({
-                        'declined': FieldValue.arrayUnion([myUid]),
-                        'accepted': FieldValue.arrayRemove([myUid]),
-                      });
-                      final personalDocId = '${myUid}__${doc.id}';
-                      await NotificationService().cancelNotificationsForEvent(personalDocId);
-                      await FirebaseFirestore.instance
-                          .collection('user_group_events')
-                          .doc(personalDocId)
-                          .delete()
-                          .catchError((_) {});
-                    },
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(vertical: 10),
-                      decoration: BoxDecoration(
-                        color: myDec ? _kRed.withValues(alpha: 0.2) : AppColors.card(context),
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(
-                            color: myAcc ? AppColors.border(context) : _kRed,
-                            width: (myDec || myAcc) ? 0 : 2),
-                      ),
-                      child: Center(child: Text(
-                        myDec ? '✗ Declined' : 'Decline',
-                        style: GoogleFonts.dmMono(fontSize: 13,
-                            fontWeight: FontWeight.bold,
-                            color: myAcc ? AppColors.subtext(context) : _kRed),
-                      )),
-                    ),
-                  )),
-                ]),
+                    child: Center(child: Text(
+                      myAcc ? '✓ Accepted' : 'Accept',
+                      style: GoogleFonts.dmMono(fontSize: 13,
+                          fontWeight: FontWeight.bold,
+                          color: myAcc ? Colors.white : _kGreen),
+                    )),
+                  ),
+                ),
               ]),
             ),
           ]),
@@ -2211,20 +2195,6 @@ class _ChatTabState extends State<_ChatTab> {
     );
   }
 
-  Widget _rsvpChip(IconData icon, String label, Color color) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(
-          color: color.withOpacity(0.2),
-          borderRadius: BorderRadius.circular(20)),
-      child: Row(mainAxisSize: MainAxisSize.min, children: [
-        Icon(icon, size: 12, color: color),
-        const SizedBox(width: 4),
-        Text(label, style: GoogleFonts.dmMono(
-            fontSize: 10, fontWeight: FontWeight.bold, color: color)),
-      ]),
-    );
-  }
 
   Widget _buildPollMsg(
       DocumentSnapshot doc, Map<String, dynamic> data, String myUid) {
@@ -2719,56 +2689,10 @@ class _UpdatesTabState extends State<_UpdatesTab> {
   CollectionReference get _col =>
       _db.collection('study_groups').doc(widget.groupId).collection('updates');
 
-  Future<void> _postText() async {
+  Future<void> _postNote() async {
     final titleCtrl = TextEditingController();
     final bodyCtrl  = TextEditingController();
-    await showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppColors.card(ctx),
-        shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-            side: BorderSide(color: AppColors.border(ctx), width: 2)),
-        title: Text('Post Update', style: GoogleFonts.dmMono(
-            fontSize: 18, fontWeight: FontWeight.bold)),
-        content: Column(mainAxisSize: MainAxisSize.min, children: [
-          _field(ctx, titleCtrl, 'Title', autofocus: true),
-          const SizedBox(height: 12),
-          _field(ctx, bodyCtrl, 'What changed or was done?', lines: 4),
-        ]),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx),
-              child: Text('Cancel', style: GoogleFonts.dmMono(
-                  fontSize: 14, color: AppColors.subtext(ctx)))),
-          ElevatedButton(
-            onPressed: () async {
-              if (titleCtrl.text.trim().isEmpty) return;
-              final username = await widget.getUsername();
-              await _col.add({
-                'updateType':     'text',
-                'title':          titleCtrl.text.trim(),
-                'body':           bodyCtrl.text.trim(),
-                'postedBy':       _auth.currentUser?.uid ?? '',
-                'postedByUsername': username,
-                'createdAt':      FieldValue.serverTimestamp(),
-              });
-              if (ctx.mounted) Navigator.pop(ctx);
-            },
-            style: ElevatedButton.styleFrom(backgroundColor: _kBlue,
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
-            child: Text('Post', style: GoogleFonts.dmMono(
-                fontSize: 14, color: Colors.white, fontWeight: FontWeight.bold)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _postFile() async {
-    final titleCtrl = TextEditingController();
-    Uint8List? pickedBytes;
-    String?    pickedName;
+    final files     = <({Uint8List bytes, String name})>[];
 
     await showDialog(
       context: context,
@@ -2778,104 +2702,144 @@ class _UpdatesTabState extends State<_UpdatesTab> {
           shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(16),
               side: BorderSide(color: AppColors.border(ctx), width: 2)),
-          title: Text('Upload File', style: GoogleFonts.dmMono(
+          title: Text('Post Note', style: GoogleFonts.dmMono(
               fontSize: 18, fontWeight: FontWeight.bold)),
           content: SingleChildScrollView(
             child: Column(mainAxisSize: MainAxisSize.min, children: [
+              _field(ctx, titleCtrl, 'Title', autofocus: true),
+              const SizedBox(height: 12),
+              _field(ctx, bodyCtrl, 'Notes / description (optional)', lines: 4),
+              const SizedBox(height: 14),
+
+              // ── Attachment list ──────────────────────────────────────
+              if (files.isNotEmpty) ...[
+                ...files.asMap().entries.map((e) {
+                  final idx  = e.key;
+                  final file = e.value;
+                  final isWord = file.name.toLowerCase().endsWith('.doc') ||
+                      file.name.toLowerCase().endsWith('.docx');
+                  return Container(
+                    margin: const EdgeInsets.only(bottom: 8),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: _kGreen.withValues(alpha: 0.07),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: _kGreen, width: 1.5),
+                    ),
+                    child: Row(children: [
+                      Icon(
+                        isWord
+                            ? Icons.description_outlined
+                            : Icons.picture_as_pdf_outlined,
+                        size: 18,
+                        color: isWord
+                            ? const Color(0xFF2B579A)
+                            : _kRed,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(child: Text(
+                        file.name,
+                        style: GoogleFonts.dmMono(
+                            fontSize: 12, color: _kGreen),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      )),
+                      GestureDetector(
+                        onTap: () => setS(() => files.removeAt(idx)),
+                        child: const Icon(Icons.close,
+                            size: 18, color: _kRed),
+                      ),
+                    ]),
+                  );
+                }),
+                const SizedBox(height: 4),
+              ],
+
+              // ── Add file button ──────────────────────────────────────
               GestureDetector(
                 onTap: () async {
-                  final p = await _certSvc.pickPdf();
-                  if (p != null) {
-                    setS(() {
-                      pickedBytes = p.bytes;
-                      pickedName  = p.name;
-                      if (titleCtrl.text.trim().isEmpty) {
-                        titleCtrl.text = p.name
-                            .replaceAll('.pdf', '')
-                            .replaceAll('_', ' ')
-                            .replaceAll('-', ' ');
-                      }
-                    });
-                  }
+                  final p = await _certSvc.pickDocument();
+                  if (p != null) setS(() => files.add(p));
                 },
                 child: Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: pickedBytes != null
-                        ? _kGreen.withOpacity(0.07)
-                        : AppColors.input(ctx),
+                    color: AppColors.input(ctx),
                     borderRadius: BorderRadius.circular(10),
-                    border: Border.all(
-                        color: pickedBytes != null
-                            ? _kGreen : AppColors.border(ctx),
-                        width: pickedBytes != null ? 2 : 1),
+                    border: Border.all(color: AppColors.border(ctx)),
                   ),
                   child: Row(children: [
-                    Icon(
-                      pickedBytes != null
-                          ? Icons.check_circle_outline
-                          : Icons.attach_file,
-                      color: pickedBytes != null ? _kGreen : AppColors.subtext(ctx),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(child: Text(
-                      pickedBytes != null
-                          ? pickedName! : 'Tap to pick PDF / DOC file',
-                      style: GoogleFonts.dmMono(
-                          fontSize: 12,
-                          color: pickedBytes != null ? _kGreen : AppColors.subtext(ctx)),
-                      maxLines: 2, overflow: TextOverflow.ellipsis,
-                    )),
+                    Icon(Icons.attach_file,
+                        color: AppColors.subtext(ctx), size: 18),
+                    const SizedBox(width: 8),
+                    Text('Add PDF / DOC file',
+                        style: GoogleFonts.dmMono(
+                            fontSize: 12,
+                            color: AppColors.subtext(ctx))),
                   ]),
                 ),
               ),
-              const SizedBox(height: 12),
-              _field(ctx, titleCtrl, 'File title / description'),
             ]),
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx),
-                child: Text('Cancel', style: GoogleFonts.dmMono(color: AppColors.subtext(ctx)))),
+            TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: Text('Cancel', style: GoogleFonts.dmMono(
+                    fontSize: 14, color: AppColors.subtext(ctx)))),
             ElevatedButton(
               onPressed: () async {
-                if (pickedBytes == null || pickedName == null) return;
+                if (titleCtrl.text.trim().isEmpty) return;
                 Navigator.pop(ctx);
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Uploading file…'),
-                          duration: Duration(seconds: 60)));
+                final messenger = ScaffoldMessenger.of(context);
+                if (files.isNotEmpty) {
+                  messenger.showSnackBar(const SnackBar(
+                    content: Text('Uploading…'),
+                    duration: Duration(seconds: 60),
+                  ));
                 }
                 try {
                   final username = await widget.getUsername();
-                  final ts   = DateTime.now().millisecondsSinceEpoch;
-                  final path =
-                      'group_updates/${widget.groupId}/${ts}_$pickedName';
-                  final ref  = CertificateService.storageRef(path);
-                  await ref.putData(pickedBytes!);
-                  final url    = await ref.getDownloadURL();
-                  final sizeKB =
-                      (pickedBytes!.lengthInBytes / 1024).toStringAsFixed(0);
+                  final attachments = <Map<String, dynamic>>[];
+                  for (final f in files) {
+                    final ts   = DateTime.now().millisecondsSinceEpoch;
+                    final path =
+                        'group_updates/${widget.groupId}/${ts}_${f.name}';
+                    final ref  = CertificateService.storageRef(path);
+                    await ref.putData(f.bytes);
+                    final url    = await ref.getDownloadURL();
+                    final sizeKB =
+                        (f.bytes.lengthInBytes / 1024).toStringAsFixed(0);
+                    attachments.add({
+                      'fileName':   f.name,
+                      'fileUrl':    url,
+                      'storagePath': path,
+                      'fileSizeKB': sizeKB,
+                    });
+                  }
                   await _col.add({
-                    'updateType':     'file',
-                    'title':          titleCtrl.text.trim().isEmpty
-                        ? pickedName : titleCtrl.text.trim(),
-                    'fileName':       pickedName,
-                    'fileUrl':        url,
-                    'storagePath':    path,
-                    'fileSizeKB':     sizeKB,
-                    'postedBy':       _auth.currentUser?.uid ?? '',
+                    'updateType':       'note',
+                    'title':            titleCtrl.text.trim(),
+                    'body':             bodyCtrl.text.trim(),
+                    'attachments':      attachments,
+                    'postedBy':         _auth.currentUser?.uid ?? '',
                     'postedByUsername': username,
-                    'createdAt':      FieldValue.serverTimestamp(),
+                    'createdAt':        FieldValue.serverTimestamp(),
                   });
                 } finally {
-                  if (mounted) ScaffoldMessenger.of(context).clearSnackBars();
+                  if (mounted) messenger.clearSnackBars();
                 }
               },
-              style: ElevatedButton.styleFrom(backgroundColor: _kGreen,
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: _kBlue,
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 24, vertical: 12),
                   shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(10))),
-              child: Text('Upload', style: GoogleFonts.dmMono(
-                  color: Colors.white, fontWeight: FontWeight.bold)),
+              child: Text('Post', style: GoogleFonts.dmMono(
+                  fontSize: 14,
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold)),
             ),
           ],
         ),
@@ -2889,29 +2853,14 @@ class _UpdatesTabState extends State<_UpdatesTab> {
 
     return Scaffold(
       backgroundColor: AppColors.bg(context),
-      floatingActionButton: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          FloatingActionButton(
-            heroTag: 'upload_file_fab',
-            onPressed: _postFile,
-            backgroundColor: _kGreen,
-            elevation: 3,
-            mini: true,
-            tooltip: 'Upload file',
-            child: const Icon(Icons.upload_file, color: Colors.white, size: 22),
-          ),
-          const SizedBox(height: 10),
-          FloatingActionButton.extended(
-            heroTag: 'post_update_fab',
-            onPressed: _postText,
-            backgroundColor: _kBlue,
-            elevation: 3,
-            icon: const Icon(Icons.add, color: Colors.white, size: 24),
-            label: Text('Post Update', style: GoogleFonts.dmMono(
-                color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
-          ),
-        ],
+      floatingActionButton: FloatingActionButton.extended(
+        heroTag: 'post_note_fab',
+        onPressed: _postNote,
+        backgroundColor: _kBlue,
+        elevation: 3,
+        icon: const Icon(Icons.add, color: Colors.white, size: 24),
+        label: Text('Post Note', style: GoogleFonts.dmMono(
+            color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
       ),
       body: StreamBuilder<QuerySnapshot>(
         stream: _col.orderBy('createdAt', descending: true).snapshots(),
@@ -2929,12 +2878,21 @@ class _UpdatesTabState extends State<_UpdatesTab> {
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 120),
             itemCount: docs.length,
             itemBuilder: (ctx, i) {
-              final doc    = docs[i];
-              final data   = doc.data() as Map<String, dynamic>;
-              final ts     = (data['createdAt'] as Timestamp?)?.toDate();
-              final isMe   = data['postedBy'] == myUid;
-              final uType  = data['updateType'] as String? ?? 'text';
-              final isFile = uType == 'file';
+              final doc   = docs[i];
+              final data  = doc.data() as Map<String, dynamic>;
+              final ts    = (data['createdAt'] as Timestamp?)?.toDate();
+              final isMe  = data['postedBy'] == myUid;
+              final uType = data['updateType'] as String? ?? 'text';
+
+              // Badge label + colour per type
+              final badgeLabel = uType == 'file' ? 'FILE'
+                  : uType == 'note' ? 'NOTE' : 'UPDATE';
+              final badgeColor = uType == 'file' ? _kGreen : _kBlue;
+
+              // Attachments for 'note' type
+              final attachments = (data['attachments'] as List? ?? [])
+                  .map((e) => Map<String, dynamic>.from(e as Map))
+                  .toList();
 
               return Container(
                 margin: const EdgeInsets.only(bottom: 14),
@@ -2948,12 +2906,12 @@ class _UpdatesTabState extends State<_UpdatesTab> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Header bar
+                    // ── Header bar ──────────────────────────────────────
                     Container(
                       padding: const EdgeInsets.symmetric(
                           horizontal: 16, vertical: 12),
                       decoration: BoxDecoration(
-                        color: (isFile ? _kGreen : _kBlue).withOpacity(0.06),
+                        color: badgeColor.withValues(alpha: 0.06),
                         borderRadius: const BorderRadius.vertical(
                             top: Radius.circular(16)),
                       ),
@@ -2962,9 +2920,9 @@ class _UpdatesTabState extends State<_UpdatesTab> {
                           padding: const EdgeInsets.symmetric(
                               horizontal: 10, vertical: 4),
                           decoration: BoxDecoration(
-                              color: isFile ? _kGreen : _kBlue,
+                              color: badgeColor,
                               borderRadius: BorderRadius.circular(6)),
-                          child: Text(isFile ? 'FILE' : 'UPDATE',
+                          child: Text(badgeLabel,
                               style: GoogleFonts.dmMono(
                                   fontSize: 10, fontWeight: FontWeight.bold,
                                   color: Colors.white)),
@@ -2990,7 +2948,7 @@ class _UpdatesTabState extends State<_UpdatesTab> {
                       ]),
                     ),
 
-                    // Body
+                    // ── Body ────────────────────────────────────────────
                     Padding(
                       padding: const EdgeInsets.all(16),
                       child: Column(
@@ -2999,8 +2957,8 @@ class _UpdatesTabState extends State<_UpdatesTab> {
                           Text(data['title'] ?? '', style: GoogleFonts.dmMono(
                               fontSize: 16, fontWeight: FontWeight.bold)),
 
-                          // Text body
-                          if (!isFile && (data['body'] ?? '').isNotEmpty) ...[
+                          // Body text (text + note types)
+                          if ((data['body'] ?? '').isNotEmpty) ...[
                             const SizedBox(height: 8),
                             Text(data['body'], style: GoogleFonts.dmMono(
                                 fontSize: 14,
@@ -3008,90 +2966,24 @@ class _UpdatesTabState extends State<_UpdatesTab> {
                                 height: 1.5)),
                           ],
 
-                          // ── File section — tap card to PREVIEW ──────────
-                          if (isFile) ...[
+                          // Legacy single-file (updateType == 'file')
+                          if (uType == 'file') ...[
                             const SizedBox(height: 10),
-                            GestureDetector(
-                              onTap: () {
-                                final path =
-                                    data['storagePath'] as String? ?? '';
-                                if (path.isEmpty) return;
-                                Navigator.push(context,
-                                  MaterialPageRoute(
-                                    builder: (_) => _GroupPdfViewerScreen(
-                                      title: data['title'] ?? 'File',
-                                      storagePath: path,
-                                      fileName: data['fileName'] ?? 'file.pdf',
-                                    ),
-                                  ),
-                                );
-                              },
-                              child: Container(
-                                padding: const EdgeInsets.all(12),
-                                decoration: BoxDecoration(
-                                  color: AppColors.input(ctx),
-                                  borderRadius: BorderRadius.circular(10),
-                                  border: Border.all(
-                                      color: AppColors.border(ctx)),
-                                ),
-                                child: Row(children: [
-                                  Container(
-                                    width: 40, height: 40,
-                                    decoration: BoxDecoration(
-                                        color: _kRed,
-                                        borderRadius:
-                                            BorderRadius.circular(8)),
-                                    child: const Icon(
-                                        Icons.picture_as_pdf_outlined,
-                                        color: Colors.white, size: 22),
-                                  ),
-                                  const SizedBox(width: 10),
-                                  Expanded(child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        data['fileName'] ?? 'File',
-                                        style: GoogleFonts.dmMono(
-                                            fontSize: 12,
-                                            fontWeight: FontWeight.bold),
-                                        maxLines: 2,
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                      if ((data['fileSizeKB'] ?? '')
-                                          .toString()
-                                          .isNotEmpty)
-                                        Text('${data['fileSizeKB']} KB',
-                                            style: GoogleFonts.dmMono(
-                                                fontSize: 10, color: AppColors.subtext(ctx))),
-                                    ],
-                                  )),
-                                  // Preview button (replaces old Download)
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 12, vertical: 8),
-                                    decoration: BoxDecoration(
-                                        color: _kBlue,
-                                        borderRadius:
-                                            BorderRadius.circular(8)),
-                                    child: Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        const Icon(Icons.visibility_outlined,
-                                            color: Colors.white, size: 16),
-                                        const SizedBox(width: 4),
-                                        Text('Preview',
-                                            style: GoogleFonts.dmMono(
-                                                fontSize: 11,
-                                                color: Colors.white,
-                                                fontWeight:
-                                                    FontWeight.bold)),
-                                      ],
-                                    ),
-                                  ),
-                                ]),
-                              ),
-                            ),
+                            _fileCard(ctx, {
+                              'fileName':   data['fileName'],
+                              'storagePath': data['storagePath'],
+                              'fileSizeKB': data['fileSizeKB'],
+                              'title':      data['title'],
+                            }),
+                          ],
+
+                          // Multi-attachment (updateType == 'note')
+                          if (uType == 'note' && attachments.isNotEmpty) ...[
+                            const SizedBox(height: 10),
+                            ...attachments.map((a) => Padding(
+                              padding: const EdgeInsets.only(bottom: 8),
+                              child: _fileCard(ctx, a),
+                            )),
                           ],
 
                           const SizedBox(height: 12),
@@ -3117,263 +3009,105 @@ class _UpdatesTabState extends State<_UpdatesTab> {
       ),
     );
   }
-}
 
-// ─────────────────────────────────────────────────────────────────────────────
-// NOTES TAB
-// ─────────────────────────────────────────────────────────────────────────────
+  Widget _fileCard(BuildContext ctx, Map<String, dynamic> file) {
+    final fileName  = (file['fileName'] as String? ?? '').toLowerCase();
+    final isWord    = fileName.endsWith('.doc') || fileName.endsWith('.docx');
+    final rawName   = file['fileName'] as String? ?? 'file';
+    final storagePath = file['storagePath'] as String? ?? '';
+    final sizeKB    = (file['fileSizeKB'] ?? '').toString();
 
-class _NotesTab extends StatefulWidget {
-  final String groupId;
-  final Future<String> Function() getUsername;
-  const _NotesTab({required this.groupId, required this.getUsername});
-  @override
-  State<_NotesTab> createState() => _NotesTabState();
-}
-
-class _NotesTabState extends State<_NotesTab> {
-  final _auth = FirebaseAuth.instance;
-  final _db   = FirebaseFirestore.instance;
-
-  CollectionReference get _col =>
-      _db.collection('study_groups').doc(widget.groupId).collection('notes');
-
-  static const _noteColors  = [
-    Color(0xFFFFFBEB), Color(0xFFEFF6FF), Color(0xFFF0FFF4),
-    Color(0xFFFFF1F2), Color(0xFFFAF5FF),
-  ];
-  static const _noteBorders = [
-    Color(0xFFFBBC05), Color(0xFF93C5FD), Color(0xFF6EE7B7),
-    Color(0xFFFCA5A5), Color(0xFFD8B4FE),
-  ];
-
-  Future<void> _add() async {
-    final titleCtrl = TextEditingController();
-    final bodyCtrl  = TextEditingController();
-    await showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppColors.card(ctx),
-        shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-            side: BorderSide(color: AppColors.border(ctx), width: 2)),
-        title: Text('Add Note', style: GoogleFonts.dmMono(
-            fontSize: 18, fontWeight: FontWeight.bold)),
-        content: Column(mainAxisSize: MainAxisSize.min, children: [
-          _field(ctx, titleCtrl, 'Title', autofocus: true),
-          const SizedBox(height: 12),
-          _field(ctx, bodyCtrl, 'Note content', lines: 5),
-        ]),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx),
-              child: Text('Cancel', style: GoogleFonts.dmMono(
-                  fontSize: 14, color: AppColors.subtext(ctx)))),
-          ElevatedButton(
-            onPressed: () async {
-              if (titleCtrl.text.trim().isEmpty) return;
-              final username = await widget.getUsername();
-              await _col.add({
-                'title':          titleCtrl.text.trim(),
-                'body':           bodyCtrl.text.trim(),
-                'authorId':       _auth.currentUser?.uid ?? '',
-                'authorUsername': username,
-                'createdAt':      FieldValue.serverTimestamp(),
-              });
-              if (ctx.mounted) Navigator.pop(ctx);
-            },
-            style: ElevatedButton.styleFrom(backgroundColor: _kBlue,
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10))),
-            child: Text('Save', style: GoogleFonts.dmMono(
-                fontSize: 14, color: Colors.white, fontWeight: FontWeight.bold)),
+    return GestureDetector(
+      onTap: () async {
+        if (isWord) {
+          if (storagePath.isEmpty) return;
+          final messenger = ScaffoldMessenger.of(context);
+          messenger.showSnackBar(const SnackBar(
+            content: Text('Downloading…'),
+            duration: Duration(seconds: 60),
+          ));
+          try {
+            await CertificateService().savePdfToDevice(
+              storagePath: storagePath,
+              fileName: rawName,
+              subfolder: 'Documents',
+            );
+            messenger.clearSnackBars();
+            messenger.showSnackBar(SnackBar(
+              content: Text('$rawName saved to Downloads/Brenbox/Documents'),
+              duration: const Duration(seconds: 3),
+            ));
+          } catch (e) {
+            messenger.clearSnackBars();
+            messenger.showSnackBar(SnackBar(
+              content: Text('Download failed: $e'),
+              duration: const Duration(seconds: 3),
+            ));
+          }
+          return;
+        }
+        if (storagePath.isEmpty) return;
+        Navigator.push(context, MaterialPageRoute(
+          builder: (_) => _GroupPdfViewerScreen(
+            title: file['title'] as String? ?? rawName,
+            storagePath: storagePath,
+            fileName: rawName,
           ),
-        ],
-      ),
-    );
-  }
-
-  void _view(DocumentSnapshot doc) {
-    final data  = doc.data() as Map<String, dynamic>;
-    final isMe  = data['authorId'] == (_auth.currentUser?.uid ?? '');
-    final ts    = (data['createdAt'] as Timestamp?)?.toDate();
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) => DraggableScrollableSheet(
-        initialChildSize: 0.75,
-        maxChildSize: 0.95,
-        minChildSize: 0.4,
-        builder: (ctx, scroll) => Container(
-          decoration: BoxDecoration(
-            color: AppColors.card(ctx),
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-            border: Border(
-              top:   BorderSide(color: AppColors.border(ctx), width: 2),
-              left:  BorderSide(color: AppColors.border(ctx), width: 2),
-              right: BorderSide(color: AppColors.border(ctx), width: 2),
-            ),
-          ),
-          child: Column(children: [
-            Container(
-              margin: const EdgeInsets.only(top: 14),
-              width: 48, height: 5,
-              decoration: BoxDecoration(
-                  color: AppColors.border(ctx),
-                  borderRadius: BorderRadius.circular(3)),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 16, 16, 0),
-              child: Row(children: [
-                Expanded(child: Text(data['title'] ?? '',
-                    style: GoogleFonts.dmMono(
-                        fontSize: 20, fontWeight: FontWeight.bold))),
-                if (isMe)
-                  IconButton(
-                    icon: const Icon(Icons.delete_outline,
-                        color: _kRed, size: 24),
-                    onPressed: () async {
-                      Navigator.pop(ctx);
-                      await confirmAndDeleteDialog(
-                        context,
-                        title: 'Delete Note',
-                        message: 'Are you sure you want to delete this note? This cannot be undone.',
-                        onDelete: () => doc.reference.delete(),
-                      );
-                    },
-                  ),
-              ]),
-            ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24),
-              child: Row(children: [
-                Icon(Icons.person_outline, size: 14,
-                    color: AppColors.isDark(context) ? const Color(0xFF82B4FF) : _kBlue),
-                const SizedBox(width: 5),
-                Text(data['authorUsername'] ?? 'Unknown',
-                    style: GoogleFonts.dmMono(
-                        fontSize: 12, fontWeight: FontWeight.bold,
-                        color: AppColors.isDark(context) ? const Color(0xFF82B4FF) : _kBlue)),
-                if (ts != null) ...[
-                  const SizedBox(width: 8),
-                  Text('• ${DateFormat('dd MMM yyyy, h:mm a').format(ts)}',
-                      style: GoogleFonts.dmMono(
-                          fontSize: 11, color: AppColors.subtext(ctx))),
-                ],
-              ]),
-            ),
-            const SizedBox(height: 14),
-            const Divider(height: 1),
-            Expanded(
-              child: SingleChildScrollView(
-                controller: scroll,
-                padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
-                child: Text(
-                  (data['body'] ?? '').isEmpty
-                      ? '(No content)' : data['body'],
-                  style: GoogleFonts.dmMono(
-                      fontSize: 15, height: 1.8,
-                      color: AppColors.text(ctx)),
-                ),
-              ),
-            ),
-          ]),
+        ));
+      },
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: AppColors.input(ctx),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: AppColors.border(ctx)),
         ),
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.bg(context),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _add,
-        backgroundColor: _kBlue,
-        elevation: 3,
-        icon: const Icon(Icons.add, color: Colors.white, size: 24),
-        label: Text('Add Note', style: GoogleFonts.dmMono(
-            color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
-      ),
-      body: StreamBuilder<QuerySnapshot>(
-        stream: _col.orderBy('createdAt', descending: true).snapshots(),
-        builder: (ctx, snap) {
-          if (snap.connectionState == ConnectionState.waiting) {
-            return const Center(
-                child: CircularProgressIndicator(color: _kBlue));
-          }
-          final docs = snap.data?.docs ?? [];
-          if (docs.isEmpty) {
-            return _emptyState(ctx, Icons.sticky_note_2_outlined,
-                'No notes yet', 'Add shared notes for the group');
-          }
-          return GridView.builder(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 2,
-              crossAxisSpacing: 14,
-              mainAxisSpacing: 14,
-              childAspectRatio: 0.95,
-            ),
-            itemCount: docs.length,
-            itemBuilder: (ctx, i) {
-              final doc   = docs[i];
-              final data  = doc.data() as Map<String, dynamic>;
-              final ts    = (data['createdAt'] as Timestamp?)?.toDate();
-              final ci    = i % _noteColors.length;
-
-              return GestureDetector(
-                onTap: () => _view(doc),
-                child: Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: _noteColors[ci],
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: _noteBorders[ci], width: 2),
-                    boxShadow: [BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.06),
-                        blurRadius: 8, offset: const Offset(0, 3))],
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(data['title'] ?? '',
-                          style: GoogleFonts.dmMono(
-                              fontSize: 14, fontWeight: FontWeight.bold,
-                              color: Colors.black87),
-                          maxLines: 2, overflow: TextOverflow.ellipsis),
-                      const SizedBox(height: 8),
-                      Expanded(
-                        child: Text(
-                          (data['body'] ?? '').isEmpty
-                              ? '(No content)' : data['body'],
-                          style: GoogleFonts.dmMono(
-                              fontSize: 12, color: const Color(0xFF6B7280), height: 1.5),
-                          maxLines: 6, overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Row(children: [
-                        const Icon(Icons.person_outline, size: 11,
-                            color: Color(0xFF6B7280)),
-                        const SizedBox(width: 3),
-                        Expanded(child: Text(
-                          '${data['authorUsername'] ?? '?'}'
-                          '${ts != null ? '  •  ${DateFormat('dd MMM').format(ts)}' : ''}',
-                          style: GoogleFonts.dmMono(
-                              fontSize: 10, color: const Color(0xFF6B7280)),
-                          overflow: TextOverflow.ellipsis,
-                        )),
-                      ]),
-                    ],
-                  ),
-                ),
-              );
-            },
-          );
-        },
+        child: Row(children: [
+          Container(
+            width: 40, height: 40,
+            decoration: BoxDecoration(
+                color: isWord ? const Color(0xFF2B579A) : _kRed,
+                borderRadius: BorderRadius.circular(8)),
+            child: Icon(
+                isWord
+                    ? Icons.description_outlined
+                    : Icons.picture_as_pdf_outlined,
+                color: Colors.white, size: 22),
+          ),
+          const SizedBox(width: 10),
+          Expanded(child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(rawName,
+                  style: GoogleFonts.dmMono(
+                      fontSize: 12, fontWeight: FontWeight.bold),
+                  maxLines: 2, overflow: TextOverflow.ellipsis),
+              if (sizeKB.isNotEmpty)
+                Text('$sizeKB KB',
+                    style: GoogleFonts.dmMono(
+                        fontSize: 10, color: AppColors.subtext(ctx))),
+            ],
+          )),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+                color: isWord ? const Color(0xFF2B579A) : _kBlue,
+                borderRadius: BorderRadius.circular(8)),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(
+                  isWord
+                      ? Icons.download_outlined
+                      : Icons.visibility_outlined,
+                  color: Colors.white, size: 16),
+              const SizedBox(width: 4),
+              Text(isWord ? 'Download' : 'Preview',
+                  style: GoogleFonts.dmMono(
+                      fontSize: 11,
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold)),
+            ]),
+          ),
+        ]),
       ),
     );
   }

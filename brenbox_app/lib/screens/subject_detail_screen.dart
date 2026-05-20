@@ -1053,7 +1053,7 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text('Add Extra Class', style: GoogleFonts.dmMono(fontSize: 18, fontWeight: FontWeight.bold)),
+                                Text('Add More Class', style: GoogleFonts.dmMono(fontSize: 18, fontWeight: FontWeight.bold)),
                                 Text(widget.subjectName, style: GoogleFonts.dmMono(fontSize: 12, color: AppColors.subtext(context))),
                               ],
                             ),

@@ -20,6 +20,8 @@ class CertificateService {
       'png'           => 'image/png',
       'gif'           => 'image/gif',
       'webp'          => 'image/webp',
+      'doc'           => 'application/msword',
+      'docx'          => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
       _               => 'application/pdf',
     };
   }
@@ -29,6 +31,22 @@ class CertificateService {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['pdf'],
+      withData: true,
+    );
+    if (result == null || result.files.isEmpty) return null;
+
+    final file = result.files.first;
+    final bytes = file.bytes;
+    if (bytes == null) return null;
+
+    return (bytes: bytes, name: file.name);
+  }
+
+  // ── Pick PDF, DOC, or DOCX ────────────────────────────────────────────────
+  Future<({Uint8List bytes, String name})?> pickDocument() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['pdf', 'doc', 'docx'],
       withData: true,
     );
     if (result == null || result.files.isEmpty) return null;

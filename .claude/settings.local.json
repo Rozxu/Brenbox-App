@@ -24,7 +24,11 @@
       "Bash(findstr /r /s \"startInviteListeners\\\\|startGroupActivityListeners\" .)",
       "PowerShell(cd c:\\\\flutter_projects\\\\brenbox\\\\brenbox_app; dart analyze lib/services/notification_scheduler.dart lib/services/notification_service.dart lib/screens/notification_settings_screen.dart 2>&1 | Where-Object { $_ -match \"^   error|^error\" } | Select-Object -First 10)",
       "Bash(firebase --version)",
-      "Bash(python -c \"import json; d=json.load\\(open\\('c:/flutter_projects/brenbox/brenbox_app/android/app/google-services.json'\\)\\); print\\(d['project_info']['project_id']\\)\")"
+      "Bash(python -c \"import json; d=json.load\\(open\\('c:/flutter_projects/brenbox/brenbox_app/android/app/google-services.json'\\)\\); print\\(d['project_info']['project_id']\\)\")",
+      "Bash(Get-ChildItem -Path \"c:\\\\flutter_projects\\\\brenbox\\\\brenbox_app\\\\lib\" -Recurse -Filter \"*.dart\")",
+      "PowerShell(head -15)",
+      "Bash(findstr /i \"error\\\\|subject_detail\\\\|homepage\\\\|calendar_screen\")",
+      "Bash(Select-String \"error\")"
     ]
   }
 }
