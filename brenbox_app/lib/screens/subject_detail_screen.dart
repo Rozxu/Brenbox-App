@@ -1019,23 +1019,31 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
 
           return Padding(
             padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
-            child: Container(
-              decoration: BoxDecoration(
-                color: AppColors.card(context),
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-                border: Border(
-                  top:   BorderSide(color: AppColors.border(context), width: 2),
-                  left:  BorderSide(color: AppColors.border(context), width: 2),
-                  right: BorderSide(color: AppColors.border(context), width: 2),
-                ),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.of(ctx).size.height * 0.88,
               ),
-              child: SafeArea(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.fromLTRB(24, 20, 24, 24),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: AppColors.card(context),
+                  borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+                  border: Border(
+                    top:   BorderSide(color: AppColors.border(context), width: 2),
+                    left:  BorderSide(color: AppColors.border(context), width: 2),
+                    right: BorderSide(color: AppColors.border(context), width: 2),
+                  ),
+                ),
+                child: SafeArea(
                   child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisSize: MainAxisSize.min,
                     children: [
+                    Expanded(
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.fromLTRB(24, 20, 24, 8),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
 
                       // Header
                       Row(
@@ -1182,235 +1190,231 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
                       _addClassLabel('Lecturer (optional)'),
                       const SizedBox(height: 6),
                       _addClassTextField(lecturerCtrl, 'e.g. Dr. Smith'),
-                      const SizedBox(height: 8),
-
-                      // Inline error
-                      if (errorMsg != null)
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 8),
-                          child: Row(
-                            children: [
-                              const Icon(Icons.error_outline, size: 14, color: Color(0xFFB90000)),
-                              const SizedBox(width: 6),
-                              Flexible(child: Text(errorMsg!,
-                                  style: GoogleFonts.dmMono(fontSize: 12, color: const Color(0xFFB90000)))),
-                            ],
-                          ),
-                        ),
-
-                      const SizedBox(height: 8),
-
-                      // Save button
-                      SizedBox(
-                        width: double.infinity,
-                        child: ElevatedButton.icon(
-                          onPressed: isSaving ? null : () async {
-                            // ── Validation ──────────────────────────────
-                            if (startTime == null || endTime == null) {
-                              setS(() => errorMsg = 'Please select start and end time.'); return;
-                            }
-                            if (dateOption == 'None' && startDate == null) {
-                              setS(() => errorMsg = 'Please select a date.'); return;
-                            }
-                            if ((dateOption == 'Manual' || dateOption == 'Academic Year/Term') &&
-                                (startDate == null || endDate == null)) {
-                              setS(() => errorMsg = 'Please select start and end dates.'); return;
-                            }
-                            final needsDays = dateOption == 'Manual' ||
-                                (dateOption == 'Academic Year/Term' && occurrence == 'Repeating');
-                            if (needsDays && selectedDays.isEmpty) {
-                              setS(() => errorMsg = 'Please select at least one day.'); return;
-                            }
-                            final sm = startTime!.hour * 60 + startTime!.minute;
-                            final em = endTime!.hour   * 60 + endTime!.minute;
-                            if (em <= sm) {
-                              setS(() => errorMsg = 'End time must be after start time.'); return;
-                            }
-
-                            setS(() { isSaving = true; errorMsg = null; });
-
-                            final startStr = '${startTime!.hour.toString().padLeft(2, '0')}:${startTime!.minute.toString().padLeft(2, '0')}';
-                            final endStr   = '${endTime!.hour.toString().padLeft(2, '0')}:${endTime!.minute.toString().padLeft(2, '0')}';
-
-                            // Fetch existing entries once for clash checks
-                            final existingSnap = await _firestore
-                                .collection('timetable')
-                                .where('userId', isEqualTo: user.uid)
-                                .get();
-                            final existingDocs = existingSnap.docs.map((d) => d.data()).toList();
-
-                            final List<Map<String, dynamic>> classEvents = [];
-                            final List<Map<String, dynamic>> clashInfo   = [];
-
-                            Map<String, dynamic> baseEvent(DateTime date) => {
-                              'userId':       user.uid,
-                              'className':    widget.subjectName,
-                              'date':         Timestamp.fromDate(date),
-                              'startTime':    startStr,
-                              'endTime':      endStr,
-                              'room':         roomCtrl.text.trim(),
-                              'building':     buildingCtrl.text.trim(),
-                              'lecturerName': lecturerCtrl.text.trim(),
-                              'type':         'class',
-                              'createdAt':    Timestamp.now(),
-                            };
-
-                            void tryAdd(DateTime date, {int? sem, String? acYear}) {
-                              final norm  = DateTime(date.year, date.month, date.day);
-                              final clash = _checkClashInMemory(existingDocs, norm, startStr, endStr);
-                              if (clash != null) {
-                                clashInfo.add({'date': norm, 'className': clash['className'],
-                                    'startTime': clash['startTime'], 'endTime': clash['endTime']});
-                              } else {
-                                final ev = baseEvent(norm);
-                                if (sem    != null) ev['semester']     = sem;
-                                if (acYear != null) ev['academicYear'] = acYear;
-                                classEvents.add(ev);
-                              }
-                            }
-
-                            // ── Build event list ────────────────────────
-                            if (dateOption == 'None') {
-                              tryAdd(startDate!, sem: widget.semester, acYear: widget.academicYear);
-                            } else if (dateOption == 'Academic Year/Term' && occurrence == 'Once') {
-                              tryAdd(startDate!,
-                                  sem: selectedSemester,
-                                  acYear: '$selectedYear/${selectedYear + 1}');
-                            } else {
-                              // Repeating (Manual or Academic Year/Term)
-                              final acYear = dateOption == 'Academic Year/Term'
-                                  ? '$selectedYear/${selectedYear + 1}' : null;
-                              final sem    = dateOption == 'Academic Year/Term'
-                                  ? selectedSemester : null;
-                              DateTime cur = startDate!;
-                              while (!cur.isAfter(endDate!)) {
-                                if (selectedDays.contains(cur.weekday)) {
-                                  tryAdd(cur, sem: sem, acYear: acYear);
-                                }
-                                cur = cur.add(const Duration(days: 1));
-                              }
-                            }
-
-                            // ── Handle clashes ──────────────────────────
-                            if (clashInfo.isNotEmpty && classEvents.isEmpty) {
-                              setS(() => isSaving = false);
-                              if (!mounted) return;
-                              final fc = clashInfo.first;
-                              showDialog(
-                                context: context,
-                                builder: (_) => AlertDialog(
-                                  backgroundColor: AppColors.card(context),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12),
-                                    side: BorderSide(color: AppColors.border(context), width: 2),
-                                  ),
-                                  title: Row(children: [
-                                    const Icon(Icons.warning, color: Colors.orange, size: 24),
-                                    const SizedBox(width: 12),
-                                    Expanded(child: Text('All Dates Clash',
-                                        style: GoogleFonts.dmMono(fontWeight: FontWeight.bold))),
-                                  ]),
-                                  content: Text(
-                                    'All selected dates clash with existing classes.\n\nExample:\n${fc['className']}\n'
-                                    '${_fmtTime(fc['startTime'])} – ${_fmtTime(fc['endTime'])}\n'
-                                    'on ${DateFormat('EEE, dd MMM').format(fc['date'])}',
-                                    style: GoogleFonts.dmMono(fontSize: 12),
-                                  ),
-                                  actions: [
-                                    TextButton(
-                                      onPressed: () => Navigator.pop(context),
-                                      child: Text('OK', style: GoogleFonts.dmMono(fontWeight: FontWeight.bold)),
-                                    ),
-                                  ],
-                                ),
-                              );
-                              return;
-                            }
-
-                            if (clashInfo.isNotEmpty) {
-                              if (!mounted) return;
-                              final cont = await showDialog<bool>(
-                                context: context,
-                                builder: (dCtx) => AlertDialog(
-                                  backgroundColor: AppColors.card(context),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12),
-                                    side: BorderSide(color: AppColors.border(context), width: 2),
-                                  ),
-                                  title: Row(children: [
-                                    const Icon(Icons.warning, color: Colors.orange, size: 24),
-                                    const SizedBox(width: 12),
-                                    Expanded(child: Text('Clash Warning',
-                                        style: GoogleFonts.dmMono(fontWeight: FontWeight.bold))),
-                                  ]),
-                                  content: Text(
-                                    '${clashInfo.length} date(s) skipped due to clashes.\n'
-                                    '${classEvents.length} class(es) will be saved.\n\nContinue?',
-                                    style: GoogleFonts.dmMono(fontSize: 12),
-                                  ),
-                                  actions: [
-                                    TextButton(
-                                      onPressed: () => Navigator.pop(dCtx, false),
-                                      child: Text('Cancel', style: GoogleFonts.dmMono(color: AppColors.subtext(context))),
-                                    ),
-                                    TextButton(
-                                      onPressed: () => Navigator.pop(dCtx, true),
-                                      child: Text('Continue', style: GoogleFonts.dmMono(fontWeight: FontWeight.bold)),
-                                    ),
-                                  ],
-                                ),
-                              );
-                              if (cont != true) { setS(() => isSaving = false); return; }
-                            }
-
-                            if (classEvents.isEmpty) {
-                              setS(() { isSaving = false; errorMsg = 'No classes to save. Check your settings.'; });
-                              return;
-                            }
-
-                            // ── Batch save ──────────────────────────────
-                            final batch = _firestore.batch();
-                            for (final ev in classEvents) {
-                              batch.set(_firestore.collection('timetable').doc(), ev);
-                            }
-                            await batch.commit();
-
-                            NotificationScheduler().rescheduleAllNotifications().catchError((_) {});
-
-                            if (ctx.mounted) Navigator.pop(ctx);
-                            if (mounted) {
-                              final count = classEvents.length;
-                              ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                                content: Text(
-                                  count == 1
-                                      ? 'Class added for ${DateFormat('EEE, dd MMM yyyy').format((classEvents.first['date'] as Timestamp).toDate())}'
-                                      : '$count classes added successfully',
-                                  style: GoogleFonts.dmMono(fontWeight: FontWeight.bold, color: Colors.white),
-                                ),
-                                backgroundColor: _green,
-                                behavior: SnackBarBehavior.floating,
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                                duration: const Duration(seconds: 3),
-                              ));
-                              setState(() {});
-                            }
-                          },
-                          icon: const Icon(Icons.check, size: 20),
-                          label: Text('Save Class', style: GoogleFonts.dmMono(fontSize: 15, fontWeight: FontWeight.bold)),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: _red,
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(vertical: 16),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                          ),
-                        ),
-                      ),
                     ],
                   ),
                 ),
               ),
-            ),
-          );
+              // ── Fixed: error + save button ──────────────────────────────
+              if (errorMsg != null)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 4, 24, 0),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.error_outline, size: 14, color: Color(0xFFB90000)),
+                      const SizedBox(width: 6),
+                      Flexible(child: Text(errorMsg!,
+                          style: GoogleFonts.dmMono(fontSize: 12, color: const Color(0xFFB90000)))),
+                    ],
+                  ),
+                ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: isSaving ? null : () async {
+                      // ── Validation ──────────────────────────────
+                      if (startTime == null || endTime == null) {
+                        setS(() => errorMsg = 'Please select start and end time.'); return;
+                      }
+                      if (dateOption == 'None' && startDate == null) {
+                        setS(() => errorMsg = 'Please select a date.'); return;
+                      }
+                      if ((dateOption == 'Manual' || dateOption == 'Academic Year/Term') &&
+                          (startDate == null || endDate == null)) {
+                        setS(() => errorMsg = 'Please select start and end dates.'); return;
+                      }
+                      final needsDays = dateOption == 'Manual' ||
+                          (dateOption == 'Academic Year/Term' && occurrence == 'Repeating');
+                      if (needsDays && selectedDays.isEmpty) {
+                        setS(() => errorMsg = 'Please select at least one day.'); return;
+                      }
+                      final sm = startTime!.hour * 60 + startTime!.minute;
+                      final em = endTime!.hour   * 60 + endTime!.minute;
+                      if (em <= sm) {
+                        setS(() => errorMsg = 'End time must be after start time.'); return;
+                      }
+
+                      setS(() { isSaving = true; errorMsg = null; });
+
+                      final startStr = '${startTime!.hour.toString().padLeft(2, '0')}:${startTime!.minute.toString().padLeft(2, '0')}';
+                      final endStr   = '${endTime!.hour.toString().padLeft(2, '0')}:${endTime!.minute.toString().padLeft(2, '0')}';
+
+                      final existingSnap = await _firestore
+                          .collection('timetable')
+                          .where('userId', isEqualTo: user.uid)
+                          .get();
+                      final existingDocs = existingSnap.docs.map((d) => d.data()).toList();
+
+                      final List<Map<String, dynamic>> classEvents = [];
+                      final List<Map<String, dynamic>> clashInfo   = [];
+
+                      Map<String, dynamic> baseEvent(DateTime date) => {
+                        'userId':       user.uid,
+                        'className':    widget.subjectName,
+                        'date':         Timestamp.fromDate(date),
+                        'startTime':    startStr,
+                        'endTime':      endStr,
+                        'room':         roomCtrl.text.trim(),
+                        'building':     buildingCtrl.text.trim(),
+                        'lecturerName': lecturerCtrl.text.trim(),
+                        'type':         'class',
+                        'createdAt':    Timestamp.now(),
+                      };
+
+                      void tryAdd(DateTime date, {int? sem, String? acYear}) {
+                        final norm  = DateTime(date.year, date.month, date.day);
+                        final clash = _checkClashInMemory(existingDocs, norm, startStr, endStr);
+                        if (clash != null) {
+                          clashInfo.add({'date': norm, 'className': clash['className'],
+                              'startTime': clash['startTime'], 'endTime': clash['endTime']});
+                        } else {
+                          final ev = baseEvent(norm);
+                          if (sem    != null) ev['semester']     = sem;
+                          if (acYear != null) ev['academicYear'] = acYear;
+                          classEvents.add(ev);
+                        }
+                      }
+
+                      if (dateOption == 'None') {
+                        tryAdd(startDate!, sem: widget.semester, acYear: widget.academicYear);
+                      } else if (dateOption == 'Academic Year/Term' && occurrence == 'Once') {
+                        tryAdd(startDate!,
+                            sem: selectedSemester,
+                            acYear: '$selectedYear/${selectedYear + 1}');
+                      } else {
+                        final acYear = dateOption == 'Academic Year/Term'
+                            ? '$selectedYear/${selectedYear + 1}' : null;
+                        final sem    = dateOption == 'Academic Year/Term'
+                            ? selectedSemester : null;
+                        DateTime cur = startDate!;
+                        while (!cur.isAfter(endDate!)) {
+                          if (selectedDays.contains(cur.weekday)) {
+                            tryAdd(cur, sem: sem, acYear: acYear);
+                          }
+                          cur = cur.add(const Duration(days: 1));
+                        }
+                      }
+
+                      if (clashInfo.isNotEmpty && classEvents.isEmpty) {
+                        setS(() => isSaving = false);
+                        if (!mounted) return;
+                        final fc = clashInfo.first;
+                        showDialog(
+                          context: context,
+                          builder: (_) => AlertDialog(
+                            backgroundColor: AppColors.card(context),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              side: BorderSide(color: AppColors.border(context), width: 2),
+                            ),
+                            title: Row(children: [
+                              const Icon(Icons.warning, color: Colors.orange, size: 24),
+                              const SizedBox(width: 12),
+                              Expanded(child: Text('All Dates Clash',
+                                  style: GoogleFonts.dmMono(fontWeight: FontWeight.bold))),
+                            ]),
+                            content: Text(
+                              'All selected dates clash with existing classes.\n\nExample:\n${fc['className']}\n'
+                              '${_fmtTime(fc['startTime'])} – ${_fmtTime(fc['endTime'])}\n'
+                              'on ${DateFormat('EEE, dd MMM').format(fc['date'])}',
+                              style: GoogleFonts.dmMono(fontSize: 12),
+                            ),
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.pop(context),
+                                child: Text('OK', style: GoogleFonts.dmMono(fontWeight: FontWeight.bold)),
+                              ),
+                            ],
+                          ),
+                        );
+                        return;
+                      }
+
+                      if (clashInfo.isNotEmpty) {
+                        if (!mounted) return;
+                        final cont = await showDialog<bool>(
+                          context: context,
+                          builder: (dCtx) => AlertDialog(
+                            backgroundColor: AppColors.card(context),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              side: BorderSide(color: AppColors.border(context), width: 2),
+                            ),
+                            title: Row(children: [
+                              const Icon(Icons.warning, color: Colors.orange, size: 24),
+                              const SizedBox(width: 12),
+                              Expanded(child: Text('Clash Warning',
+                                  style: GoogleFonts.dmMono(fontWeight: FontWeight.bold))),
+                            ]),
+                            content: Text(
+                              '${clashInfo.length} date(s) skipped due to clashes.\n'
+                              '${classEvents.length} class(es) will be saved.\n\nContinue?',
+                              style: GoogleFonts.dmMono(fontSize: 12),
+                            ),
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.pop(dCtx, false),
+                                child: Text('Cancel', style: GoogleFonts.dmMono(color: AppColors.subtext(context))),
+                              ),
+                              TextButton(
+                                onPressed: () => Navigator.pop(dCtx, true),
+                                child: Text('Continue', style: GoogleFonts.dmMono(fontWeight: FontWeight.bold)),
+                              ),
+                            ],
+                          ),
+                        );
+                        if (cont != true) { setS(() => isSaving = false); return; }
+                      }
+
+                      if (classEvents.isEmpty) {
+                        setS(() { isSaving = false; errorMsg = 'No classes to save. Check your settings.'; });
+                        return;
+                      }
+
+                      final batch = _firestore.batch();
+                      for (final ev in classEvents) {
+                        batch.set(_firestore.collection('timetable').doc(), ev);
+                      }
+                      await batch.commit();
+
+                      NotificationScheduler().rescheduleAllNotifications().catchError((_) {});
+
+                      if (ctx.mounted) Navigator.pop(ctx);
+                      if (mounted) {
+                        final count = classEvents.length;
+                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                          content: Text(
+                            count == 1
+                                ? 'Class added for ${DateFormat('EEE, dd MMM yyyy').format((classEvents.first['date'] as Timestamp).toDate())}'
+                                : '$count classes added successfully',
+                            style: GoogleFonts.dmMono(fontWeight: FontWeight.bold, color: Colors.white),
+                          ),
+                          backgroundColor: _green,
+                          behavior: SnackBarBehavior.floating,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          duration: const Duration(seconds: 3),
+                        ));
+                        setState(() {});
+                      }
+                    },
+                    icon: const Icon(Icons.check, size: 20),
+                    label: Text('Save Class', style: GoogleFonts.dmMono(fontSize: 15, fontWeight: FontWeight.bold)),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: _red,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    ),
+    );
         },
       ),
     );

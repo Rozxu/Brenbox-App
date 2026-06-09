@@ -158,31 +158,6 @@ class _EditTaskScreenState extends State<EditTaskScreen> {
       return;
     }
 
-    if (mounted) {
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (_) => PopScope(
-          canPop: false,
-          child: AlertDialog(
-            backgroundColor: AppColors.card(context),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-              side: BorderSide(color: AppColors.border(context), width: 2),
-            ),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                const CircularProgressIndicator(),
-                const SizedBox(height: 16),
-                Text('Updating...', style: GoogleFonts.dmMono(fontSize: 14)),
-              ],
-            ),
-          ),
-        ),
-      );
-    }
     setState(() => _isSaving = true);
     try {
       final dueDateTime = DateTime(
@@ -209,7 +184,6 @@ class _EditTaskScreenState extends State<EditTaskScreen> {
       NotificationScheduler().rescheduleAllNotifications().catchError((_) {});
 
       if (!mounted) return;
-      if (mounted) Navigator.pop(context);
 
       await showDialog(
         context: context,
@@ -247,8 +221,6 @@ class _EditTaskScreenState extends State<EditTaskScreen> {
 
       if (mounted) Navigator.of(context).pop(true);
     } catch (e) {
-      print('Error updating task: $e');
-      if (mounted) Navigator.pop(context);
       if (mounted) {
         _showError('Update Error', 'Error updating task. Please try again.');
       }

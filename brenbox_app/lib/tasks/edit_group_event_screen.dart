@@ -112,32 +112,6 @@ class _EditGroupEventScreenState extends State<EditGroupEventScreen> {
     if (_isSaving) return;
     setState(() => _isSaving = true);
 
-    if (mounted) {
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (_) => PopScope(
-          canPop: false,
-          child: AlertDialog(
-            backgroundColor: AppColors.card(context),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-              side: BorderSide(color: AppColors.border(context), width: 2),
-            ),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                const CircularProgressIndicator(color: kGroup),
-                const SizedBox(height: 16),
-                Text('Updating...', style: GoogleFonts.dmMono(fontSize: 14)),
-              ],
-            ),
-          ),
-        ),
-      );
-    }
-
     try {
       final dt = DateTime(
         _eventDate.year,
@@ -160,7 +134,6 @@ class _EditGroupEventScreenState extends State<EditGroupEventScreen> {
       await NotificationService().cancelNotificationsForEvent(widget.messageId);
       NotificationScheduler().scheduleGroupEventsOnly().catchError((_) {});
       if (!mounted) return;
-      Navigator.pop(context);
 
       await showDialog(
         context: context,
@@ -197,8 +170,7 @@ class _EditGroupEventScreenState extends State<EditGroupEventScreen> {
 
       if (mounted) Navigator.of(context).pop(true);
     } catch (_) {
-      if (mounted) Navigator.pop(context);
-      _showError('Update Error', 'Failed to update. Please try again.');
+      if (mounted) _showError('Update Error', 'Failed to update. Please try again.');
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }

@@ -28,7 +28,7 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage> {
+class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   final _auth = FirebaseAuth.instance;
   final _firestore = FirebaseFirestore.instance;
 
@@ -38,10 +38,23 @@ class _HomePageState extends State<HomePage> {
   int _selectedNavIndex = 0;
   List<Map<String, dynamic>> _cachedGroupEvents = [];
   StreamSubscription<QuerySnapshot>? _groupEventsSub;
+  final ScrollController _homeScrollController = ScrollController();
+  Stream<List<Map<String, dynamic>>>? _timetableStream;
+  DateTime? _timetableStreamDate;
+  Stream<List<Map<String, dynamic>>>? _examsStream;
+  DateTime? _examsStreamDate;
+
+  // Cross-device notification sync — listen for Firestore changes made by
+  // another device logged into the same account, then reschedule local alarms.
+  StreamSubscription<QuerySnapshot>? _taskChangeSub;
+  StreamSubscription<QuerySnapshot>? _timetableChangeSub;
+  StreamSubscription<QuerySnapshot>? _examChangeSub;
+  Timer? _notifRescheduleDebounce;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final args = ModalRoute.of(context)?.settings.arguments as Map?;
       if (args == null || !mounted) return;
@@ -67,10 +80,75 @@ class _HomePageState extends State<HomePage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _fcmForegroundSub?.cancel();
     _studyPlanExpiry?.cancel();
     _groupEventsSub?.cancel();
+    _taskChangeSub?.cancel();
+    _timetableChangeSub?.cancel();
+    _examChangeSub?.cancel();
+    _notifRescheduleDebounce?.cancel();
+    _homeScrollController.dispose();
     super.dispose();
+  }
+
+  // Re-sync notifications the moment the user brings the app to foreground.
+  // Covers changes made on another device while this one was in the background.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && mounted) {
+      NotificationScheduler().onAppOpen();
+    }
+  }
+
+  // Debounce helper — waits 3 s after the last Firestore change before
+  // running onAppOpen(), so rapid edits don't trigger multiple reschedules.
+  void _scheduleNotifRefresh() {
+    _notifRescheduleDebounce?.cancel();
+    _notifRescheduleDebounce = Timer(const Duration(seconds: 3), () {
+      NotificationScheduler().onAppOpen();
+    });
+  }
+
+  // Watches tasks, timetable, and exams for changes made by any device on this
+  // account.  When a change arrives (skipping the initial snapshot), triggers a
+  // debounced onAppOpen() so this device's AlarmManager alarms are rewritten to
+  // match the new due-date/time stored in Firestore.
+  void _listenForDataChanges(String uid) {
+    _taskChangeSub?.cancel();
+    _timetableChangeSub?.cancel();
+    _examChangeSub?.cancel();
+
+    bool tasksFirst     = true;
+    bool timetableFirst = true;
+    bool examsFirst     = true;
+
+    _taskChangeSub = _firestore
+        .collection('tasks')
+        .where('userId', isEqualTo: uid)
+        .snapshots()
+        .listen((snap) {
+      if (tasksFirst) { tasksFirst = false; return; }
+      _scheduleNotifRefresh();
+    }, onError: (_) {});
+
+    _timetableChangeSub = _firestore
+        .collection('timetable')
+        .where('userId', isEqualTo: uid)
+        .snapshots()
+        .listen((snap) {
+      if (timetableFirst) { timetableFirst = false; return; }
+      _scheduleNotifRefresh();
+    }, onError: (_) {});
+
+    _examChangeSub = _firestore
+        .collection('exams')
+        .where('userId', isEqualTo: uid)
+        .snapshots()
+        .listen((snap) {
+      if (examsFirst) { examsFirst = false; return; }
+      _scheduleNotifRefresh();
+    }, onError: (_) {});
   }
 
   void _scheduleStudyPlanExpiry(List<QueryDocumentSnapshot> docs) {
@@ -98,13 +176,17 @@ class _HomePageState extends State<HomePage> {
     final uid = _auth.currentUser?.uid;
     if (uid == null) return;
     _groupEventsSub?.cancel();
+    bool groupEventsFirst = true;
     _groupEventsSub = _firestore
         .collection('user_group_events')
         .where('userId', isEqualTo: uid)
         .snapshots()
         .listen((snap) {
       if (!mounted) return;
+      final isChange = !groupEventsFirst;
+      groupEventsFirst = false;
       setState(() {
+        _timetableStream = null; // group events changed — refresh timetable stream
         _cachedGroupEvents = snap.docs.map((doc) {
           final data = doc.data();
           final ts = data['eventDate'] as Timestamp?;
@@ -128,6 +210,7 @@ class _HomePageState extends State<HomePage> {
           };
         }).whereType<Map<String, dynamic>>().toList();
       });
+      if (isChange) _scheduleNotifRefresh();
     }, onError: (_) {});
   }
 
@@ -229,6 +312,10 @@ class _HomePageState extends State<HomePage> {
     // onAppOpen() is lightweight — schedules new events and restores lost OS
     // alarms without cancelling everything already queued.
     NotificationScheduler().onAppOpen();
+
+    // Start cross-device sync: reschedule local alarms whenever another device
+    // edits tasks, timetable, or exams under this account.
+    _listenForDataChanges(user.uid);
   }
 
   void _handleFcmTap(RemoteMessage message) {
@@ -447,6 +534,7 @@ class _HomePageState extends State<HomePage> {
     return SafeArea(
       bottom: false,
       child: SingleChildScrollView(
+        controller: _homeScrollController,
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 24),
           child: Column(
@@ -683,7 +771,7 @@ class _HomePageState extends State<HomePage> {
         ),
         const SizedBox(height: 16),
         StreamBuilder<List<Map<String, dynamic>>>(
-          stream: _getExamsForDateStream(_selectedDate),
+          stream: _getStableExamsStream(),
           builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) {
               return Container(
@@ -937,9 +1025,10 @@ class _HomePageState extends State<HomePage> {
     final examDate = (exam['examDate'] as Timestamp).toDate();
     final startTime = exam['startTime'] as DateTime;
     final endTime = exam['endTime'] as DateTime;
+    final navCtx = context;
 
     showModalBottomSheet(
-      context: context,
+      context: navCtx,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
       builder: (context) {
@@ -1006,9 +1095,9 @@ class _HomePageState extends State<HomePage> {
                       Expanded(
                         child: OutlinedButton.icon(
                           onPressed: () async {
-                            Navigator.pop(context);
+                            Navigator.pop(navCtx);
                             final result = await Navigator.push(
-                              context,
+                              navCtx,
                               MaterialPageRoute(
                                 builder: (_) =>
                                     EditExamScreen(examData: exam),
@@ -1131,6 +1220,8 @@ class _HomePageState extends State<HomePage> {
       onTap: () {
         setState(() {
           _selectedDate = dateTime;
+          _timetableStream = null; // date changed — recreate streams for new date
+          _examsStream = null;
         });
       },
       child: SizedBox(
@@ -1194,7 +1285,7 @@ class _HomePageState extends State<HomePage> {
         ),
         const SizedBox(height: 16),
         StreamBuilder<List<Map<String, dynamic>>>(
-          stream: _getCombinedEventsStream(user.uid),
+          stream: _getStableTimetableStream(user.uid),
           builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) {
               return const Center(
@@ -1245,6 +1336,24 @@ class _HomePageState extends State<HomePage> {
         ),
       ],
     );
+  }
+
+  Stream<List<Map<String, dynamic>>> _getStableTimetableStream(String userId) {
+    final d = DateTime(_selectedDate.year, _selectedDate.month, _selectedDate.day);
+    if (_timetableStream == null || _timetableStreamDate != d) {
+      _timetableStream = _getCombinedEventsStream(userId);
+      _timetableStreamDate = d;
+    }
+    return _timetableStream!;
+  }
+
+  Stream<List<Map<String, dynamic>>> _getStableExamsStream() {
+    final d = DateTime(_selectedDate.year, _selectedDate.month, _selectedDate.day);
+    if (_examsStream == null || _examsStreamDate != d) {
+      _examsStream = _getExamsForDateStream(_selectedDate);
+      _examsStreamDate = d;
+    }
+    return _examsStream!;
   }
 
   Stream<List<Map<String, dynamic>>> _getCombinedEventsStream(String userId) {
@@ -2188,9 +2297,10 @@ class _HomePageState extends State<HomePage> {
 
   void _showTaskDetails(Map<String, dynamic> task) {
     final dueDate = (task['dueDate'] as Timestamp).toDate();
+    final navCtx = context;
 
     showModalBottomSheet(
-      context: context,
+      context: navCtx,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
       builder: (context) {
@@ -2265,9 +2375,9 @@ class _HomePageState extends State<HomePage> {
                           Expanded(
                             child: OutlinedButton.icon(
                               onPressed: () async {
-                                Navigator.pop(context);
+                                Navigator.pop(navCtx);
                                 final result = await Navigator.push(
-                                  context,
+                                  navCtx,
                                   MaterialPageRoute(
                                     builder: (_) =>
                                         EditTaskScreen(taskData: task),
@@ -2352,8 +2462,9 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _showEnhancedClassDetails(Map<String, dynamic> event) {
+    final navCtx = context;
     showModalBottomSheet(
-      context: context,
+      context: navCtx,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
       builder: (context) {
@@ -2417,15 +2528,16 @@ class _HomePageState extends State<HomePage> {
                     children: [
                       Expanded(
                         child: OutlinedButton.icon(
-                          onPressed: () {
-                            Navigator.pop(context);
-                            Navigator.push(
-                              context,
+                          onPressed: () async {
+                            Navigator.pop(navCtx);
+                            final result = await Navigator.push(
+                              navCtx,
                               MaterialPageRoute(
                                 builder: (_) =>
                                     EditClassScreen(classData: event),
                               ),
                             );
+                            if (result == true && mounted) setState(() {});
                           },
                           icon: Icon(Icons.edit_outlined,
                               color: AppColors.text(context)),

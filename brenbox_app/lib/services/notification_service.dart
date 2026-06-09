@@ -359,18 +359,21 @@ class NotificationService {
     final String channelName;
     String? payload;
 
-    if (type.startsWith('group_')) {
+    // IMPORTANT: check invite types BEFORE the generic startsWith('group_')
+    // guard — 'group_invite'.startsWith('group_') is true and would otherwise
+    // route invite taps to the group chat instead of the calendar.
+    if (type == 'group_invite' || type == 'timetable_invite') {
+      channelId   = _inviteChannelId;
+      channelName = 'Invite Notifications';
+      final historyDocId = data['historyDocId'] ?? '';
+      payload = 'calendar:$historyDocId';
+    } else if (type.startsWith('group_')) {
       channelId   = _groupChannelId;
       channelName = 'Group Activity';
       final groupId      = data['groupId']      ?? '';
       final tab          = data['tab']           ?? '0';
       final historyDocId = data['historyDocId']  ?? '';
       payload = 'group:$groupId:$tab:$historyDocId';
-    } else if (type == 'group_invite' || type == 'timetable_invite') {
-      channelId   = _inviteChannelId;
-      channelName = 'Invite Notifications';
-      final historyDocId = data['historyDocId'] ?? '';
-      payload = 'calendar:$historyDocId';
     } else {
       return;
     }
@@ -608,17 +611,35 @@ class NotificationService {
       styleInformation: BigTextStyleInformation(body),
     );
 
-    await _plugin.zonedSchedule(
-      id,
-      title,
-      body,
-      tzScheduled,
-      NotificationDetails(android: androidDetails),
-      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-      uiLocalNotificationDateInterpretation:
-          UILocalNotificationDateInterpretation.absoluteTime,
-      payload: payload,
-    );
+    // Try exact scheduling first (fires at the precise time).
+    // On devices where SCHEDULE_EXACT_ALARM/USE_EXACT_ALARM is not granted,
+    // setExactAndAllowWhileIdle() throws a SecurityException — fall back to
+    // inexact so the notification still fires (a few minutes late at worst).
+    try {
+      await _plugin.zonedSchedule(
+        id,
+        title,
+        body,
+        tzScheduled,
+        NotificationDetails(android: androidDetails),
+        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+        uiLocalNotificationDateInterpretation:
+            UILocalNotificationDateInterpretation.absoluteTime,
+        payload: payload,
+      );
+    } catch (_) {
+      await _plugin.zonedSchedule(
+        id,
+        title,
+        body,
+        tzScheduled,
+        NotificationDetails(android: androidDetails),
+        androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+        uiLocalNotificationDateInterpretation:
+            UILocalNotificationDateInterpretation.absoluteTime,
+        payload: payload,
+      );
+    }
   }
 
   String _getChannelName(String type) {

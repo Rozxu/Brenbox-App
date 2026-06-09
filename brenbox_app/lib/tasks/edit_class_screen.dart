@@ -159,31 +159,6 @@ class _EditClassScreenState extends State<EditClassScreen> {
     }
 
     setState(() => _isSaving = true);
-    if (mounted) {
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (_) => PopScope(
-          canPop: false,
-          child: AlertDialog(
-            backgroundColor: AppColors.card(context),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-              side: BorderSide(color: AppColors.border(context), width: 2),
-            ),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                const CircularProgressIndicator(),
-                const SizedBox(height: 16),
-                Text('Updating...', style: GoogleFonts.dmMono(fontSize: 14)),
-              ],
-            ),
-          ),
-        ),
-      );
-    }
     try {
       final startTimeStr =
           '${_startTime.hour.toString().padLeft(2, '0')}:${_startTime.minute.toString().padLeft(2, '0')}';
@@ -195,8 +170,8 @@ class _EditClassScreenState extends State<EditClassScreen> {
 
       final clash =
           await _checkClassClash(normalizedDate, startTimeStr, endTimeStr);
+      if (!mounted) return;
       if (clash != null) {
-        if (mounted) Navigator.pop(context);
         _showError(
           'Time Clash',
           'Class time clashes with:\n\n'
@@ -234,7 +209,6 @@ class _EditClassScreenState extends State<EditClassScreen> {
       NotificationScheduler().rescheduleAllNotifications().catchError((_) {});
 
       if (!mounted) return;
-      if (mounted) Navigator.pop(context);
 
       await showDialog(
         context: context,
@@ -280,8 +254,6 @@ class _EditClassScreenState extends State<EditClassScreen> {
 
       if (mounted) Navigator.of(context).pop(true);
     } catch (e) {
-      print('Error updating class: $e');
-      if (mounted) Navigator.pop(context);
       if (mounted) {
         _showError('Update Error', 'Error updating class. Please try again.');
       }

@@ -1,4 +1,6 @@
-﻿import 'package:flutter/material.dart';
+﻿import 'dart:async';
+
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -39,6 +41,16 @@ class _GradeCalculatorScreenState extends State<GradeCalculatorScreen> {
   Map<String, Map<String, String>> _subjectMeta = {};
   List<String> get _subjects => _subjectMeta.keys.toList()..sort();
 
+  // Partial subject maps — merged into _subjectMeta on every stream update.
+  // Timetable is the primary source (carries semester/year metadata).
+  // Tasks and exams fill in subject names that have no scheduled class yet.
+  Map<String, Map<String, String>> _timetableSubjects = {};
+  Set<String> _taskSubjects    = {};
+  Set<String> _examSubjects    = {};
+  StreamSubscription<QuerySnapshot>? _timetableSub;
+  StreamSubscription<QuerySnapshot>? _tasksSub;
+  StreamSubscription<QuerySnapshot>? _examsSub;
+
   String _searchQuery = '';
   bool _isSaving = false;
 
@@ -76,11 +88,14 @@ class _GradeCalculatorScreenState extends State<GradeCalculatorScreen> {
     super.initState();
     for (int i = 0; i < 5; i++) _addAssessmentRow();
     _loadGradeSettings();
-    _loadSubjectMeta();
+    _subscribeSubjectMeta();
   }
 
   @override
   void dispose() {
+    _timetableSub?.cancel();
+    _tasksSub?.cancel();
+    _examsSub?.cancel();
     _searchController.dispose();
     for (final row in _assessments) {
       for (final c in row.values) c.dispose();
@@ -108,14 +123,34 @@ class _GradeCalculatorScreenState extends State<GradeCalculatorScreen> {
     } catch (_) {}
   }
 
-  Future<void> _loadSubjectMeta() async {
+  // Rebuilds _subjectMeta by merging the three partial subject maps.
+  // Timetable subjects carry semester/year metadata; task/exam subjects
+  // fill in any subject name that has no scheduled class entry yet.
+  void _mergeSubjectMeta() {
+    final merged = Map<String, Map<String, String>>.from(_timetableSubjects);
+    for (final sub in {..._taskSubjects, ..._examSubjects}) {
+      if (!merged.containsKey(sub)) {
+        merged[sub] = {'semester': '', 'academicYear': ''};
+      }
+    }
+    _subjectMeta = merged;
+  }
+
+  // Replaces the one-shot _loadSubjectMeta with three live stream listeners so
+  // the subject list updates automatically when:
+  //   • the user adds/edits a class, task, or exam on any device
+  //   • another user's timetable share is accepted (writes to timetable/)
+  //   • the user joins a group that populates timetable entries
+  void _subscribeSubjectMeta() {
     final uid = _auth.currentUser?.uid;
     if (uid == null) return;
-    try {
-      final snap = await _firestore
-          .collection('timetable')
-          .where('userId', isEqualTo: uid)
-          .get();
+
+    _timetableSub = _firestore
+        .collection('timetable')
+        .where('userId', isEqualTo: uid)
+        .snapshots()
+        .listen((snap) {
+      if (!mounted) return;
       final map = <String, Map<String, String>>{};
       for (final doc in snap.docs) {
         final d   = doc.data();
@@ -131,8 +166,45 @@ class _GradeCalculatorScreenState extends State<GradeCalculatorScreen> {
           map[cls] = {'semester': sem, 'academicYear': year};
         }
       }
-      if (mounted) setState(() => _subjectMeta = map);
-    } catch (_) {}
+      setState(() {
+        _timetableSubjects = map;
+        _mergeSubjectMeta();
+      });
+    }, onError: (_) {});
+
+    _tasksSub = _firestore
+        .collection('tasks')
+        .where('userId', isEqualTo: uid)
+        .snapshots()
+        .listen((snap) {
+      if (!mounted) return;
+      final subjects = <String>{};
+      for (final doc in snap.docs) {
+        final sub = (doc.data()['subject'] ?? '').toString().trim();
+        if (sub.isNotEmpty) subjects.add(sub);
+      }
+      setState(() {
+        _taskSubjects = subjects;
+        _mergeSubjectMeta();
+      });
+    }, onError: (_) {});
+
+    _examsSub = _firestore
+        .collection('exams')
+        .where('userId', isEqualTo: uid)
+        .snapshots()
+        .listen((snap) {
+      if (!mounted) return;
+      final subjects = <String>{};
+      for (final doc in snap.docs) {
+        final sub = (doc.data()['subject'] ?? '').toString().trim();
+        if (sub.isNotEmpty) subjects.add(sub);
+      }
+      setState(() {
+        _examSubjects = subjects;
+        _mergeSubjectMeta();
+      });
+    }, onError: (_) {});
   }
 
   // ══════════════════════════════════════════════════════════════════
@@ -1796,6 +1868,8 @@ class _SavedCardState extends State<_SavedCard> {
   static const _gradeGreen  = Color(0xFF34A853);
   static const _gradeYellow = Color(0xFFFBBC05);
   static const _gradeRed    = Color(0xFFB90000);
+  static const _gradeBlue   = Color(0xFF1565C0);
+  static const _gradeOrange = Color(0xFFE65100);
 
   bool _isEditing = false;
   bool _isSaving  = false;
@@ -2021,6 +2095,47 @@ class _SavedCardState extends State<_SavedCard> {
     final nearestGrade = targetGrade.isNotEmpty
         ? _savedNearestGrade(assessments, targetGrade, total)
         : null;
+
+    // Determine whether the user has actually reached the nearest grade,
+    // and how many steps below the original target it sits (rank 1 = 2nd best,
+    // rank 2 = 3rd best, etc.).
+    double nearestGradeMin = 0;
+    int    nearestGradeRank = 0;
+    if (nearestGrade != null && widget.gradeRanges.isNotEmpty) {
+      final nr = widget.gradeRanges.firstWhere(
+        (r) => r['label'] == nearestGrade,
+        orElse: () => <String, dynamic>{},
+      );
+      if (nr.isNotEmpty) nearestGradeMin = (nr['min'] as num).toDouble();
+
+      final sorted = List<Map<String, dynamic>>.from(widget.gradeRanges)
+        ..sort((a, b) => (b['min'] as num).compareTo(a['min'] as num));
+      final tIdx = sorted.indexWhere((r) => r['label'] == targetGrade);
+      final nIdx = sorted.indexWhere((r) => r['label'] == nearestGrade);
+      if (tIdx != -1 && nIdx != -1) nearestGradeRank = nIdx - tIdx;
+    }
+    final nearestAchieved  = nearestGrade != null && total >= nearestGradeMin;
+    // Green for 2nd-best, orange for 3rd-best and below.
+    final nearestAchievedColor = nearestGradeRank <= 1 ? _gradeGreen : _gradeOrange;
+
+    // 2nd best → celebrate; 3rd best and below → acknowledge the final result
+    // and inspire for future assessments (marks are done, no "push more" makes sense).
+    final nearestAchievedMsg = nearestGradeRank <= 1
+        ? 'You achieved your 2nd best: $nearestGrade! 🎉'
+        : 'You scored $nearestGrade — reflect on it and come back stronger next time! 💪';
+
+    // Green / orange when the fallback grade is achieved; yellow when target is
+    // impossible but not yet achieved; yellow instead of red while marks are
+    // still pending (a partial score in the red zone is misleading).
+    final maxAchievable = (widget.data['maxAchievable'] ?? total).toDouble();
+    final hasPending    = maxAchievable > total + 0.01;
+    final finalTotalClr = nearestAchieved
+        ? nearestAchievedColor
+        : nearestGrade != null
+            ? _gradeYellow
+            : (hasPending && gradeClr == _gradeRed)
+                ? _gradeYellow
+                : gradeClr;
 
     // When the original target is impossible, use nearestGrade as the
     // effective target and recompute marks-needed for every pending assessment.
@@ -2470,8 +2585,10 @@ class _SavedCardState extends State<_SavedCard> {
                       final marks    = (a['marks'] ?? 0).toDouble();
                       final fullmarks= (a['fullmarks'] ?? 0).toDouble();
                       final percent  = (a['percent'] ?? 0).toDouble();
+                      // Use effectiveAssessments so the hint reflects the
+                      // nearest achievable grade, not the original saved target.
                       final mNeeded  =
-                          (a['marksNeededForTarget'] ?? -1).toDouble();
+                          (aEff['marksNeededForTarget'] ?? -1).toDouble();
                       final isPending= mNeeded >= 0;
 
                       return Padding(
@@ -2618,10 +2735,10 @@ class _SavedCardState extends State<_SavedCard> {
             padding:
                 const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
             decoration: BoxDecoration(
-              color: gradeClr.withOpacity(0.12),
+              color: finalTotalClr.withOpacity(0.12),
               borderRadius: BorderRadius.circular(10),
               border: Border.all(
-                color: gradeClr.withOpacity(0.6),
+                color: finalTotalClr.withOpacity(0.6),
                 width: 1.5,
               ),
             ),
@@ -2629,7 +2746,7 @@ class _SavedCardState extends State<_SavedCard> {
               child: Text(
                 'FINAL TOTAL: ${total.toStringAsFixed(1)}%  •  Grade $gradeLabel',
                 style: GoogleFonts.dmMono(
-                  color: gradeClr,
+                  color: finalTotalClr,
                   fontWeight: FontWeight.bold,
                   fontSize: 13,
                 ),
@@ -2643,15 +2760,19 @@ class _SavedCardState extends State<_SavedCard> {
               margin: const EdgeInsets.fromLTRB(12, 0, 12, 6),
               padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
-                color: nearestGrade != null
-                    ? _gradeRed.withOpacity(0.10)
+                color: nearestAchieved
+                    ? nearestAchievedColor.withOpacity(0.10)
+                    : nearestGrade != null
+                    ? _gradeBlue.withOpacity(0.10)
                     : targetNeeded <= 0
                     ? _gradeGreen.withOpacity(0.10)
                     : _gradeYellow.withOpacity(0.10),
                 borderRadius: BorderRadius.circular(10),
                 border: Border.all(
-                  color: nearestGrade != null
-                      ? _gradeRed.withOpacity(0.45)
+                  color: nearestAchieved
+                      ? nearestAchievedColor.withOpacity(0.5)
+                      : nearestGrade != null
+                      ? _gradeBlue.withOpacity(0.45)
                       : targetNeeded <= 0
                       ? _gradeGreen.withOpacity(0.5)
                       : _gradeYellow.withOpacity(0.5),
@@ -2664,14 +2785,18 @@ class _SavedCardState extends State<_SavedCard> {
                   Row(
                     children: [
                       Icon(
-                        nearestGrade != null
+                        nearestAchieved
+                            ? Icons.emoji_events
+                            : nearestGrade != null
                             ? Icons.block
                             : targetNeeded <= 0
                             ? Icons.emoji_events
                             : Icons.trending_up,
                         size: 14,
-                        color: nearestGrade != null
-                            ? _gradeRed
+                        color: nearestAchieved
+                            ? nearestAchievedColor
+                            : nearestGrade != null
+                            ? _gradeBlue
                             : targetNeeded <= 0
                             ? _gradeGreen
                             : _gradeYellow,
@@ -2679,14 +2804,18 @@ class _SavedCardState extends State<_SavedCard> {
                       const SizedBox(width: 6),
                       Expanded(
                         child: Text(
-                          nearestGrade != null
+                          nearestAchieved
+                              ? nearestAchievedMsg
+                              : nearestGrade != null
                               ? 'Grade $targetGrade no longer achievable'
                               : targetNeeded <= 0
                               ? 'Target $targetGrade: Achieved! 🎉'
                               : 'Target: $targetGrade',
                           style: GoogleFonts.dmMono(
-                            color: nearestGrade != null
-                                ? _gradeRed
+                            color: nearestAchieved
+                                ? nearestAchievedColor
+                                : nearestGrade != null
+                                ? _gradeBlue
                                 : targetNeeded <= 0
                                 ? _gradeGreen
                                 : _gradeYellow,
@@ -2695,7 +2824,7 @@ class _SavedCardState extends State<_SavedCard> {
                           ),
                         ),
                       ),
-                      if (nearestGrade != null)
+                      if (nearestGrade != null && !nearestAchieved)
                         Container(
                           padding: const EdgeInsets.symmetric(
                             horizontal: 8,
@@ -2720,7 +2849,7 @@ class _SavedCardState extends State<_SavedCard> {
                     ],
                   ),
 
-                  if (targetNeeded > 0 || nearestGrade != null) ...[
+                  if ((targetNeeded > 0 || nearestGrade != null) && !nearestAchieved) ...[
                     const SizedBox(height: 10),
                     ClipRRect(
                       borderRadius: BorderRadius.circular(4),
@@ -2730,7 +2859,7 @@ class _SavedCardState extends State<_SavedCard> {
                         backgroundColor: Colors.white12,
                         valueColor: AlwaysStoppedAnimation<Color>(
                           nearestGrade != null
-                              ? _gradeRed
+                              ? _gradeBlue
                               : _gradeYellow,
                         ),
                       ),
@@ -2750,7 +2879,7 @@ class _SavedCardState extends State<_SavedCard> {
                               ? 'N/A'
                               : '+${targetNeeded.toStringAsFixed(1)}%',
                           color: nearestGrade != null
-                              ? _gradeRed
+                              ? _gradeBlue
                               : _gradeYellow,
                         ),
                         _progressStat(
@@ -2763,7 +2892,7 @@ class _SavedCardState extends State<_SavedCard> {
                           value:
                               '${(progressFraction * 100).toStringAsFixed(0)}%',
                           color: nearestGrade != null
-                              ? _gradeRed
+                              ? _gradeBlue
                               : _gradeYellow,
                         ),
                       ],
@@ -2775,7 +2904,7 @@ class _SavedCardState extends State<_SavedCard> {
                         'the best you can achieve is Grade $nearestGrade.',
                         style: GoogleFonts.dmMono(
                           fontSize: 10,
-                          color: _gradeRed.withOpacity(0.8),
+                          color: _gradeBlue.withOpacity(0.8),
                         ),
                       ),
                     ],
