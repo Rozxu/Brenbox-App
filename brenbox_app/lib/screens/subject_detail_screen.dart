@@ -331,14 +331,16 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
           (snap) => snap.docs.where((doc) {
             final data = doc.data();
             final groupSubjectId = data['subjectId'] as String?;
-            // Prefer ID-based match when both sides have a subjectId
+            // ID-based match wins when both sides have matching subjectIds
             if (_subjectId != null &&
                 _subjectId!.isNotEmpty &&
                 groupSubjectId != null &&
-                groupSubjectId.isNotEmpty) {
-              return groupSubjectId == _subjectId;
+                groupSubjectId.isNotEmpty &&
+                groupSubjectId == _subjectId) {
+              return true;
             }
-            // Fall back to subject name (covers recipients before subjectId is stamped)
+            // Fall back to subject name — covers legacy groups, ID mismatch
+            // (e.g. recipient got a fresh subjectId before joining), etc.
             return data['subject'] == widget.subjectName;
           }).toList(),
         )
@@ -4326,6 +4328,15 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
           _deleteBtn('Delete Exam', () async {
             final m = ScaffoldMessenger.of(context);
             await _firestore.collection('exams').doc(exam['id']).delete();
+            final linkedPlans = await _firestore
+                .collection('study_plans')
+                .where('userId', isEqualTo: _auth.currentUser!.uid)
+                .where('examId', isEqualTo: exam['id'])
+                .get();
+            for (final plan in linkedPlans.docs) {
+              await plan.reference.delete();
+            }
+            if (mounted) setState(() {});
             m.showSnackBar(SnackBar(
               content: Text('Exam deleted',
                   style: GoogleFonts.dmMono(fontWeight: FontWeight.bold, color: Colors.white)),

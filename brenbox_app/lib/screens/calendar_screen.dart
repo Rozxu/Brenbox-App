@@ -2574,6 +2574,14 @@ class _CalendarScreenState extends State<CalendarScreen> {
                               message: 'Are you sure you want to delete this exam? This cannot be undone.',
                               onDelete: () async {
                                 await _firestore.collection('exams').doc(exam['id']).delete();
+                                final linkedPlans = await _firestore
+                                    .collection('study_plans')
+                                    .where('userId', isEqualTo: _auth.currentUser!.uid)
+                                    .where('examId', isEqualTo: exam['id'])
+                                    .get();
+                                for (final plan in linkedPlans.docs) {
+                                  await plan.reference.delete();
+                                }
                                 deleted = true;
                               },
                             );
@@ -3225,6 +3233,19 @@ class _CalendarScreenState extends State<CalendarScreen> {
       }
       final dayKey = DateFormat('yyyy-MM-dd').format(ts.toDate());
       final existing = existingByDay[dayKey] ?? [];
+
+      // Exact duplicate → skip clash check; _joinGroupAndMarkAccepted shows it as "already have"
+      final isDuplicate = existing.any(
+        (ex) =>
+            ex['className'] == cls['className'] &&
+            ex['startTime'] == cls['startTime'] &&
+            ex['endTime'] == cls['endTime'],
+      );
+      if (isDuplicate) {
+        noClash.add(cls);
+        continue;
+      }
+
       final inStart = _timeToMinutes(cls['startTime'] ?? '');
       final inEnd = _timeToMinutes(cls['endTime'] ?? '');
       final clashing = existing.where((ex) {
@@ -3378,6 +3399,11 @@ class _CalendarScreenState extends State<CalendarScreen> {
     required String groupName,
     required List<Map<String, dynamic>> noClashClasses,
     required List<Map<String, dynamic>> clashGroups,
+    String confirmLabel = 'Confirm & Join',
+    List<Map<String, dynamic>> newTasks = const [],
+    List<Map<String, dynamic>> alreadyHasTasks = const [],
+    List<Map<String, dynamic>> newExams = const [],
+    List<Map<String, dynamic>> alreadyHasExams = const [],
   }) {
     final Map<int, String> selections = {
       for (int i = 0; i < clashGroups.length; i++) i: 'incoming',
@@ -3630,6 +3656,40 @@ class _CalendarScreenState extends State<CalendarScreen> {
                       );
                     }),
                   ],
+                  // ── Task / exam summary ─────────────────────────────
+                  if (newTasks.isNotEmpty || alreadyHasTasks.isNotEmpty ||
+                      newExams.isNotEmpty || alreadyHasExams.isNotEmpty) ...[
+                    const Divider(height: 20),
+                    Text(
+                      'Tasks & Exams:',
+                      style: GoogleFonts.dmMono(
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                        color: const Color(0xFF6B7280),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    if (newTasks.isNotEmpty)
+                      Text(
+                        '  • ${newTasks.length} new task${newTasks.length == 1 ? '' : 's'} will be added',
+                        style: GoogleFonts.dmMono(fontSize: 11, color: const Color(0xFF34A853)),
+                      ),
+                    if (alreadyHasTasks.isNotEmpty)
+                      Text(
+                        '  • ${alreadyHasTasks.length} task${alreadyHasTasks.length == 1 ? '' : 's'} already owned (skipped)',
+                        style: GoogleFonts.dmMono(fontSize: 11, color: const Color(0xFF9CA3AF)),
+                      ),
+                    if (newExams.isNotEmpty)
+                      Text(
+                        '  • ${newExams.length} new exam${newExams.length == 1 ? '' : 's'} will be added',
+                        style: GoogleFonts.dmMono(fontSize: 11, color: const Color(0xFF34A853)),
+                      ),
+                    if (alreadyHasExams.isNotEmpty)
+                      Text(
+                        '  • ${alreadyHasExams.length} exam${alreadyHasExams.length == 1 ? '' : 's'} already owned (skipped)',
+                        style: GoogleFonts.dmMono(fontSize: 11, color: const Color(0xFF9CA3AF)),
+                      ),
+                  ],
                 ],
               ),
             ),
@@ -3663,7 +3723,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
                   ),
                 ),
                 child: Text(
-                  'Confirm & Join',
+                  confirmLabel,
                   style: GoogleFonts.dmMono(
                     color: Colors.white,
                     fontWeight: FontWeight.bold,
@@ -3690,62 +3750,97 @@ class _CalendarScreenState extends State<CalendarScreen> {
     final inviteData = doc.data() as Map<String, dynamic>;
     final subjectId = inviteData['subjectId'] as String?;
 
-    // ── Check which classes recipient already has by subjectId ──────────────
+    // ── Check which classes recipient already has ─────────────────────────────
     List<Map<String, dynamic>> newClasses = [];
     List<Map<String, dynamic>> alreadyHasClasses = [];
 
-    if (subjectId != null && subjectId.isNotEmpty) {
-      final existingSnap = await _firestore
-          .collection('timetable')
+    final existingClassesSnap = await _firestore
+        .collection('timetable')
+        .where('userId', isEqualTo: user.uid)
+        .get();
+
+    final Map<String, List<Map<String, dynamic>>> existingByDay = {};
+    for (final d in existingClassesSnap.docs) {
+      final dd = d.data();
+      final ts = dd['date'] as Timestamp?;
+      if (ts == null) continue;
+      final dayKey = DateFormat('yyyy-MM-dd').format(ts.toDate());
+      existingByDay.putIfAbsent(dayKey, () => []).add({
+        'className': dd['className'] ?? '',
+        'startTime': dd['startTime'] ?? '',
+        'endTime': dd['endTime'] ?? '',
+      });
+    }
+
+    for (final cls in classesToInsert) {
+      final ts = cls['date'] as Timestamp?;
+      final dayKey = ts != null ? DateFormat('yyyy-MM-dd').format(ts.toDate()) : '';
+      final existing = existingByDay[dayKey] ?? [];
+      final isDuplicate = existing.any(
+        (ex) =>
+            ex['className'] == cls['className'] &&
+            ex['startTime'] == cls['startTime'] &&
+            ex['endTime'] == cls['endTime'],
+      );
+      (isDuplicate ? alreadyHasClasses : newClasses).add(cls);
+    }
+
+    // ── Upfront task/exam dedup ───────────────────────────────────────────────
+    final tasks = List<Map<String, dynamic>>.from(inviteData['tasks'] ?? []);
+    final exams = List<Map<String, dynamic>>.from(inviteData['exams'] ?? []);
+
+    final List<Map<String, dynamic>> newTasks = [];
+    final List<Map<String, dynamic>> alreadyHasTasks = [];
+    final List<Map<String, dynamic>> newExams = [];
+    final List<Map<String, dynamic>> alreadyHasExams = [];
+
+    if (tasks.isNotEmpty) {
+      final existingTasksSnap = await _firestore
+          .collection('tasks')
           .where('userId', isEqualTo: user.uid)
-          .where('subjectId', isEqualTo: subjectId)
           .get();
-
-      // Build a set of "date+startTime+endTime" keys for fast lookup
-      final existingKeys = existingSnap.docs.map((d) {
+      final existingTaskKeys = existingTasksSnap.docs.map((d) {
         final dd = d.data();
-        final ts = (dd['date'] as Timestamp?)?.millisecondsSinceEpoch ?? 0;
-        return '${ts}__${dd['startTime']}__${dd['endTime']}';
+        return '${dd['taskTitle']}__${(dd['dueDate'] as Timestamp?)?.millisecondsSinceEpoch}';
       }).toSet();
-
-      for (final cls in classesToInsert) {
-        final ts = (cls['date'] as Timestamp?)?.millisecondsSinceEpoch ?? 0;
-        final key = '${ts}__${cls['startTime']}__${cls['endTime']}';
-        if (existingKeys.contains(key)) {
-          alreadyHasClasses.add(cls);
-        } else {
-          newClasses.add(cls);
-        }
+      for (final task in tasks) {
+        final key =
+            '${task['taskTitle']}__${(task['dueDate'] as Timestamp?)?.millisecondsSinceEpoch}';
+        (existingTaskKeys.contains(key) ? alreadyHasTasks : newTasks).add(task);
       }
-    } else {
-      // No subjectId — fall back to date+time dedup
-      final existingSnap = await _firestore
-          .collection('timetable')
+    }
+
+    if (exams.isNotEmpty) {
+      final existingExamsSnap = await _firestore
+          .collection('exams')
           .where('userId', isEqualTo: user.uid)
           .get();
-      final existingKeys = existingSnap.docs.map((d) {
+      final existingExamKeys = existingExamsSnap.docs.map((d) {
         final dd = d.data();
-        final ts = (dd['date'] as Timestamp?)?.millisecondsSinceEpoch ?? 0;
-        return '${ts}__${dd['startTime']}__${dd['endTime']}';
+        return '${dd['examName']}__${(dd['examDate'] as Timestamp?)?.millisecondsSinceEpoch}';
       }).toSet();
-
-      for (final cls in classesToInsert) {
-        final ts = (cls['date'] as Timestamp?)?.millisecondsSinceEpoch ?? 0;
-        final key = '${ts}__${cls['startTime']}__${cls['endTime']}';
-        if (existingKeys.contains(key)) {
-          alreadyHasClasses.add(cls);
-        } else {
-          newClasses.add(cls);
-        }
+      for (final exam in exams) {
+        final key =
+            '${exam['examName']}__${(exam['examDate'] as Timestamp?)?.millisecondsSinceEpoch}';
+        (existingExamKeys.contains(key) ? alreadyHasExams : newExams).add(exam);
       }
     }
 
     // ── Show preview with already-have vs new split ──────────────────────────
-    if (alreadyHasClasses.isNotEmpty || newClasses.isNotEmpty) {
+    if (alreadyHasClasses.isNotEmpty || newClasses.isNotEmpty ||
+        alreadyHasTasks.isNotEmpty || newTasks.isNotEmpty ||
+        alreadyHasExams.isNotEmpty || newExams.isNotEmpty) {
       final confirm = await _showJoinPreviewDialog(
         groupName: groupName,
         newClasses: newClasses,
         alreadyHasClasses: alreadyHasClasses,
+        confirmLabel: newClasses.isEmpty && newTasks.isEmpty && newExams.isEmpty
+            ? 'Join Group'
+            : 'Join & Add',
+        newTasks: newTasks,
+        alreadyHasTasks: alreadyHasTasks,
+        newExams: newExams,
+        alreadyHasExams: alreadyHasExams,
       );
       if (confirm != true) return;
     }
@@ -3779,60 +3874,32 @@ class _CalendarScreenState extends State<CalendarScreen> {
       });
     }
 
-    // ── Insert tasks — skip duplicates with same title + due date ─────────────
-    final tasks = List<Map<String, dynamic>>.from(inviteData['tasks'] ?? []);
-    if (tasks.isNotEmpty) {
-      final existingTasksSnap = await _firestore
-          .collection('tasks')
-          .where('userId', isEqualTo: user.uid)
-          .get();
-      final existingTaskKeys = existingTasksSnap.docs.map((d) {
-        final dd = d.data();
-        return '${dd['taskTitle']}__${(dd['dueDate'] as Timestamp?)?.millisecondsSinceEpoch}';
-      }).toSet();
-      for (final task in tasks) {
-        final key =
-            '${task['taskTitle']}__${(task['dueDate'] as Timestamp?)?.millisecondsSinceEpoch}';
-        if (existingTaskKeys.contains(key)) continue;
-        batch.set(_firestore.collection('tasks').doc(), {
-          'userId': user.uid,
-          'taskTitle': task['taskTitle'] ?? '',
-          'taskDetails': task['taskDetails'] ?? '',
-          'taskType': task['taskType'] ?? '',
-          'subject': task['subject'] ?? '',
-          'dueDate': task['dueDate'],
-          'completed': false,
-        });
-      }
+    // ── Insert new tasks ──────────────────────────────────────────────────────
+    for (final task in newTasks) {
+      batch.set(_firestore.collection('tasks').doc(), {
+        'userId': user.uid,
+        'taskTitle': task['taskTitle'] ?? '',
+        'taskDetails': task['taskDetails'] ?? '',
+        'taskType': task['taskType'] ?? '',
+        'subject': task['subject'] ?? '',
+        'dueDate': task['dueDate'],
+        'completed': false,
+      });
     }
 
-    // ── Insert exams — skip duplicates with same name + exam date ─────────────
-    final exams = List<Map<String, dynamic>>.from(inviteData['exams'] ?? []);
-    if (exams.isNotEmpty) {
-      final existingExamsSnap = await _firestore
-          .collection('exams')
-          .where('userId', isEqualTo: user.uid)
-          .get();
-      final existingExamKeys = existingExamsSnap.docs.map((d) {
-        final dd = d.data();
-        return '${dd['examName']}__${(dd['examDate'] as Timestamp?)?.millisecondsSinceEpoch}';
-      }).toSet();
-      for (final exam in exams) {
-        final key =
-            '${exam['examName']}__${(exam['examDate'] as Timestamp?)?.millisecondsSinceEpoch}';
-        if (existingExamKeys.contains(key)) continue;
-        batch.set(_firestore.collection('exams').doc(), {
-          'userId': user.uid,
-          'examName': exam['examName'] ?? '',
-          'subject': exam['subject'] ?? '',
-          'type': exam['type'] ?? 'Exam',
-          'mode': exam['mode'] ?? 'In Person',
-          'venue': exam['venue'] ?? '',
-          'examDate': exam['examDate'],
-          'startTime': exam['startTime'],
-          'endTime': exam['endTime'],
-        });
-      }
+    // ── Insert new exams ──────────────────────────────────────────────────────
+    for (final exam in newExams) {
+      batch.set(_firestore.collection('exams').doc(), {
+        'userId': user.uid,
+        'examName': exam['examName'] ?? '',
+        'subject': exam['subject'] ?? '',
+        'type': exam['type'] ?? 'Exam',
+        'mode': exam['mode'] ?? 'In Person',
+        'venue': exam['venue'] ?? '',
+        'examDate': exam['examDate'],
+        'startTime': exam['startTime'],
+        'endTime': exam['endTime'],
+      });
     }
 
     await batch.commit();
@@ -3844,10 +3911,10 @@ class _CalendarScreenState extends State<CalendarScreen> {
       final parts = <String>[];
       if (newClasses.isNotEmpty)
         parts.add('${newClasses.length} class${newClasses.length == 1 ? '' : 'es'}');
-      if (tasks.isNotEmpty)
-        parts.add('${tasks.length} task${tasks.length == 1 ? '' : 's'}');
-      if (exams.isNotEmpty)
-        parts.add('${exams.length} exam${exams.length == 1 ? '' : 's'}');
+      if (newTasks.isNotEmpty)
+        parts.add('${newTasks.length} task${newTasks.length == 1 ? '' : 's'}');
+      if (newExams.isNotEmpty)
+        parts.add('${newExams.length} exam${newExams.length == 1 ? '' : 's'}');
       final summary = parts.isEmpty ? '' : ' (${parts.join(', ')} added)';
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -3866,6 +3933,12 @@ class _CalendarScreenState extends State<CalendarScreen> {
     required String groupName,
     required List<Map<String, dynamic>> newClasses,
     required List<Map<String, dynamic>> alreadyHasClasses,
+    String? dialogTitle,
+    String? confirmLabel,
+    List<Map<String, dynamic>> newTasks = const [],
+    List<Map<String, dynamic>> alreadyHasTasks = const [],
+    List<Map<String, dynamic>> newExams = const [],
+    List<Map<String, dynamic>> alreadyHasExams = const [],
   }) {
     return showDialog<bool>(
       context: context,
@@ -3876,7 +3949,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
           side: BorderSide(color: AppColors.border(context), width: 2),
         ),
         title: Text(
-          'Join $groupName?',
+          dialogTitle ?? 'Join $groupName?',
           style: GoogleFonts.dmMono(fontWeight: FontWeight.bold),
         ),
         content: SingleChildScrollView(
@@ -3884,7 +3957,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // ── Classes being added ──────────────────────────────────
+              // ── Classes being added ─────────────────────────────────
               if (newClasses.isNotEmpty) ...[
                 Row(
                   children: [
@@ -3958,7 +4031,207 @@ class _CalendarScreenState extends State<CalendarScreen> {
                 ),
               ],
 
-              if (newClasses.isEmpty && alreadyHasClasses.isNotEmpty) ...[
+              // ── Tasks being added ───────────────────────────────────
+              if (newTasks.isNotEmpty) ...[
+                if (newClasses.isNotEmpty || alreadyHasClasses.isNotEmpty)
+                  const SizedBox(height: 4),
+                Row(
+                  children: [
+                    const Icon(Icons.add_circle_outline, size: 14, color: Color(0xFF34A853)),
+                    const SizedBox(width: 6),
+                    Text(
+                      '${newTasks.length} task${newTasks.length == 1 ? '' : 's'} will be added',
+                      style: GoogleFonts.dmMono(fontSize: 12, fontWeight: FontWeight.bold, color: const Color(0xFF34A853)),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                ...newTasks.map((task) {
+                  final dueTs = task['dueDate'] as Timestamp?;
+                  final dueStr = dueTs != null ? DateFormat('EEE, dd MMM').format(dueTs.toDate()) : '—';
+                  final type = (task['taskType'] ?? '') as String;
+                  return Opacity(
+                    opacity: 1.0,
+                    child: Container(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF0FFF4),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: const Color(0xFF34A853)),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.assignment_outlined, size: 16, color: Color(0xFF34A853)),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(task['taskTitle'] ?? '', style: GoogleFonts.dmMono(fontSize: 12, fontWeight: FontWeight.bold)),
+                                Text('Due: $dueStr${type.isNotEmpty ? '  •  $type' : ''}', style: GoogleFonts.dmMono(fontSize: 10, color: const Color(0xFF6B7280))),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                }),
+                const SizedBox(height: 4),
+              ],
+
+              // ── Tasks already owned ──────────────────────────────────
+              if (alreadyHasTasks.isNotEmpty) ...[
+                Row(
+                  children: [
+                    const Icon(Icons.check_circle_outline, size: 14, color: Color(0xFF6B7280)),
+                    const SizedBox(width: 6),
+                    Text(
+                      '${alreadyHasTasks.length} task${alreadyHasTasks.length == 1 ? '' : 's'} already in your list',
+                      style: GoogleFonts.dmMono(fontSize: 12, fontWeight: FontWeight.bold, color: const Color(0xFF6B7280)),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Text('These will not be added again:', style: GoogleFonts.dmMono(fontSize: 11, color: const Color(0xFF9CA3AF))),
+                const SizedBox(height: 8),
+                ...alreadyHasTasks.map((task) {
+                  final dueTs = task['dueDate'] as Timestamp?;
+                  final dueStr = dueTs != null ? DateFormat('EEE, dd MMM').format(dueTs.toDate()) : '—';
+                  return Opacity(
+                    opacity: 0.6,
+                    child: Container(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: AppColors.input(context),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: AppColors.border(context)),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.check_circle_outline, size: 16, color: AppColors.subtext(context)),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(task['taskTitle'] ?? '', style: GoogleFonts.dmMono(fontSize: 12, fontWeight: FontWeight.bold)),
+                                Text('Due: $dueStr', style: GoogleFonts.dmMono(fontSize: 10, color: const Color(0xFF6B7280))),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                }),
+                const SizedBox(height: 4),
+              ],
+
+              // ── Exams being added ────────────────────────────────────
+              if (newExams.isNotEmpty) ...[
+                Row(
+                  children: [
+                    const Icon(Icons.add_circle_outline, size: 14, color: Color(0xFF34A853)),
+                    const SizedBox(width: 6),
+                    Text(
+                      '${newExams.length} exam${newExams.length == 1 ? '' : 's'} will be added',
+                      style: GoogleFonts.dmMono(fontSize: 12, fontWeight: FontWeight.bold, color: const Color(0xFF34A853)),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                ...newExams.map((exam) {
+                  final examTs = exam['examDate'] as Timestamp?;
+                  final examStr = examTs != null ? DateFormat('EEE, dd MMM').format(examTs.toDate()) : '—';
+                  final startVal = exam['startTime'];
+                  final endVal = exam['endTime'];
+                  final start = startVal is Timestamp ? DateFormat('HH:mm').format(startVal.toDate()) : (startVal as String? ?? '');
+                  final end = endVal is Timestamp ? DateFormat('HH:mm').format(endVal.toDate()) : (endVal as String? ?? '');
+                  return Opacity(
+                    opacity: 1.0,
+                    child: Container(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF0FFF4),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: const Color(0xFF34A853)),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.quiz_outlined, size: 16, color: Color(0xFF34A853)),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(exam['examName'] ?? '', style: GoogleFonts.dmMono(fontSize: 12, fontWeight: FontWeight.bold)),
+                                Text('$examStr${start.isNotEmpty && end.isNotEmpty ? '  •  ${_formatTime(start)} – ${_formatTime(end)}' : ''}', style: GoogleFonts.dmMono(fontSize: 10, color: const Color(0xFF6B7280))),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                }),
+                const SizedBox(height: 4),
+              ],
+
+              // ── Exams already owned ──────────────────────────────────
+              if (alreadyHasExams.isNotEmpty) ...[
+                Row(
+                  children: [
+                    const Icon(Icons.check_circle_outline, size: 14, color: Color(0xFF6B7280)),
+                    const SizedBox(width: 6),
+                    Text(
+                      '${alreadyHasExams.length} exam${alreadyHasExams.length == 1 ? '' : 's'} already in your list',
+                      style: GoogleFonts.dmMono(fontSize: 12, fontWeight: FontWeight.bold, color: const Color(0xFF6B7280)),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Text('These will not be added again:', style: GoogleFonts.dmMono(fontSize: 11, color: const Color(0xFF9CA3AF))),
+                const SizedBox(height: 8),
+                ...alreadyHasExams.map((exam) {
+                  final examTs = exam['examDate'] as Timestamp?;
+                  final examStr = examTs != null ? DateFormat('EEE, dd MMM').format(examTs.toDate()) : '—';
+                  return Opacity(
+                    opacity: 0.6,
+                    child: Container(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: AppColors.input(context),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: AppColors.border(context)),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.check_circle_outline, size: 16, color: AppColors.subtext(context)),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(exam['examName'] ?? '', style: GoogleFonts.dmMono(fontSize: 12, fontWeight: FontWeight.bold)),
+                                Text(examStr, style: GoogleFonts.dmMono(fontSize: 10, color: const Color(0xFF6B7280))),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                }),
+                const SizedBox(height: 4),
+              ],
+
+              if (newClasses.isEmpty && newTasks.isEmpty && newExams.isEmpty &&
+                  (alreadyHasClasses.isNotEmpty || alreadyHasTasks.isNotEmpty || alreadyHasExams.isNotEmpty)) ...[
                 const SizedBox(height: 8),
                 Container(
                   padding: const EdgeInsets.all(12),
@@ -3979,7 +4252,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
-                          'You already have all these classes. You will still join the group.',
+                          'None of these items are new for you.',
                           style: GoogleFonts.dmMono(
                             fontSize: 11,
                             color: const Color(0xFF3859FF),
@@ -4010,7 +4283,10 @@ class _CalendarScreenState extends State<CalendarScreen> {
               ),
             ),
             child: Text(
-              newClasses.isEmpty ? 'Join Group' : 'Join & Add Classes',
+              confirmLabel ??
+                  (newClasses.isEmpty && newTasks.isEmpty && newExams.isEmpty
+                      ? 'Join Group'
+                      : 'Join & Add'),
               style: GoogleFonts.dmMono(
                 color: Colors.white,
                 fontWeight: FontWeight.bold,
@@ -4133,7 +4409,6 @@ class _CalendarScreenState extends State<CalendarScreen> {
     final tasks = List<Map<String, dynamic>>.from(data['tasks'] ?? []);
     final exams = List<Map<String, dynamic>>.from(data['exams'] ?? []);
     final ts = (data['createdAt'] as Timestamp?)?.toDate();
-    final total = classes.length + tasks.length + exams.length;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 14),
@@ -4660,9 +4935,10 @@ class _CalendarScreenState extends State<CalendarScreen> {
       });
     }
 
-    // Separate no-clash from clashing
+    // Separate no-clash from clashing, and track exact duplicates
     final List<Map<String, dynamic>> noClash = [];
     final List<Map<String, dynamic>> clashGroups = [];
+    final List<Map<String, dynamic>> alreadyHas = [];
 
     for (final cls in classes) {
       final ts = cls['date'] as Timestamp?;
@@ -4682,7 +4958,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
             ex['startTime'] == cls['startTime'] &&
             ex['endTime'] == cls['endTime'],
       );
-      if (isDuplicate) continue; // silently skip duplicates
+      if (isDuplicate) { alreadyHas.add(cls); continue; }
 
       final clashing = existing.where((ex) {
         final s = _timeToMinutes(ex['startTime'] ?? '');
@@ -4697,226 +4973,135 @@ class _CalendarScreenState extends State<CalendarScreen> {
       }
     }
 
+    // ── Upfront task duplicate detection ────────────────────────────────────
+    final existingTasksSnap = await _firestore
+        .collection('tasks')
+        .where('userId', isEqualTo: user.uid)
+        .get();
+    final existingTaskKeys = existingTasksSnap.docs.map((d) {
+      final dd = d.data();
+      return '${dd['taskTitle']}__${(dd['dueDate'] as Timestamp?)?.millisecondsSinceEpoch}';
+    }).toSet();
+    final List<Map<String, dynamic>> newTasks = [];
+    final List<Map<String, dynamic>> alreadyHasTasks = [];
+    for (final task in tasks) {
+      final key =
+          '${task['taskTitle']}__${(task['dueDate'] as Timestamp?)?.millisecondsSinceEpoch}';
+      (existingTaskKeys.contains(key) ? alreadyHasTasks : newTasks).add(task);
+    }
+
+    // ── Upfront exam duplicate detection ────────────────────────────────────
+    final existingExamsSnap = await _firestore
+        .collection('exams')
+        .where('userId', isEqualTo: user.uid)
+        .get();
+    final existingExamKeys = existingExamsSnap.docs.map((d) {
+      final dd = d.data();
+      return '${dd['examName']}__${(dd['examDate'] as Timestamp?)?.millisecondsSinceEpoch}';
+    }).toSet();
+    final List<Map<String, dynamic>> newExams = [];
+    final List<Map<String, dynamic>> alreadyHasExams = [];
+    for (final exam in exams) {
+      final key =
+          '${exam['examName']}__${(exam['examDate'] as Timestamp?)?.millisecondsSinceEpoch}';
+      (existingExamKeys.contains(key) ? alreadyHasExams : newExams).add(exam);
+    }
+
     if (classes.isEmpty) {
-      // No classes to insert — just insert tasks/exams and mark accepted
-      await _insertClassesAndMarkAccepted(doc, user, [], tasks, exams, sender);
+      // No classes — show task/exam split dialog then accept
+      final confirm = await _showJoinPreviewDialog(
+        groupName: subject,
+        newClasses: [],
+        alreadyHasClasses: [],
+        dialogTitle: 'Timetable from $sender',
+        confirmLabel: 'Add to Timetable',
+        newTasks: newTasks,
+        alreadyHasTasks: alreadyHasTasks,
+        newExams: newExams,
+        alreadyHasExams: alreadyHasExams,
+      );
+      if (confirm == true) {
+        await _insertClassesAndMarkAccepted(doc, user, [], newTasks, newExams, sender);
+      }
       return;
     }
 
     if (clashGroups.isEmpty) {
-      // No clashes — show preview and confirm
-      final confirm = await _showTimetablePreviewDialog(
-        sender: sender,
-        subject: subject,
-        classesToAdd: noClash,
-      );
-      if (confirm == true) {
-        await _insertClassesAndMarkAccepted(
-          doc,
-          user,
-          noClash,
-          tasks,
-          exams,
-          sender,
+      if (noClash.isEmpty && alreadyHas.isNotEmpty) {
+        // All classes already owned — show full split so user sees everything
+        final confirm = await _showJoinPreviewDialog(
+          groupName: subject,
+          newClasses: [],
+          alreadyHasClasses: alreadyHas,
+          dialogTitle: 'Timetable from $sender',
+          confirmLabel: 'Accept',
+          newTasks: newTasks,
+          alreadyHasTasks: alreadyHasTasks,
+          newExams: newExams,
+          alreadyHasExams: alreadyHasExams,
         );
+        if (confirm == true) {
+          await _insertClassesAndMarkAccepted(doc, user, [], newTasks, newExams, sender);
+        }
+      } else if (alreadyHas.isNotEmpty) {
+        // Mix: some classes new, some already owned
+        final confirm = await _showJoinPreviewDialog(
+          groupName: subject,
+          newClasses: noClash,
+          alreadyHasClasses: alreadyHas,
+          dialogTitle: 'Timetable from $sender',
+          confirmLabel: 'Add to Timetable',
+          newTasks: newTasks,
+          alreadyHasTasks: alreadyHasTasks,
+          newExams: newExams,
+          alreadyHasExams: alreadyHasExams,
+        );
+        if (confirm == true) {
+          await _insertClassesAndMarkAccepted(doc, user, noClash, newTasks, newExams, sender);
+        }
+      } else {
+        // All classes new — show full preview with task/exam split
+        final confirm = await _showJoinPreviewDialog(
+          groupName: subject,
+          newClasses: noClash,
+          alreadyHasClasses: [],
+          dialogTitle: 'Timetable from $sender',
+          confirmLabel: 'Add to Timetable',
+          newTasks: newTasks,
+          alreadyHasTasks: alreadyHasTasks,
+          newExams: newExams,
+          alreadyHasExams: alreadyHasExams,
+        );
+        if (confirm == true) {
+          await _insertClassesAndMarkAccepted(doc, user, noClash, newTasks, newExams, sender);
+        }
       }
     } else {
-      // Has clashes — show clash resolution dialog
+      // Has clashes — show clash resolution dialog with task/exam summary
       final chosen = await _showClashDialog(
         inviterUsername: sender,
         groupName: subject,
         noClashClasses: noClash,
         clashGroups: clashGroups,
+        confirmLabel: 'Confirm & Accept',
+        newTasks: newTasks,
+        alreadyHasTasks: alreadyHasTasks,
+        newExams: newExams,
+        alreadyHasExams: alreadyHasExams,
       );
       if (chosen != null) {
         await _insertClassesAndMarkAccepted(
           doc,
           user,
           chosen,
-          tasks,
-          exams,
+          newTasks,
+          newExams,
           sender,
         );
       }
     }
   }
 
-  Future<bool?> _showTimetablePreviewDialog({
-    required String sender,
-    required String subject,
-    required List<Map<String, dynamic>> classesToAdd,
-  }) {
-    return showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppColors.card(context),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(14),
-          side: BorderSide(color: AppColors.border(context), width: 2),
-        ),
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Add to Timetable?',
-              style: GoogleFonts.dmMono(
-                fontSize: 17,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 3),
-            Text(
-              'From $sender  •  $subject',
-              style: GoogleFonts.dmMono(
-                fontSize: 11,
-                color: const Color(0xFF6B7280),
-              ),
-            ),
-          ],
-        ),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'The following ${classesToAdd.length} class${classesToAdd.length == 1 ? '' : 'es'} will be added to your timetable:',
-                style: GoogleFonts.dmMono(
-                  fontSize: 12,
-                  color: const Color(0xFF6B7280),
-                ),
-              ),
-              const SizedBox(height: 12),
-              ...classesToAdd.map((cls) {
-                final ts = cls['date'] as Timestamp?;
-                final dateStr = ts != null
-                    ? DateFormat('EEE, dd MMM yyyy').format(ts.toDate())
-                    : '—';
-                final room = cls['room'] ?? '';
-                final building = cls['building'] ?? '';
-                final loc = [
-                  room,
-                  building,
-                ].where((s) => (s as String).isNotEmpty).join(', ');
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFF9FAFB),
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(
-                        color: const Color(0xFFB90000).withOpacity(0.3),
-                      ),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Container(
-                              width: 32,
-                              height: 32,
-                              decoration: BoxDecoration(
-                                color: const Color(0xFFB90000),
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              child: const Icon(
-                                Icons.school_outlined,
-                                color: Colors.white,
-                                size: 16,
-                              ),
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Text(
-                                cls['className'] ?? subject,
-                                style: GoogleFonts.dmMono(
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        Row(
-                          children: [
-                            const Icon(
-                              Icons.calendar_today,
-                              size: 12,
-                              color: Color(0xFF6B7280),
-                            ),
-                            const SizedBox(width: 5),
-                            Text(
-                              dateStr,
-                              style: GoogleFonts.dmMono(
-                                fontSize: 11,
-                                color: const Color(0xFF6B7280),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 3),
-                        Row(
-                          children: [
-                            const Icon(
-                              Icons.access_time,
-                              size: 12,
-                              color: Color(0xFF6B7280),
-                            ),
-                            const SizedBox(width: 5),
-                            Text(
-                              '${_formatTime(cls['startTime'] ?? '')} – ${_formatTime(cls['endTime'] ?? '')}'
-                              '${loc.isNotEmpty ? '  •  $loc' : ''}',
-                              style: GoogleFonts.dmMono(
-                                fontSize: 11,
-                                color: const Color(0xFF6B7280),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                );
-              }),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text(
-              'Cancel',
-              style: GoogleFonts.dmMono(
-                fontSize: 13,
-                color: const Color(0xFF6B7280),
-              ),
-            ),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF34A853),
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
-            ),
-            child: Text(
-              'Add to Timetable',
-              style: GoogleFonts.dmMono(
-                fontSize: 13,
-                color: Colors.white,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 
   Future<void> _insertClassesAndMarkAccepted(
     DocumentSnapshot doc,
@@ -5061,12 +5246,9 @@ class _CalendarScreenState extends State<CalendarScreen> {
 class _AnimatedTapButton extends StatefulWidget {
   final Widget child;
   final VoidCallback onTap;
-  final Duration duration;
-
   const _AnimatedTapButton({
     required this.child,
     required this.onTap,
-    this.duration = const Duration(milliseconds: 100),
   });
 
   @override
@@ -5085,7 +5267,7 @@ class _AnimatedTapButtonState extends State<_AnimatedTapButton> {
       onTap: widget.onTap,
       child: AnimatedScale(
         scale: _isTapped ? 0.95 : 1.0,
-        duration: widget.duration,
+        duration: const Duration(milliseconds: 100),
         child: widget.child,
       ),
     );
