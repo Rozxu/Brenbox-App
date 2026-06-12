@@ -5,6 +5,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 import 'email_verification_screen.dart';
 import '../app_preferences.dart';
+import '../services/google_calendar_service.dart';
 
 class SignupScreen extends StatefulWidget {
   const SignupScreen({Key? key}) : super(key: key);
@@ -65,8 +66,22 @@ class _SignupScreenState extends State<SignupScreen> {
       // Send email verification
       await userCredential.user!.sendEmailVerification();
 
+      // Ask for Google Calendar permission before moving on
+      bool calendarGranted = false;
       if (mounted) {
-        // Navigate to email verification screen
+        calendarGranted = await _showCalendarPermissionSheet(
+          userCredential.user!.uid,
+          _emailController.text.trim(),
+        );
+      }
+
+      // Persist the user's choice
+      await _firestore
+          .collection('users')
+          .doc(userCredential.user!.uid)
+          .update({'calendarPermissionGranted': calendarGranted});
+
+      if (mounted) {
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(
@@ -117,6 +132,110 @@ class _SignupScreenState extends State<SignupScreen> {
         ],
       ),
     );
+  }
+
+  // ================= CALENDAR PERMISSION SHEET =================
+  Future<bool> _showCalendarPermissionSheet(
+      String uid, String email) async {
+    final result = await showModalBottomSheet<bool>(
+      context: context,
+      isDismissible: false,
+      enableDrag: false,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        decoration: BoxDecoration(
+          color: AppColors.card(context),
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+          border: Border(
+            top: BorderSide(color: AppColors.border(context), width: 2),
+            left: BorderSide(color: AppColors.border(context), width: 2),
+            right: BorderSide(color: AppColors.border(context), width: 2),
+          ),
+        ),
+        padding: const EdgeInsets.fromLTRB(24, 20, 24, 36),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF4285F4).withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(Icons.calendar_month_rounded,
+                      color: Color(0xFF4285F4), size: 24),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Google Calendar',
+                          style: GoogleFonts.dmMono(
+                              fontSize: 16, fontWeight: FontWeight.bold)),
+                      Text('Optional sync',
+                          style: GoogleFonts.dmMono(
+                              fontSize: 11,
+                              color: AppColors.subtext(context))),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Allow BrenBox to sync your Google Calendar so your events appear alongside your classes and tasks.',
+              style: GoogleFonts.dmMono(
+                  fontSize: 12, color: AppColors.subtext(context), height: 1.5),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Account: $email',
+              style: GoogleFonts.dmMono(
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.text(context)),
+            ),
+            const SizedBox(height: 24),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: () async {
+                  final result =
+                      await GoogleCalendarService.instance.connect();
+                  if (ctx.mounted) {
+                    Navigator.pop(ctx, result == GCalConnectResult.success);
+                  }
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF4285F4),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                ),
+                child: Text('Enable Google Calendar',
+                    style: GoogleFonts.dmMono(
+                        color: Colors.white, fontWeight: FontWeight.bold)),
+              ),
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              child: TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: Text('Skip for now',
+                    style: GoogleFonts.dmMono(
+                        color: AppColors.subtext(context), fontSize: 13)),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+    return result ?? false;
   }
 
   // ================= UI =================

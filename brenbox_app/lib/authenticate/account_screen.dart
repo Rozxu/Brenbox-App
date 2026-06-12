@@ -7,6 +7,7 @@ import '../screens/notification_settings_screen.dart';
 import '../services/notification_service.dart';
 import '../services/notification_scheduler.dart';
 import '../app_preferences.dart';
+import '../services/google_calendar_service.dart';
 
 // ignore_for_file: use_build_context_synchronously
 
@@ -120,9 +121,11 @@ class _AccountScreenState extends State<AccountScreen> {
               .update({'fcmToken': null});
         } catch (_) {}
       }
+      await NotificationService().cancelAllNotifications();
+      await GoogleCalendarService.instance.disconnect();
       await _auth.signOut();
       if (mounted) {
-        Navigator.pushReplacementNamed(context, '/login');
+        Navigator.pushNamedAndRemoveUntil(context, '/login', (route) => false);
       }
     }
   }

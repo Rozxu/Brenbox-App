@@ -595,9 +595,12 @@ class _StudyGroupScreenState extends State<StudyGroupScreen>
             .doc(widget.groupId)
             .snapshots(),
         builder: (ctx, snap) {
-          final data      = snap.data?.data() as Map<String, dynamic>? ?? {};
-          final members   = List<Map<String, dynamic>>.from(data['members'] ?? []);
-          final createdBy = data['createdBy'] as String? ?? '';
+          final data       = snap.data?.data() as Map<String, dynamic>? ?? {};
+          final members    = List<Map<String, dynamic>>.from(data['members'] ?? []);
+          final createdBy  = data['createdBy'] as String? ?? '';
+          final adminIds   = List<String>.from(data['adminIds'] ?? []);
+          final myIsHost   = myUid == createdBy;
+          final myIsAdmin  = adminIds.contains(myUid);
 
           return Container(
             decoration: BoxDecoration(
@@ -641,11 +644,86 @@ class _StudyGroupScreenState extends State<StudyGroupScreen>
                     padding: const EdgeInsets.symmetric(horizontal: 24),
                     itemCount: members.length,
                     itemBuilder: (ctx, i) {
-                      final m      = members[i];
-                      final uid    = m['uid'] as String? ?? '';
-                      final uname  = m['username'] as String? ?? 'Unknown';
-                      final isHost = uid == createdBy;
-                      final isMe   = uid == myUid;
+                      final m       = members[i];
+                      final uid     = m['uid'] as String? ?? '';
+                      final uname   = m['username'] as String? ?? 'Unknown';
+                      final isHost  = uid == createdBy;
+                      final isAdmin = adminIds.contains(uid);
+                      final isMe    = uid == myUid;
+
+                      Widget? trailing;
+                      if (!isMe && !isHost) {
+                        if (myIsHost) {
+                          // Host: popup with Make/Remove Admin + Kick
+                          trailing = PopupMenuButton<String>(
+                            icon: Icon(Icons.more_vert_rounded,
+                                color: AppColors.subtext(ctx), size: 20),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                side: BorderSide(color: AppColors.border(ctx))),
+                            color: AppColors.card(ctx),
+                            itemBuilder: (_) => [
+                              PopupMenuItem(
+                                value: 'admin',
+                                child: Row(children: [
+                                  Icon(
+                                    isAdmin ? Icons.shield_outlined : Icons.shield_rounded,
+                                    size: 18, color: _kBlue,
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Text(isAdmin ? 'Remove Admin' : 'Make Admin',
+                                      style: GoogleFonts.dmMono(fontSize: 13)),
+                                ]),
+                              ),
+                              PopupMenuItem(
+                                value: 'kick',
+                                child: Row(children: [
+                                  const Icon(Icons.person_remove_outlined,
+                                      size: 18, color: Color(0xFFB90000)),
+                                  const SizedBox(width: 10),
+                                  Text('Kick', style: GoogleFonts.dmMono(
+                                      fontSize: 13, color: const Color(0xFFB90000))),
+                                ]),
+                              ),
+                            ],
+                            onSelected: (val) {
+                              if (val == 'admin') {
+                                _toggleAdmin(uid, adminIds);
+                              } else if (val == 'kick') {
+                                _kickMember(ctx, uid, uname, data);
+                              }
+                            },
+                          );
+                        } else if (myIsAdmin && !isAdmin) {
+                          // Admin: kick button for regular members only
+                          trailing = GestureDetector(
+                            onTap: () => _kickMember(ctx, uid, uname, data),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 12, vertical: 6),
+                              decoration: BoxDecoration(
+                                color: _kRed.withOpacity(0.18),
+                                borderRadius: BorderRadius.circular(20),
+                                border: Border.all(color: _kRed),
+                              ),
+                              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                                Icon(Icons.person_remove_outlined, size: 16,
+                                    color: AppColors.isDark(context)
+                                        ? const Color(0xFFFF6B6B) : _kRed),
+                                const SizedBox(width: 5),
+                                Text('Kick', style: GoogleFonts.dmMono(
+                                    fontSize: 13, fontWeight: FontWeight.bold,
+                                    color: AppColors.isDark(context)
+                                        ? const Color(0xFFFF6B6B) : _kRed)),
+                              ]),
+                            ),
+                          );
+                        }
+                      }
+
+                      String? roleLabel;
+                      const roleLabelColor = _kBlue;
+                      if (isHost || isAdmin) roleLabel = 'Admin';
 
                       return ListTile(
                         contentPadding: EdgeInsets.zero,
@@ -662,88 +740,168 @@ class _StudyGroupScreenState extends State<StudyGroupScreen>
                           style: GoogleFonts.dmMono(
                               fontSize: 14, fontWeight: FontWeight.bold),
                         ),
-                        subtitle: isHost
-                            ? Text('Host', style: GoogleFonts.dmMono(
-                                fontSize: 11, color: AppColors.subtext(ctx)))
+                        subtitle: roleLabel != null
+                            ? Text(roleLabel, style: GoogleFonts.dmMono(
+                                fontSize: 11, color: roleLabelColor))
                             : null,
-                        trailing: (!isMe && myUid == createdBy && !isHost)
-                            ? GestureDetector(
-                                onTap: () async {
-                                  final confirm = await showDialog<bool>(
-                                    context: ctx,
-                                    builder: (_) => AlertDialog(
-                                      backgroundColor: AppColors.card(ctx),
-                                      shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(14),
-                                          side: BorderSide(color: AppColors.border(ctx), width: 2)),
-                                      title: Text('Kick $uname?',
-                                          style: GoogleFonts.dmMono(fontWeight: FontWeight.bold)),
-                                      content: Text('Remove $uname from the group?',
-                                          style: GoogleFonts.dmMono(fontSize: 13, color: AppColors.subtext(ctx))),
-                                      actions: [
-                                        TextButton(onPressed: () => Navigator.pop(ctx, false),
-                                            child: Text('Cancel', style: GoogleFonts.dmMono(color: AppColors.subtext(ctx)))),
-                                        ElevatedButton(
-                                          onPressed: () => Navigator.pop(ctx, true),
-                                          style: ElevatedButton.styleFrom(backgroundColor: _kRed),
-                                          child: Text('Kick', style: GoogleFonts.dmMono(
-                                              color: Colors.white, fontWeight: FontWeight.bold)),
-                                        ),
-                                      ],
-                                    ),
-                                  );
-                                  if (confirm == true) {
-                                    final updIds = List<String>.from(data['memberIds'] ?? [])
-                                      ..remove(uid);
-                                    final updMem = List<Map<String, dynamic>>.from(data['members'] ?? [])
-                                      ..removeWhere((x) => x['uid'] == uid);
-                                    await _firestore
-                                        .collection('study_groups')
-                                        .doc(widget.groupId)
-                                        .update({'memberIds': updIds, 'members': updMem});
-                                    // Cancel any pending invitations so the kicked
-                                    // user cannot re-enter via an old invite.
-                                    final pending = await _firestore
-                                        .collection('group_invitations')
-                                        .where('groupId', isEqualTo: widget.groupId)
-                                        .where('inviteeId', isEqualTo: uid)
-                                        .where('status', isEqualTo: 'pending')
-                                        .get();
-                                    await Future.wait(pending.docs.map(
-                                      (d) => d.reference.update({'status': 'cancelled'}),
-                                    ));
-                                  }
-                                },
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 12, vertical: 6),
-                                  decoration: BoxDecoration(
-                                    color: _kRed.withOpacity(0.18),
-                                    borderRadius: BorderRadius.circular(20),
-                                    border: Border.all(color: _kRed),
-                                  ),
-                                  child: Row(mainAxisSize: MainAxisSize.min, children: [
-                                    Icon(Icons.person_remove_outlined, size: 16,
-                                        color: AppColors.isDark(context) ? const Color(0xFFFF6B6B) : _kRed),
-                                    const SizedBox(width: 5),
-                                    Text('Kick', style: GoogleFonts.dmMono(
-                                        fontSize: 13, fontWeight: FontWeight.bold,
-                                        color: AppColors.isDark(context) ? const Color(0xFFFF6B6B) : _kRed)),
-                                  ]),
-                                ),
-                              )
-                            : null,
+                        trailing: trailing,
                       );
                     },
                   ),
                 ),
-                const SizedBox(height: 16),
+                if (myIsHost || myIsAdmin) ...[
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        onPressed: () {
+                          Navigator.pop(ctx);
+                          _deleteGroup();
+                        },
+                        icon: const Icon(Icons.delete_forever_rounded, size: 18),
+                        label: Text('Delete Group',
+                            style: GoogleFonts.dmMono(fontWeight: FontWeight.bold)),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFFB90000),
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12)),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 8),
               ]),
             ),
           );
         },
       ),
     );
+  }
+
+  Future<void> _deleteGroup() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.card(ctx),
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: const BorderSide(color: Color(0xFFB90000), width: 2)),
+        title: Row(children: [
+          const Icon(Icons.warning_amber_rounded, color: Color(0xFFB90000), size: 22),
+          const SizedBox(width: 8),
+          Text('Delete Group', style: GoogleFonts.dmMono(
+              fontSize: 18, fontWeight: FontWeight.bold,
+              color: const Color(0xFFB90000))),
+        ]),
+        content: Text(
+          'This will permanently delete the group and all its events for every member. This cannot be undone.',
+          style: GoogleFonts.dmMono(fontSize: 13, color: AppColors.subtext(ctx), height: 1.5),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text('Cancel', style: GoogleFonts.dmMono(color: AppColors.subtext(ctx))),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFB90000),
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
+            child: Text('Delete', style: GoogleFonts.dmMono(
+                color: Colors.white, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+
+    final myUid = _auth.currentUser?.uid;
+    // Only delete the current user's event copies — Firestore rules prevent
+    // reading/deleting other users' documents, and orphaned copies are harmless
+    // once the group document is gone.
+    final batch = _firestore.batch();
+    if (myUid != null) {
+      final eventsSnap = await _firestore
+          .collection('user_group_events')
+          .where('groupId', isEqualTo: widget.groupId)
+          .where('userId', isEqualTo: myUid)
+          .get();
+      for (final doc in eventsSnap.docs) {
+        batch.delete(doc.reference);
+      }
+    }
+    batch.delete(_firestore.collection('study_groups').doc(widget.groupId));
+    await batch.commit();
+
+    if (mounted) Navigator.pop(context);
+  }
+
+  Future<void> _toggleAdmin(String uid, List<String> currentAdminIds) async {
+    final updatedAdminIds = List<String>.from(currentAdminIds);
+    if (updatedAdminIds.contains(uid)) {
+      updatedAdminIds.remove(uid);
+    } else {
+      updatedAdminIds.add(uid);
+    }
+    await _firestore
+        .collection('study_groups')
+        .doc(widget.groupId)
+        .update({'adminIds': updatedAdminIds});
+  }
+
+  Future<void> _kickMember(
+      BuildContext ctx, String uid, String uname, Map<String, dynamic> data) async {
+    final confirm = await showDialog<bool>(
+      context: ctx,
+      builder: (_) => AlertDialog(
+        backgroundColor: AppColors.card(ctx),
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+            side: BorderSide(color: AppColors.border(ctx), width: 2)),
+        title: Text('Kick $uname?',
+            style: GoogleFonts.dmMono(fontWeight: FontWeight.bold)),
+        content: Text('Remove $uname from the group?',
+            style: GoogleFonts.dmMono(
+                fontSize: 13, color: AppColors.subtext(ctx))),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text('Cancel',
+                  style: GoogleFonts.dmMono(color: AppColors.subtext(ctx)))),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(backgroundColor: _kRed),
+            child: Text('Kick',
+                style: GoogleFonts.dmMono(
+                    color: Colors.white, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+
+    final updIds = List<String>.from(data['memberIds'] ?? [])..remove(uid);
+    final updMem = List<Map<String, dynamic>>.from(data['members'] ?? [])
+      ..removeWhere((x) => x['uid'] == uid);
+    final updAdminIds = List<String>.from(data['adminIds'] ?? [])..remove(uid);
+    await _firestore
+        .collection('study_groups')
+        .doc(widget.groupId)
+        .update({'memberIds': updIds, 'members': updMem, 'adminIds': updAdminIds});
+    // Cancel any pending invitations so the kicked user cannot re-enter via an old invite.
+    final pending = await _firestore
+        .collection('group_invitations')
+        .where('groupId', isEqualTo: widget.groupId)
+        .where('inviteeId', isEqualTo: uid)
+        .where('status', isEqualTo: 'pending')
+        .get();
+    await Future.wait(
+        pending.docs.map((d) => d.reference.update({'status': 'cancelled'})));
   }
 
   Future<void> _leaveGroup() async {
@@ -778,14 +936,15 @@ class _StudyGroupScreenState extends State<StudyGroupScreen>
     final d = (await _firestore
         .collection('study_groups').doc(widget.groupId).get()).data();
     if (d == null) return;
-    final ids  = List<String>.from(d['memberIds'] ?? [])..remove(user.uid);
-    final mems = List<Map<String, dynamic>>.from(d['members'] ?? [])
+    final ids      = List<String>.from(d['memberIds'] ?? [])..remove(user.uid);
+    final mems     = List<Map<String, dynamic>>.from(d['members'] ?? [])
       ..removeWhere((m) => m['uid'] == user.uid);
+    final adminIds = List<String>.from(d['adminIds'] ?? [])..remove(user.uid);
     if (ids.isEmpty) {
       await _firestore.collection('study_groups').doc(widget.groupId).delete();
     } else {
       await _firestore.collection('study_groups').doc(widget.groupId)
-          .update({'memberIds': ids, 'members': mems});
+          .update({'memberIds': ids, 'members': mems, 'adminIds': adminIds});
     }
     if (mounted) Navigator.pop(context);
   }

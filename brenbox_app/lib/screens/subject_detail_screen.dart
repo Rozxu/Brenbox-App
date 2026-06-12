@@ -51,6 +51,9 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
   List<Map<String, dynamic>> _cachedGroupEvents = [];
   StreamSubscription<QuerySnapshot>? _groupEventsSub;
 
+  final GlobalKey _legendKey = GlobalKey();
+  OverlayEntry? _legendOverlay;
+
   @override
   void initState() {
     super.initState();
@@ -61,6 +64,7 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
 
   @override
   void dispose() {
+    _legendOverlay?.remove();
     _groupEventsSub?.cancel();
     super.dispose();
   }
@@ -197,16 +201,90 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
     _currentMonth = DateTime(_currentMonth.year, _currentMonth.month + 1, 1);
   });
 
+  void _toggleLegend() {
+    if (_legendOverlay != null) {
+      _legendOverlay!.remove();
+      _legendOverlay = null;
+      return;
+    }
+    final box = _legendKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null) return;
+    final pos = box.localToGlobal(Offset.zero);
+    _legendOverlay = OverlayEntry(
+      builder: (_) => Stack(
+        children: [
+          Positioned.fill(
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () { _legendOverlay?.remove(); _legendOverlay = null; },
+            ),
+          ),
+          Positioned(
+            top: pos.dy + box.size.height + 8,
+            left: pos.dx,
+            child: Material(
+              color: Colors.transparent,
+              child: Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1A1A2E),
+                  borderRadius: BorderRadius.circular(14),
+                  boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.3), blurRadius: 12, offset: const Offset(0, 4))],
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _legendRow(const Color(0xFFB90000), true, 'Class'),
+                    const SizedBox(height: 8),
+                    _legendRow(const Color(0xFF9AB900), true, 'Exam'),
+                    const SizedBox(height: 8),
+                    _legendRow(const Color(0xFF008BB9), true, 'Task'),
+                    const SizedBox(height: 8),
+                    _legendRow(const Color(0xFF7C3AED), true, 'Study Event'),
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 8),
+                      child: Divider(color: Colors.white24, height: 1),
+                    ),
+                    _legendRow(const Color(0xFF008BB9), false, 'Pending'),
+                    const SizedBox(height: 8),
+                    _legendRow(const Color(0xFF008BB9), true, 'Completed'),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    Overlay.of(context).insert(_legendOverlay!);
+  }
+
+  Widget _legendRow(Color color, bool filled, String label) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 9, height: 9,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: filled ? color : Colors.transparent,
+            border: filled ? null : Border.all(color: color, width: 1.5),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Text(label, style: GoogleFonts.dmMono(fontSize: 12, color: Colors.white)),
+      ],
+    );
+  }
+
   // ══════════════════════════════════════════════════════════════════════════
   // CALENDAR HELPERS (unchanged)
   // ══════════════════════════════════════════════════════════════════════════
 
-  Stream<Map<String, bool>> _checkClassesOnDateStream(DateTime date) {
+  Stream<List<_DotData>> _getDotsForDateStream(DateTime date) {
     final user = _auth.currentUser;
-    if (user == null)
-      return Stream.value({'hasClasses': false, 'isUpcoming': false});
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
+    if (user == null) return Stream.value([]);
     final checkDate = DateTime(date.year, date.month, date.day);
 
     return _firestore
@@ -215,70 +293,79 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
         .where('className', isEqualTo: widget.subjectName)
         .snapshots()
         .asyncMap((snap) async {
-          bool hasClasses = false;
-          bool isUpcoming = false;
+          final dots = <_DotData>[];
+
+          // Classes
+          bool hasClass = false;
           for (var doc in snap.docs) {
             final ts = doc.data()['date'] as Timestamp?;
             if (ts != null) {
               final d = ts.toDate();
               if (DateTime(d.year, d.month, d.day) == checkDate) {
-                hasClasses = true;
-                if (checkDate.isAfter(today)) isUpcoming = true;
+                hasClass = true;
                 break;
               }
             }
           }
-          if (!hasClasses) {
-            final t = await _firestore
-                .collection('tasks')
-                .where('userId', isEqualTo: user.uid)
-                .where('subject', isEqualTo: widget.subjectName)
-                .get();
-            for (var doc in t.docs) {
-              final ts = doc.data()['dueDate'] as Timestamp?;
-              if (ts != null) {
-                final d = ts.toDate();
-                if (DateTime(d.year, d.month, d.day) == checkDate) {
-                  hasClasses = true;
-                  if (checkDate.isAfter(today)) isUpcoming = true;
-                  break;
-                }
+          if (hasClass) dots.add(const _DotData(Color(0xFFB90000), true));
+
+          // Tasks
+          final t = await _firestore
+              .collection('tasks')
+              .where('userId', isEqualTo: user.uid)
+              .where('subject', isEqualTo: widget.subjectName)
+              .get();
+          final dateTasks = <Map<String, dynamic>>[];
+          for (var doc in t.docs) {
+            final ts = doc.data()['dueDate'] as Timestamp?;
+            if (ts != null) {
+              final d = ts.toDate();
+              if (DateTime(d.year, d.month, d.day) == checkDate) {
+                dateTasks.add(doc.data());
               }
             }
           }
-          if (!hasClasses) {
-            final e = await _firestore
-                .collection('exams')
-                .where('userId', isEqualTo: user.uid)
-                .where('subject', isEqualTo: widget.subjectName)
-                .get();
-            for (var doc in e.docs) {
-              final ts = doc.data()['examDate'] as Timestamp?;
-              if (ts != null) {
-                final d = ts.toDate();
-                if (DateTime(d.year, d.month, d.day) == checkDate) {
-                  hasClasses = true;
-                  if (checkDate.isAfter(today)) isUpcoming = true;
-                  break;
-                }
+          if (dateTasks.isNotEmpty) {
+            final allDone = dateTasks.every((task) => task['completed'] == true);
+            dots.add(_DotData(const Color(0xFF008BB9), allDone));
+          }
+
+          // Exams
+          final e = await _firestore
+              .collection('exams')
+              .where('userId', isEqualTo: user.uid)
+              .where('subject', isEqualTo: widget.subjectName)
+              .get();
+          bool hasExam = false;
+          for (var doc in e.docs) {
+            final ts = doc.data()['examDate'] as Timestamp?;
+            if (ts != null) {
+              final d = ts.toDate();
+              if (DateTime(d.year, d.month, d.day) == checkDate) {
+                hasExam = true;
+                break;
               }
             }
           }
-          if (!hasClasses) {
-            for (final ge in _cachedGroupEvents) {
-              if ((ge['subject'] as String? ?? '') != widget.subjectName) continue;
-              final ts = ge['eventDate'] as Timestamp?;
-              if (ts != null) {
-                final d = ts.toDate();
-                if (DateTime(d.year, d.month, d.day) == checkDate) {
-                  hasClasses = true;
-                  if (checkDate.isAfter(today)) isUpcoming = true;
-                  break;
-                }
+          if (hasExam) dots.add(const _DotData(Color(0xFF9AB900), true));
+
+          // Group events (from cached)
+          final dateGroupEvents = <Map<String, dynamic>>[];
+          for (final ge in _cachedGroupEvents) {
+            final ts = ge['eventDate'] as Timestamp?;
+            if (ts != null) {
+              final d = ts.toDate();
+              if (DateTime(d.year, d.month, d.day) == checkDate) {
+                dateGroupEvents.add(ge);
               }
             }
           }
-          return {'hasClasses': hasClasses, 'isUpcoming': isUpcoming};
+          if (dateGroupEvents.isNotEmpty) {
+            final allDone = dateGroupEvents.every((e) => e['isCompleted'] == true);
+            dots.add(_DotData(const Color(0xFF7C3AED), allDone));
+          }
+
+          return dots;
         });
   }
 
@@ -2969,7 +3056,7 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
 
   Widget _buildCalendar(List<DateTime> days) {
     return Container(
-      padding: const EdgeInsets.all(24),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
       decoration: BoxDecoration(
         color: AppColors.card(context),
         borderRadius: BorderRadius.circular(16),
@@ -2980,23 +3067,40 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 8,
-                ),
-                decoration: BoxDecoration(
-                  color: AppColors.chipBg(context),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: Text(
-                  DateFormat('MMMM, yyyy').format(_currentMonth),
-                  style: GoogleFonts.dmMono(
-                    fontSize: 12,
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: AppColors.chipBg(context),
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Text(
+                      DateFormat('MMMM, yyyy').format(_currentMonth),
+                      style: GoogleFonts.dmMono(
+                        fontSize: 12,
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
                   ),
-                ),
+                  const SizedBox(width: 8),
+                  GestureDetector(
+                    key: _legendKey,
+                    onTap: _toggleLegend,
+                    child: Container(
+                      width: 32, height: 32,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: const Color(0xFFFFF9C4),
+                        border: Border.all(color: Colors.black, width: 1.5),
+                      ),
+                      child: Center(
+                        child: Text('i', style: GoogleFonts.dmMono(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.black)),
+                      ),
+                    ),
+                  ),
+                ],
               ),
               Row(
                 children: [
@@ -3052,28 +3156,27 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
               'SAT',
             ].map(_weekdayLabel).toList(),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
           GridView.builder(
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
             gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: 7,
-              childAspectRatio: 0.85,
+              childAspectRatio: 0.72,
               crossAxisSpacing: 8,
-              mainAxisSpacing: 12,
+              mainAxisSpacing: 2,
             ),
             itemCount: days.length,
             itemBuilder: (ctx, i) {
               final date = days[i];
-              return StreamBuilder<Map<String, bool>>(
-                stream: _checkClassesOnDateStream(date),
+              return StreamBuilder<List<_DotData>>(
+                stream: _getDotsForDateStream(date),
                 builder: (ctx, snap) => _buildDateCell(
                   date,
                   _isCurrentMonth(date),
                   _isToday(date),
                   _isSelected(date),
-                  snap.data?['hasClasses'] ?? false,
-                  snap.data?['isUpcoming'] ?? false,
+                  snap.data ?? [],
                 ),
               );
             },
@@ -3088,42 +3191,27 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
     bool isCurrentMonth,
     bool isToday,
     bool isSelected,
-    bool hasClasses,
-    bool isUpcoming,
+    List<_DotData> dots,
   ) {
-    Color? bg;
-    Color? border;
-    double? bw;
-    Color textColor = AppColors.text(context);
-    if (isToday) {
-      bg = _red;
-      textColor = Colors.white;
-    } else {
-      bg = Colors.transparent;
-      if (isUpcoming) {
-        border = _red;
-        bw = 2;
-      } else if (hasClasses) {
-        border = AppColors.border(context);
-        bw = 2;
-      }
-    }
-    if (!isCurrentMonth) textColor = AppColors.subtext(context);
+    final textColor = isToday
+        ? Colors.white
+        : isCurrentMonth
+            ? AppColors.text(context)
+            : AppColors.subtext(context);
+
     return _AnimatedTapButton(
       onTap: () => setState(() => _selectedDate = date),
       child: Column(
         mainAxisSize: MainAxisSize.min,
-        mainAxisAlignment: MainAxisAlignment.center,
+        mainAxisAlignment: MainAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           Container(
             width: 32,
             height: 32,
             decoration: BoxDecoration(
-              color: bg,
+              color: isToday ? _red : Colors.transparent,
               shape: BoxShape.circle,
-              border: border != null && bw != null
-                  ? Border.all(color: border, width: bw)
-                  : null,
             ),
             child: Center(
               child: Text(
@@ -3136,9 +3224,25 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
               ),
             ),
           ),
-          if (isSelected) ...[
-            const SizedBox(height: 4),
-            CustomPaint(size: const Size(10, 8), painter: TrianglePainter(color: AppColors.text(context))),
+          SizedBox(
+            height: 10,
+            child: isSelected
+                ? Center(
+                    child: CustomPaint(
+                      size: const Size(10, 8),
+                      painter: TrianglePainter(color: AppColors.text(context)),
+                    ),
+                  )
+                : null,
+          ),
+          if (dots.isNotEmpty) ...[
+            const SizedBox(height: 2),
+            Wrap(
+              spacing: 4,
+              runSpacing: 3,
+              alignment: WrapAlignment.center,
+              children: dots.take(5).map((d) => _EventDot(d)).toList(),
+            ),
           ],
         ],
       ),
@@ -5082,6 +5186,33 @@ class _AmPmToggle extends StatelessWidget {
         const SizedBox(height: 6),
         _PeriodBtn(label: 'PM', selected: !isAm, onTap: () => onChanged(false)),
       ],
+    );
+  }
+}
+
+// =============================================================================
+// Dot data + widget for calendar event indicators
+// =============================================================================
+
+class _DotData {
+  final Color color;
+  final bool filled;
+  const _DotData(this.color, this.filled);
+}
+
+class _EventDot extends StatelessWidget {
+  final _DotData data;
+  const _EventDot(this.data, {super.key});
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 7,
+      height: 7,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: data.filled ? data.color : Colors.transparent,
+        border: Border.all(color: data.color, width: 1.5),
+      ),
     );
   }
 }

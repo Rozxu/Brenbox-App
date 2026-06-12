@@ -28,6 +28,8 @@ dependencies:
   path_provider: ^2.1.2
 
   google_sign_in: ^6.2.1
+  googleapis: ^13.2.0
+  http: ^1.2.0
   firebase_messaging: ^16.0.4
 
   flutter_local_notifications: ^17.2.4

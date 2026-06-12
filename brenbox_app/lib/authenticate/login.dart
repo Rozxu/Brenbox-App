@@ -4,6 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import '../app_preferences.dart';
+import '../services/google_calendar_service.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({Key? key}) : super(key: key);
@@ -78,7 +79,7 @@ class _LoginScreenState extends State<LoginScreen> {
       });
 
       if (mounted) {
-        Navigator.pushReplacementNamed(context, '/home');
+        Navigator.pushNamedAndRemoveUntil(context, '/home', (route) => false);
       }
     } on FirebaseAuthException catch (e) {
       _showMessage(_firebaseErrorMessage(e.code));
@@ -133,46 +134,31 @@ class _LoginScreenState extends State<LoginScreen> {
 
       if (!doc.exists) {
         // ── NEW GOOGLE USER ──
-        // Pause loading spinner while showing consent dialog
-        if (mounted) setState(() => _isLoading = false);
-
-        // Show data consent dialog and wait for user's decision
-        final bool? userConsented = await _showDataConsentDialog(
-          displayName: user.displayName ?? '',
-          email: user.email ?? '',
-        );
-
-        // User dismissed dialog without choosing
-        if (userConsented == null) {
-          // Completely remove the Firebase Auth account so no trace is left
-          await user.delete();
-          return;
-        }
-
-        // User declined consent — delete auth account entirely and stay on login screen
-        if (!userConsented) {
-          // user.delete() removes the Firebase Auth record entirely,
-          // unlike signOut() which only ends the session but leaves the account.
-          // This ensures no ghost auth record exists if they try signing in again.
-          await user.delete();
-          _showMessage(
-            'Sign-up cancelled.\n\nWe need your permission to save your data in order to create an account.',
-          );
-          return;
-        }
-
-        // User approved — resume loading and save data
-        if (mounted) setState(() => _isLoading = true);
-
+        // Google's native OAuth already collected consent — save directly
         await _firestore.collection('users').doc(user.uid).set({
           'uid': user.uid,
           'email': user.email,
-          'username': user.displayName, // use Google display name as username
+          'username': user.displayName,
           'emailVerified': true,
           'provider': 'google',
           'createdAt': Timestamp.now(),
           'lastLogin': Timestamp.now(),
         });
+
+        // Ask for Google Calendar permission
+        bool calendarGranted = false;
+        if (mounted) setState(() => _isLoading = false);
+        if (mounted) {
+          calendarGranted = await _showCalendarPermissionSheet(
+            user.uid,
+            user.email ?? '',
+          );
+        }
+        await _firestore
+            .collection('users')
+            .doc(user.uid)
+            .update({'calendarPermissionGranted': calendarGranted});
+        if (mounted) setState(() => _isLoading = true);
       } else {
         // ── EXISTING USER — update last login and proceed normally ──
         await _firestore.collection('users').doc(user.uid).update({
@@ -182,7 +168,7 @@ class _LoginScreenState extends State<LoginScreen> {
       }
 
       if (mounted) {
-        Navigator.pushReplacementNamed(context, '/home');
+        Navigator.pushNamedAndRemoveUntil(context, '/home', (route) => false);
       }
     } on FirebaseAuthException catch (e) {
       _showMessage(_firebaseErrorMessage(e.code));
@@ -193,154 +179,106 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  // ================= DATA CONSENT DIALOG =================
-  /// Shows a dialog asking the new Google user for permission to store their data.
-  /// Returns:
-  ///   true  → user approved
-  ///   false → user declined
-  ///   null  → dialog was dismissed (back button / tap outside)
-  Future<bool?> _showDataConsentDialog({
-    required String displayName,
-    required String email,
-  }) {
-    return showDialog<bool>(
+  // ================= CALENDAR PERMISSION SHEET =================
+  Future<bool> _showCalendarPermissionSheet(String uid, String email) async {
+    final result = await showModalBottomSheet<bool>(
       context: context,
-      barrierDismissible: false, // force an explicit choice
-      builder: (context) => AlertDialog(
-        backgroundColor: AppColors.card(context),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
+      isDismissible: false,
+      enableDrag: false,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        decoration: BoxDecoration(
+          color: AppColors.card(context),
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+          border: Border(
+            top: BorderSide(color: AppColors.border(context), width: 2),
+            left: BorderSide(color: AppColors.border(context), width: 2),
+            right: BorderSide(color: AppColors.border(context), width: 2),
+          ),
         ),
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'BrenBox',
-              style: GoogleFonts.dmMono(
-                fontWeight: FontWeight.bold,
-                fontSize: 18,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Data Usage Permission',
-              style: GoogleFonts.dmMono(
-                fontSize: 13,
-                fontWeight: FontWeight.normal,
-                color: AppColors.subtext(context),
-              ),
-            ),
-          ],
-        ),
-        content: Column(
+        padding: const EdgeInsets.fromLTRB(24, 20, 24, 36),
+        child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              'To create your BrenBox account, we would like to save the following information from your Google profile:',
-              style: GoogleFonts.dmMono(fontSize: 12),
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF4285F4).withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(Icons.calendar_month_rounded,
+                      color: Color(0xFF4285F4), size: 24),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Google Calendar',
+                          style: GoogleFonts.dmMono(
+                              fontSize: 16, fontWeight: FontWeight.bold)),
+                      Text('Optional sync',
+                          style: GoogleFonts.dmMono(
+                              fontSize: 11,
+                              color: AppColors.subtext(context))),
+                    ],
+                  ),
+                ),
+              ],
             ),
             const SizedBox(height: 16),
-
-            // Data preview card
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: AppColors.fieldBg(context),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _consentDataRow(
-                    Icons.person_outline,
-                    'Username',
-                    displayName.isNotEmpty ? displayName : '—',
-                  ),
-                  const SizedBox(height: 8),
-                  _consentDataRow(
-                    Icons.email_outlined,
-                    'Email',
-                    email.isNotEmpty ? email : '—',
-                  ),
-                ],
-              ),
-            ),
-
-            const SizedBox(height: 16),
             Text(
-              'Do you allow BrenBox to store this data?',
+              'Allow BrenBox to sync your Google Calendar so your events appear alongside your classes and tasks.',
               style: GoogleFonts.dmMono(
-                fontSize: 12,
-                fontWeight: FontWeight.bold,
+                  fontSize: 12, color: AppColors.subtext(context), height: 1.5),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Account: $email',
+              style: GoogleFonts.dmMono(
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.text(context)),
+            ),
+            const SizedBox(height: 24),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: () async {
+                  final result = await GoogleCalendarService.instance.connect();
+                  if (ctx.mounted) {
+                    Navigator.pop(ctx, result == GCalConnectResult.success);
+                  }
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF4285F4),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                ),
+                child: Text('Enable Google Calendar',
+                    style: GoogleFonts.dmMono(
+                        color: Colors.white, fontWeight: FontWeight.bold)),
+              ),
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              child: TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: Text('Skip for now',
+                    style: GoogleFonts.dmMono(
+                        color: AppColors.subtext(context), fontSize: 13)),
               ),
             ),
           ],
         ),
-        actions: [
-          // Decline button
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            style: TextButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-            ),
-            child: Text(
-              'DECLINE',
-              style: GoogleFonts.dmMono(
-                color: AppColors.subtext(context),
-                fontWeight: FontWeight.bold,
-                fontSize: 12,
-              ),
-            ),
-          ),
-
-          // Approve button
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.chipBg(context),
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
-            ),
-            child: Text(
-              'ALLOW',
-              style: GoogleFonts.dmMono(
-                color: Colors.white,
-                fontWeight: FontWeight.bold,
-                fontSize: 12,
-              ),
-            ),
-          ),
-        ],
       ),
     );
-  }
-
-  /// Helper row for the consent data preview card
-  Widget _consentDataRow(IconData icon, String label, String value) {
-    return Row(
-      children: [
-        Icon(icon, size: 16, color: AppColors.subtext(context)),
-        const SizedBox(width: 8),
-        Text(
-          '$label: ',
-          style: GoogleFonts.dmMono(
-            fontSize: 12,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        Expanded(
-          child: Text(
-            value,
-            style: GoogleFonts.dmMono(fontSize: 12),
-            overflow: TextOverflow.ellipsis,
-          ),
-        ),
-      ],
-    );
+    return result ?? false;
   }
 
   // ================= SIGN OUT =================
@@ -349,7 +287,7 @@ class _LoginScreenState extends State<LoginScreen> {
     await _auth.signOut();
 
     if (mounted) {
-      Navigator.pushReplacementNamed(context, '/login');
+      Navigator.pushNamedAndRemoveUntil(context, '/login', (route) => false);
     }
   }
 

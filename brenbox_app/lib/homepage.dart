@@ -4,6 +4,9 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import 'dart:async';
+import 'package:googleapis/calendar/v3.dart' as gcal;
+import 'services/google_calendar_service.dart';
+import 'widgets/app_time_picker_dialog.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'tasks/add_new_screen.dart';
 import 'tasks/edit_class_screen.dart';
@@ -51,6 +54,23 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   StreamSubscription<QuerySnapshot>? _examChangeSub;
   Timer? _notifRescheduleDebounce;
 
+  // Google Calendar
+  List<gcal.Event> _gcalUpcoming = [];
+  List<gcal.Event> _selectedDateGcalEvents = [];
+  bool _selectedDateGcalLoading = false;
+  bool? _calendarPermissionGranted; // null = not yet loaded / legacy user
+
+  // Legend overlay for "This Week" info button
+  final GlobalKey _legendKey = GlobalKey();
+  OverlayEntry? _legendOverlay;
+
+  // Event-type dot colors
+  static const Color _kColorClass = Color(0xFFB90000);
+  static const Color _kColorExam  = Color(0xFF9AB900);
+  static const Color _kColorTask  = Color(0xFF008BB9);
+  static const Color _kColorStudy = Color(0xFF7C3AED);
+  static const Color _kColorGCal  = Color(0xFF4285F4);
+
   @override
   void initState() {
     super.initState();
@@ -73,6 +93,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     });
     _loadUserData();
     _listenToGroupEvents();
+    _initGoogleCalendar();
   }
 
   StreamSubscription<RemoteMessage>? _fcmForegroundSub;
@@ -89,6 +110,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     _examChangeSub?.cancel();
     _notifRescheduleDebounce?.cancel();
     _homeScrollController.dispose();
+    GoogleCalendarService.instance.removeListener(_onGcalChanged);
+    _legendOverlay?.remove();
     super.dispose();
   }
 
@@ -346,8 +369,12 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         await _firestore.collection('users').doc(uid).update({'fcmToken': null});
       } catch (_) {}
     }
+    await NotificationService().cancelAllNotifications();
+    await GoogleCalendarService.instance.disconnect();
     await _auth.signOut();
-    // AuthGate listens to authStateChanges() and navigates automatically.
+    if (mounted) {
+      Navigator.pushNamedAndRemoveUntil(context, '/login', (route) => false);
+    }
   }
 
   List<DateTime> _getWeekDates() {
@@ -362,70 +389,65 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     return weekDates;
   }
 
-  Stream<Map<String, bool>> _checkEventsOnDateStream(DateTime date) {
+  Stream<List<_DotData>> _getDotsForDateStream(DateTime date) {
     final user = _auth.currentUser;
-    if (user == null) {
-      return Stream.value({'hasEvents': false, 'isUpcoming': false});
-    }
-
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
+    if (user == null) return Stream.value([]);
     final checkDate = DateTime(date.year, date.month, date.day);
+
+    bool matchesDate(DateTime d) =>
+        d.year == checkDate.year && d.month == checkDate.month && d.day == checkDate.day;
 
     return _firestore
         .collection('timetable')
         .where('userId', isEqualTo: user.uid)
         .snapshots()
-        .asyncMap((timetableSnapshot) async {
-      final tasksSnapshot = await _firestore
-          .collection('tasks')
-          .where('userId', isEqualTo: user.uid)
-          .get();
+        .asyncMap((timetableSnap) async {
+      final tasksSnap = await _firestore.collection('tasks').where('userId', isEqualTo: user.uid).get();
+      final examsSnap = await _firestore.collection('exams').where('userId', isEqualTo: user.uid).get();
 
-      // Also check exams so past exam dates show a black circle border
-      final examsSnapshot = await _firestore
-          .collection('exams')
-          .where('userId', isEqualTo: user.uid)
-          .get();
+      final dots = <_DotData>[];
 
-      bool _matchesDate(DateTime docDate) {
-        final d = DateTime(docDate.year, docDate.month, docDate.day);
-        return d.year == checkDate.year &&
-            d.month == checkDate.month &&
-            d.day == checkDate.day;
+      // Classes — one dot per day regardless of how many classes exist
+      bool hasClass = false;
+      for (final doc in timetableSnap.docs) {
+        final data = doc.data() as Map<String, dynamic>;
+        if (data['type'] == 'exam') continue;
+        final ts = data['date'] as Timestamp?;
+        if (ts != null && matchesDate(ts.toDate())) {
+          hasClass = true;
+          break;
+        }
       }
+      if (hasClass) dots.add(_DotData(_kColorClass, true));
 
-      bool hasEvents = false;
-
-      for (var doc in timetableSnapshot.docs) {
-        final ts = (doc.data() as Map<String, dynamic>)['date'] as Timestamp?;
-        if (ts != null && _matchesDate(ts.toDate())) { hasEvents = true; break; }
-      }
-
-      if (!hasEvents) {
-        for (var doc in tasksSnapshot.docs) {
-          final ts = (doc.data() as Map<String, dynamic>)['dueDate'] as Timestamp?;
-          if (ts != null && _matchesDate(ts.toDate())) { hasEvents = true; break; }
+      // Exams (always solid)
+      for (final doc in examsSnap.docs) {
+        final data = doc.data() as Map<String, dynamic>;
+        final ts = data['examDate'] as Timestamp?;
+        if (ts != null && matchesDate(ts.toDate())) {
+          dots.add(_DotData(_kColorExam, true));
         }
       }
 
-      if (!hasEvents) {
-        for (var doc in examsSnapshot.docs) {
-          final ts = (doc.data() as Map<String, dynamic>)['examDate'] as Timestamp?;
-          if (ts != null && _matchesDate(ts.toDate())) { hasEvents = true; break; }
+      // Tasks (solid = completed)
+      for (final doc in tasksSnap.docs) {
+        final data = doc.data() as Map<String, dynamic>;
+        final ts = data['dueDate'] as Timestamp?;
+        if (ts != null && matchesDate(ts.toDate())) {
+          dots.add(_DotData(_kColorTask, data['completed'] == true));
         }
       }
 
-      if (!hasEvents) {
-        for (final ge in _cachedGroupEvents) {
-          final ts = ge['eventDate'] as Timestamp?;
-          if (ts != null && _matchesDate(ts.toDate())) { hasEvents = true; break; }
+      // Study group events (solid = completed)
+      for (final ge in _cachedGroupEvents) {
+        final ts = ge['eventDate'] as Timestamp?;
+        if (ts != null && matchesDate(ts.toDate())) {
+          dots.add(_DotData(_kColorStudy, ge['isCompleted'] == true));
         }
       }
 
-      final bool isUpcoming = hasEvents && checkDate.isAfter(today);
-      return {'hasEvents': hasEvents, 'isUpcoming': isUpcoming};
-    }).handleError((_) {});
+      return dots;
+    }).handleError((_) => <_DotData>[]);
   }
 
   Stream<List<Map<String, dynamic>>> _getExamsForDateStream(DateTime date) {
@@ -551,10 +573,12 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               const SizedBox(height: 24),
               _buildTodayTimetable(),
               const SizedBox(height: 24),
+              _buildGoogleCalendarSection(),
+              const SizedBox(height: 24),
               _buildAssessmentsSection(),
               const SizedBox(height: 24),
               _buildStudyPlanSection(),
-              const SizedBox(height: 24),
+              const SizedBox(height: 32),
             ],
           ),
         ),
@@ -614,15 +638,36 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   Widget _buildGreeting() {
-    return _isLoading
-        ? const SizedBox()
-        : Text(
-            'Hi, $_username !!!',
-            style: GoogleFonts.dmMono(
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
+    if (_isLoading) return const SizedBox();
+    final dateStr = DateFormat('EEEE, d MMMM').format(DateTime.now());
+    final firstName = _username.split(' ').first;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          dateStr,
+          style: GoogleFonts.dmMono(
+            fontSize: 13,
+            color: AppColors.subtext(context),
+          ),
+        ),
+        const SizedBox(height: 4),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Text(
+              'Hi, $firstName',
+              style: GoogleFonts.dmMono(
+                fontSize: 22,
+                fontWeight: FontWeight.bold,
+              ),
             ),
-          );
+            const SizedBox(width: 8),
+            const _WavingHand(),
+          ],
+        ),
+      ],
+    );
   }
 
   Widget _buildScheduleSection(
@@ -643,7 +688,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         ),
         const SizedBox(height: 16),
         Container(
-          padding: const EdgeInsets.all(24),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           decoration: BoxDecoration(
             color: AppColors.card(context),
             borderRadius: BorderRadius.circular(16),
@@ -662,21 +707,42 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                       color: AppColors.text(context),
                     ),
                   ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 16, vertical: 8),
-                    decoration: BoxDecoration(
-                      color: AppColors.chipBg(context),
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: Text(
-                      currentMonth,
-                      style: GoogleFonts.dmMono(
-                        fontSize: 12,
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
+                  Row(
+                    children: [
+                      // Info / legend button
+                      GestureDetector(
+                        key: _legendKey,
+                        onTap: _toggleLegend,
+                        child: Container(
+                          width: 32, height: 32,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: const Color(0xFFFFF9C4),
+                            border: Border.all(color: Colors.black, width: 1.5),
+                          ),
+                          child: Center(
+                            child: Text('i', style: GoogleFonts.dmMono(
+                              fontSize: 14, fontWeight: FontWeight.bold,
+                              color: Colors.black,
+                            )),
+                          ),
+                        ),
                       ),
-                    ),
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: AppColors.chipBg(context),
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: Text(
+                          currentMonth,
+                          style: GoogleFonts.dmMono(
+                            fontSize: 12, color: Colors.white, fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -698,26 +764,29 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 mainAxisAlignment: MainAxisAlignment.spaceAround,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: weekDates.map((date) {
-                  bool isToday = date.day == today.day &&
+                  final isToday = date.day == today.day &&
                       date.month == today.month &&
                       date.year == today.year;
-                  bool isSelected = date.day == _selectedDate.day &&
+                  final isSelected = date.day == _selectedDate.day &&
                       date.month == _selectedDate.month &&
                       date.year == _selectedDate.year;
 
-                  return StreamBuilder<Map<String, bool>>(
-                    stream: _checkEventsOnDateStream(date),
+                  return StreamBuilder<List<_DotData>>(
+                    stream: _getDotsForDateStream(date),
                     builder: (context, snapshot) {
-                      bool hasEvents =
-                          snapshot.data?['hasEvents'] ?? false;
-                      bool isUpcoming =
-                          snapshot.data?['isUpcoming'] ?? false;
+                      // Add GCal dots from in-memory list
+                      final firestoreDots = snapshot.data ?? [];
+                      final gcalDots = _gcalUpcoming.where((e) {
+                        final dt = e.start?.dateTime?.toLocal();
+                        if (dt == null) return false;
+                        return dt.year == date.year && dt.month == date.month && dt.day == date.day;
+                      }).map((_) => _DotData(_kColorGCal, true)).toList();
+                      final dots = [...firestoreDots, ...gcalDots];
                       return _dateCircle(
                         date.day.toString().padLeft(2, '0'),
                         isToday,
                         isSelected,
-                        hasEvents,
-                        isUpcoming,
+                        dots,
                         date,
                       );
                     },
@@ -1193,52 +1262,29 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     String date,
     bool isToday,
     bool isSelected,
-    bool hasEvents,
-    bool isUpcoming,
+    List<_DotData> dots,
     DateTime dateTime,
   ) {
-    Color backgroundColor =
-        isToday ? const Color(0xFFB90000) : Colors.transparent;
-
-    Color? borderColor;
-    double? borderWidth;
-
-    if (isToday) {
-      borderColor = null;
-      borderWidth = null;
-    } else if (isUpcoming) {
-      borderColor = const Color(0xFFB90000);
-      borderWidth = 2;
-    } else if (hasEvents) {
-      borderColor = AppColors.isDark(context)
-          ? Colors.white.withValues(alpha: 0.35)
-          : Colors.black;
-      borderWidth = 2;
-    }
-
     return _AnimatedTapButton(
       onTap: () {
         setState(() {
           _selectedDate = dateTime;
-          _timetableStream = null; // date changed — recreate streams for new date
+          _timetableStream = null;
           _examsStream = null;
         });
+        _loadGcalForSelectedDate(dateTime);
       },
       child: SizedBox(
         width: 38,
-        child: Stack(
-          clipBehavior: Clip.none,
-          alignment: Alignment.topCenter,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
+            // Date circle
             Container(
-              width: 32,
-              height: 32,
+              width: 32, height: 32,
               decoration: BoxDecoration(
-                color: backgroundColor,
+                color: isToday ? const Color(0xFFB90000) : Colors.transparent,
                 shape: BoxShape.circle,
-                border: borderColor != null && borderWidth != null
-                    ? Border.all(color: borderColor, width: borderWidth)
-                    : null,
               ),
               child: Center(
                 child: Text(
@@ -1251,16 +1297,106 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 ),
               ),
             ),
-            if (isSelected)
-              Positioned(
-                top: 36,
-                child: CustomPaint(
-                  size: const Size(10, 8),
-                  painter: TrianglePainter(color: AppColors.text(context)),
+            // Triangle arrow (selected) or same-height spacer
+            SizedBox(
+              height: 10,
+              child: isSelected
+                  ? Center(child: CustomPaint(size: const Size(10, 8), painter: TrianglePainter(color: AppColors.text(context))))
+                  : null,
+            ),
+            // Dots row — max 6
+            if (dots.isNotEmpty) const SizedBox(height: 4),
+            if (dots.isNotEmpty)
+              SizedBox(
+                width: 38,
+                child: Wrap(
+                  alignment: WrapAlignment.center,
+                  spacing: 2,
+                  runSpacing: 2,
+                  children: dots.take(6).map((d) => _EventDot(color: d.color, filled: d.filled)).toList(),
                 ),
               ),
           ],
         ),
+      ),
+    );
+  }
+
+  void _toggleLegend() {
+    if (_legendOverlay != null) {
+      _legendOverlay!.remove();
+      setState(() => _legendOverlay = null);
+      return;
+    }
+    final box = _legendKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null) return;
+    final pos = box.localToGlobal(Offset.zero);
+    final size = box.size;
+
+    _legendOverlay = OverlayEntry(builder: (_) => Stack(
+      children: [
+        Positioned.fill(
+          child: GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onTap: () {
+              _legendOverlay?.remove();
+              if (mounted) setState(() => _legendOverlay = null);
+            },
+          ),
+        ),
+        Positioned(
+          top: pos.dy + size.height + 8,
+          right: MediaQuery.of(context).size.width - pos.dx - size.width - 4,
+          child: Material(
+            color: Colors.transparent,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1A1A2E),
+                borderRadius: BorderRadius.circular(14),
+                boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.4), blurRadius: 16, offset: const Offset(0, 6))],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text('WHAT THE DOTS MEAN',
+                    style: GoogleFonts.dmMono(fontSize: 9, fontWeight: FontWeight.bold,
+                      color: Colors.white.withValues(alpha: 0.5), letterSpacing: 1.2)),
+                  const SizedBox(height: 10),
+                  _legendRow(_kColorClass, true, 'Classes'),
+                  _legendRow(_kColorExam,  true, 'Exams'),
+                  _legendRow(_kColorTask,  true, 'Tasks'),
+                  _legendRow(_kColorStudy, true, 'Study events'),
+                  _legendRow(_kColorGCal,  true, 'Google Calendar'),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    child: Divider(color: Colors.white.withValues(alpha: 0.15), height: 1),
+                  ),
+                  _legendRow(_kColorTask, false, 'hollow = pending'),
+                  _legendRow(_kColorTask, true,  'solid = done'),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    ));
+
+    Overlay.of(context).insert(_legendOverlay!);
+    setState(() {});
+  }
+
+  Widget _legendRow(Color color, bool filled, String label) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _EventDot(color: color, filled: filled),
+          const SizedBox(width: 10),
+          Text(label, style: GoogleFonts.dmMono(fontSize: 12, color: Colors.white)),
+        ],
       ),
     );
   }
@@ -1297,39 +1433,29 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               );
             }
 
-            if (snapshot.hasError ||
-                !snapshot.hasData ||
-                snapshot.data!.isEmpty) {
+            final events = snapshot.data ?? [];
+            if (events.isEmpty) {
               return _buildEmptyState();
             }
 
-            List<Map<String, dynamic>> events = snapshot.data!;
-
-            events.sort((a, b) {
-              if (a['type'] == 'task' && b['type'] == 'task') {
-                return (a['dueTime'] as String)
-                    .compareTo(b['dueTime'] as String);
-              } else if (a['type'] == 'task') {
-                return (a['dueTime'] as String)
-                    .compareTo(b['startTime'] as String);
-              } else if (b['type'] == 'task') {
-                return (a['startTime'] as String)
-                    .compareTo(b['dueTime'] as String);
-              } else {
-                return (a['startTime'] as String)
-                    .compareTo(b['startTime'] as String);
-              }
-            });
+            final sorted = List<Map<String, dynamic>>.from(events)
+              ..sort((a, b) {
+                if (a['type'] == 'task' && b['type'] == 'task') {
+                  return (a['dueTime'] as String).compareTo(b['dueTime'] as String);
+                } else if (a['type'] == 'task') {
+                  return (a['dueTime'] as String).compareTo(b['startTime'] as String);
+                } else if (b['type'] == 'task') {
+                  return (a['startTime'] as String).compareTo(b['dueTime'] as String);
+                } else {
+                  return (a['startTime'] as String).compareTo(b['startTime'] as String);
+                }
+              });
 
             return Column(
-              children: events.map((event) {
-                if (event['type'] == 'task') {
-                  return _buildTaskCard(event);
-                } else if (event['type'] == 'group_event') {
-                  return _buildGroupEventCard(event);
-                } else {
-                  return _buildEnhancedClassCard(event);
-                }
+              children: sorted.map((event) {
+                if (event['type'] == 'task') return _buildTaskCard(event);
+                if (event['type'] == 'group_event') return _buildGroupEventCard(event);
+                return _buildEnhancedClassCard(event);
               }).toList(),
             );
           },
@@ -3000,6 +3126,755 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     );
   }
 
+  // ════════════════════════════════════════════════════════════════════════════
+  // GOOGLE CALENDAR
+  // ════════════════════════════════════════════════════════════════════════════
+
+  Future<void> _initGoogleCalendar() async {
+    final svc = GoogleCalendarService.instance;
+    svc.addListener(_onGcalChanged);
+    await svc.tryRestoreSession();
+    if (svc.isConnected) {
+      _loadGcalUpcoming();
+      _loadGcalForSelectedDate(_selectedDate);
+    }
+    // Load whether the user granted calendar permission during sign-up
+    final uid = _auth.currentUser?.uid;
+    if (uid != null) {
+      final doc = await _firestore.collection('users').doc(uid).get();
+      if (mounted) {
+        setState(() {
+          _calendarPermissionGranted =
+              doc.data()?['calendarPermissionGranted'] as bool?;
+        });
+      }
+    }
+  }
+
+  void _onGcalChanged() {
+    if (!mounted) return;
+    final svc = GoogleCalendarService.instance;
+    if (svc.isConnected) {
+      _loadGcalUpcoming();
+      _loadGcalForSelectedDate(_selectedDate);
+    } else {
+      setState(() { _gcalUpcoming = []; _selectedDateGcalEvents = []; });
+    }
+  }
+
+  Future<void> _loadGcalForSelectedDate(DateTime date) async {
+    if (!GoogleCalendarService.instance.isConnected) return;
+    if (!mounted) return;
+    setState(() => _selectedDateGcalLoading = true);
+    final events = await GoogleCalendarService.instance.fetchEventsForDate(date);
+    if (!mounted) return;
+    setState(() {
+      _selectedDateGcalEvents = events;
+      _selectedDateGcalLoading = false;
+    });
+  }
+
+  Future<void> _loadGcalUpcoming() async {
+    if (!mounted) return;
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final startOfWeek = today.subtract(Duration(days: today.weekday - 1));
+    final endOfRange = today.add(const Duration(days: 8));
+    final events = await GoogleCalendarService.instance.fetchEventsForRange(startOfWeek, endOfRange);
+    if (!mounted) return;
+    setState(() => _gcalUpcoming = events);
+  }
+
+  String _gcalFormatTime(DateTime? dt) {
+    if (dt == null) return '';
+    final local = dt.toLocal();
+    final h = local.hour;
+    final m = local.minute.toString().padLeft(2, '0');
+    if (h == 0) return '12:$m AM';
+    if (h < 12) return '$h:$m AM';
+    if (h == 12) return '12:$m PM';
+    return '${h - 12}:$m PM';
+  }
+
+  Widget _buildGoogleCalendarSection() {
+    final svc = GoogleCalendarService.instance;
+    const gcalBlue = Color(0xFF4285F4);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text(
+              'Google Calendar',
+              style: GoogleFonts.dmMono(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: AppColors.text(context),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+              decoration: BoxDecoration(
+                color: gcalBlue,
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(
+                'SYNC',
+                style: GoogleFonts.dmMono(
+                  fontSize: 9,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+            const Spacer(),
+            if (svc.isConnected)
+              TextButton.icon(
+                onPressed: () async {
+                  await GoogleCalendarService.instance.disconnect();
+                  if (mounted) setState(() {});
+                },
+                icon: const Icon(Icons.link_off_rounded, size: 14, color: Color(0xFF6B7280)),
+                label: Text(
+                  'Disconnect',
+                  style: GoogleFonts.dmMono(fontSize: 11, color: const Color(0xFF6B7280)),
+                ),
+                style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8)),
+              ),
+          ],
+        ),
+        const SizedBox(height: 12),
+
+        if (!svc.isConnected) ...[
+          // ── Connect prompt ─────────────────────────────────────────────────
+          GestureDetector(
+            onTap: () async {
+              final result = await GoogleCalendarService.instance.connect();
+              if (!mounted) return;
+              if (result == GCalConnectResult.success) {
+                setState(() => _calendarPermissionGranted = true);
+                await _firestore
+                    .collection('users')
+                    .doc(_auth.currentUser?.uid)
+                    .update({'calendarPermissionGranted': true});
+                _loadGcalUpcoming();
+                _loadGcalForSelectedDate(_selectedDate);
+              } else if (result == GCalConnectResult.wrongAccount) {
+                final expected = _auth.currentUser?.email ?? '';
+                showDialog(
+                  context: context,
+                  builder: (_) => AlertDialog(
+                    backgroundColor: AppColors.card(context),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      side: BorderSide(color: AppColors.border(context), width: 2),
+                    ),
+                    title: Text('Wrong Google Account',
+                        style: GoogleFonts.dmMono(fontWeight: FontWeight.bold)),
+                    content: Text(
+                      'Please sign in with $expected — the Google account linked to your BrenBox account.',
+                      style: GoogleFonts.dmMono(fontSize: 12),
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: Text('OK',
+                            style: GoogleFonts.dmMono(fontWeight: FontWeight.bold)),
+                      ),
+                    ],
+                  ),
+                );
+              }
+            },
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: AppColors.card(context),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: AppColors.border(context), width: 2),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: gcalBlue,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Icon(Icons.calendar_month_rounded, color: Colors.white, size: 22),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _calendarPermissionGranted == false
+                              ? 'Enable Google Calendar'
+                              : 'Connect Google Calendar',
+                          style: GoogleFonts.dmMono(
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.text(context),
+                          ),
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          _auth.currentUser?.email ?? 'Sync your Google Calendar events here',
+                          style: GoogleFonts.dmMono(
+                            fontSize: 11,
+                            color: AppColors.subtext(context),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Icon(Icons.arrow_forward_ios_rounded, size: 14, color: AppColors.subtext(context)),
+                ],
+              ),
+            ),
+          ),
+        ] else if (_selectedDateGcalLoading) ...[
+          const SizedBox(
+            height: 120,
+            child: Center(child: CircularProgressIndicator(color: gcalBlue, strokeWidth: 2)),
+          ),
+        ] else if (_selectedDateGcalEvents.isEmpty) ...[
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(vertical: 28),
+            decoration: BoxDecoration(
+              color: AppColors.card(context),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: AppColors.border(context), width: 2),
+            ),
+            child: Column(
+              children: [
+                Icon(Icons.event_available_rounded, size: 36, color: AppColors.subtext(context)),
+                const SizedBox(height: 10),
+                Text(
+                  'No events on this day',
+                  style: GoogleFonts.dmMono(fontSize: 13, fontWeight: FontWeight.bold, color: AppColors.subtext(context)),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  svc.accountEmail ?? '',
+                  style: GoogleFonts.dmMono(fontSize: 11, color: AppColors.subtext(context)),
+                ),
+              ],
+            ),
+          ),
+        ] else ...[
+          // ── Account chip ────────────────────────────────────────────────────
+          Row(
+            children: [
+              const Icon(Icons.check_circle_rounded, size: 13, color: gcalBlue),
+              const SizedBox(width: 5),
+              Text(
+                svc.accountEmail ?? '',
+                style: GoogleFonts.dmMono(fontSize: 11, color: AppColors.subtext(context)),
+              ),
+              const Spacer(),
+              GestureDetector(
+                onTap: () => _loadGcalForSelectedDate(_selectedDate),
+                child: const Icon(Icons.refresh_rounded, size: 16, color: gcalBlue),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          ..._selectedDateGcalEvents.map((event) => _buildGcalCard(event)),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildGcalCard(gcal.Event event) {
+    const gcalBlue = Color(0xFF4285F4);
+    final startDt = event.start?.dateTime?.toLocal();
+    final endDt = event.end?.dateTime?.toLocal();
+    final isAllDay = event.start?.date != null;
+
+    final String timeStr;
+    if (isAllDay) {
+      timeStr = 'All day';
+    } else {
+      timeStr = startDt != null && endDt != null
+          ? '${_gcalFormatTime(startDt)} - ${_gcalFormatTime(endDt)}'
+          : startDt != null ? _gcalFormatTime(startDt) : '';
+    }
+
+    final location = event.location ?? '';
+
+    return _AnimatedTapButton(
+      onTap: () => _showGcalEventSheet(event),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 16),
+        decoration: BoxDecoration(
+          color: AppColors.card(context),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: AppColors.border(context), width: 2),
+        ),
+        child: Column(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [gcalBlue.withValues(alpha: 0.15), AppColors.card(context)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(18)),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 48, height: 48,
+                    decoration: BoxDecoration(color: gcalBlue, borderRadius: BorderRadius.circular(12)),
+                    child: const Icon(Icons.calendar_month_rounded, color: Colors.white, size: 24),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          event.summary ?? 'No Title',
+                          style: GoogleFonts.dmMono(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.text(context)),
+                          maxLines: 1, overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 4),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(color: gcalBlue, borderRadius: BorderRadius.circular(6)),
+                          child: Text('GCAL', style: GoogleFonts.dmMono(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.white)),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  if (timeStr.isNotEmpty)
+                    Expanded(child: _buildDetailItem(Icons.access_time, timeStr)),
+                  if (location.isNotEmpty)
+                    Expanded(child: _buildDetailItem(Icons.location_on_outlined, location)),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showGcalEventSheet(gcal.Event event) {
+    final startDt = event.start?.dateTime?.toLocal();
+    final endDt   = event.end?.dateTime?.toLocal();
+    final startDate = event.start?.date; // all-day event
+
+    // Time string
+    String timeStr;
+    if (startDt != null) {
+      timeStr = endDt != null
+          ? '${_gcalFormatTime(startDt)} – ${_gcalFormatTime(endDt)}'
+          : _gcalFormatTime(startDt);
+    } else {
+      timeStr = 'All Day';
+    }
+
+    // Date string
+    final dateForFormat = startDt ?? (startDate != null
+        ? DateTime(startDate.year, startDate.month, startDate.day)
+        : null);
+    final dateStr = dateForFormat != null
+        ? DateFormat('EEE, dd MMM yyyy').format(dateForFormat)
+        : '';
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (ctx) => Container(
+        decoration: BoxDecoration(
+          color: AppColors.card(context),
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+          border: Border(
+            top:   BorderSide(color: AppColors.border(context), width: 2),
+            left:  BorderSide(color: AppColors.border(context), width: 2),
+            right: BorderSide(color: AppColors.border(context), width: 2),
+          ),
+        ),
+        child: SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(height: 16),
+              Container(
+                width: 40, height: 4,
+                decoration: BoxDecoration(
+                  color: AppColors.border(context),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(height: 24),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Event Details',
+                      style: GoogleFonts.dmMono(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.text(context),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    _buildDetailRow('Title', event.summary ?? 'No Title'),
+                    _buildDetailRow('Time', timeStr),
+                    if (dateStr.isNotEmpty) _buildDetailRow('Date', dateStr),
+                    if ((event.location ?? '').isNotEmpty)
+                      _buildDetailRow('Location', event.location!),
+                    if ((event.description ?? '').isNotEmpty)
+                      _buildDetailRow('Description', event.description!),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 24),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () {
+                          Navigator.pop(ctx);
+                          _showGcalEditDialog(event);
+                        },
+                        icon: Icon(Icons.edit_outlined, color: AppColors.text(context), size: 16),
+                        label: Text('Edit', style: GoogleFonts.dmMono(
+                            fontWeight: FontWeight.bold, color: AppColors.text(context))),
+                        style: OutlinedButton.styleFrom(
+                          side: BorderSide(color: AppColors.border(context)),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        onPressed: () async {
+                          Navigator.pop(ctx);
+                          final id = event.id;
+                          if (id == null) return;
+                          final ok = await GoogleCalendarService.instance.deleteEvent(id);
+                          if (ok && mounted) {
+                            _loadGcalUpcoming();
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('Event deleted',
+                                    style: GoogleFonts.dmMono(
+                                        fontWeight: FontWeight.bold, color: Colors.white)),
+                                backgroundColor: const Color(0xFFB90000),
+                                behavior: SnackBarBehavior.floating,
+                                shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(10)),
+                              ),
+                            );
+                          }
+                        },
+                        icon: const Icon(Icons.delete_outline_rounded, size: 16),
+                        label: Text('Delete', style: GoogleFonts.dmMono(fontWeight: FontWeight.bold)),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFFB90000),
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showGcalEditDialog(gcal.Event event) {
+    const gcalBlue = Color(0xFF4285F4);
+    final startDt = event.start?.dateTime?.toLocal() ?? DateTime.now();
+    final endDt = event.end?.dateTime?.toLocal() ?? startDt.add(const Duration(hours: 1));
+
+    final titleCtrl = TextEditingController(text: event.summary ?? '');
+    final descCtrl = TextEditingController(text: event.description ?? '');
+    final locCtrl = TextEditingController(text: event.location ?? '');
+    DateTime editDate = startDt;
+    TimeOfDay editStartTime = TimeOfDay.fromDateTime(startDt);
+    TimeOfDay editEndTime = TimeOfDay.fromDateTime(endDt);
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setS) {
+          String fmtTime(TimeOfDay t) {
+            final h = t.hourOfPeriod == 0 ? 12 : t.hourOfPeriod;
+            final m = t.minute.toString().padLeft(2, '0');
+            return '$h:$m ${t.period == DayPeriod.am ? 'AM' : 'PM'}';
+          }
+
+          Widget dateTile() => GestureDetector(
+            onTap: () async {
+              final isDark = AppColors.isDark(context);
+              final picked = await showDatePicker(
+                context: ctx,
+                initialDate: editDate,
+                firstDate: DateTime(2020),
+                lastDate: DateTime(2030),
+                builder: (_, child) => Theme(
+                  data: isDark
+                      ? ThemeData.dark().copyWith(
+                          colorScheme: const ColorScheme.dark(
+                            primary: Color(0xFF008BB9),
+                            onPrimary: Colors.white,
+                            surface: Color(0xFF252D47),
+                            onSurface: Colors.white,
+                          ),
+                        )
+                      : ThemeData.light().copyWith(
+                          colorScheme: const ColorScheme.light(primary: Color(0xFF008BB9)),
+                        ),
+                  child: child!,
+                ),
+              );
+              if (picked != null) setS(() => editDate = picked);
+            },
+            child: Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: AppColors.input(context),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppColors.border(context), width: 2),
+              ),
+              child: Row(
+                children: [
+                  Expanded(child: Text(DateFormat('EEE, dd MMM yyyy').format(editDate), style: GoogleFonts.dmMono(fontSize: 14, color: AppColors.text(context)))),
+                  Icon(Icons.calendar_today, size: 18, color: AppColors.text(context)),
+                ],
+              ),
+            ),
+          );
+
+          void showTimeError() {
+            showDialog(
+              context: ctx,
+              builder: (_) => AlertDialog(
+                backgroundColor: AppColors.card(context),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  side: BorderSide(color: AppColors.border(context), width: 2),
+                ),
+                title: Row(children: [
+                  const Icon(Icons.error_outline, color: Color(0xFFB90000), size: 24),
+                  const SizedBox(width: 12),
+                  Expanded(child: Text('Invalid Time', style: GoogleFonts.dmMono(fontWeight: FontWeight.bold, fontSize: 14))),
+                ]),
+                content: Text('End time must be after start time.', style: GoogleFonts.dmMono(fontSize: 12)),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    child: Text('OK', style: GoogleFonts.dmMono(fontWeight: FontWeight.bold, color: AppColors.text(context))),
+                  ),
+                ],
+              ),
+            );
+          }
+
+          Widget timeTile(TimeOfDay t, void Function(TimeOfDay) onPick, {bool isStart = false}) => GestureDetector(
+            onTap: () async {
+              final picked = await showDialog<TimeOfDay>(context: ctx, builder: (_) => AppTimePickerDialog(initialTime: t));
+              if (picked == null) return;
+              if (isStart) {
+                final startMins = picked.hour * 60 + picked.minute;
+                final endMins = editEndTime.hour * 60 + editEndTime.minute;
+                setS(() {
+                  editStartTime = picked;
+                  if (endMins <= startMins) {
+                    editEndTime = TimeOfDay(hour: (picked.hour + 1) % 24, minute: picked.minute);
+                  }
+                });
+              } else {
+                final startMins = editStartTime.hour * 60 + editStartTime.minute;
+                final endMins = picked.hour * 60 + picked.minute;
+                if (endMins <= startMins) { showTimeError(); return; }
+                setS(() => editEndTime = picked);
+              }
+            },
+            child: Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: AppColors.input(context),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppColors.border(context), width: 2),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(fmtTime(t), style: GoogleFonts.dmMono(fontSize: 14, color: AppColors.text(context))),
+                  Icon(Icons.access_time, size: 18, color: AppColors.text(context)),
+                ],
+              ),
+            ),
+          );
+
+          return Padding(
+            padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+            child: Container(
+              decoration: BoxDecoration(
+                color: AppColors.card(context),
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+                border: Border.all(color: AppColors.border(context), width: 2),
+              ),
+              padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 40, height: 4,
+                        decoration: BoxDecoration(color: AppColors.border(context), borderRadius: BorderRadius.circular(2)),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    Text('Edit Event', style: GoogleFonts.dmMono(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.text(context))),
+                    const SizedBox(height: 16),
+                    Text('Title', style: GoogleFonts.dmMono(fontSize: 13, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 8),
+                    _gcalTextField(titleCtrl, 'Event title'),
+                    const SizedBox(height: 14),
+                    Text('Location (Optional)', style: GoogleFonts.dmMono(fontSize: 13, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 8),
+                    _gcalTextField(locCtrl, 'Location'),
+                    const SizedBox(height: 14),
+                    Text('Description (Optional)', style: GoogleFonts.dmMono(fontSize: 13, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 8),
+                    _gcalTextField(descCtrl, 'Description', maxLines: 3),
+                    const SizedBox(height: 14),
+                    Text('Date', style: GoogleFonts.dmMono(fontSize: 13, fontWeight: FontWeight.bold, color: AppColors.subtext(context))),
+                    const SizedBox(height: 8),
+                    dateTile(),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('Start Time', style: GoogleFonts.dmMono(fontSize: 13, fontWeight: FontWeight.bold, color: AppColors.subtext(context))),
+                              const SizedBox(height: 8),
+                              timeTile(editStartTime, (t) => editStartTime = t, isStart: true),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('End Time', style: GoogleFonts.dmMono(fontSize: 13, fontWeight: FontWeight.bold, color: AppColors.subtext(context))),
+                              const SizedBox(height: 8),
+                              timeTile(editEndTime, (t) => editEndTime = t),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 20),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        onPressed: () async {
+                          final id = event.id;
+                          if (id == null || titleCtrl.text.trim().isEmpty) return;
+                          final newStart = DateTime(editDate.year, editDate.month, editDate.day, editStartTime.hour, editStartTime.minute);
+                          final newEnd = DateTime(editDate.year, editDate.month, editDate.day, editEndTime.hour, editEndTime.minute);
+                          if (!newEnd.isAfter(newStart)) { showTimeError(); return; }
+                          Navigator.pop(ctx);
+                          final updated = await GoogleCalendarService.instance.updateEvent(
+                            eventId: id,
+                            title: titleCtrl.text.trim(),
+                            description: descCtrl.text.trim().isEmpty ? null : descCtrl.text.trim(),
+                            location: locCtrl.text.trim().isEmpty ? null : locCtrl.text.trim(),
+                            start: newStart,
+                            end: newEnd,
+                          );
+                          if (updated != null && mounted) {
+                            _loadGcalUpcoming();
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('Event updated', style: GoogleFonts.dmMono(fontWeight: FontWeight.bold, color: Colors.white)),
+                                backgroundColor: gcalBlue,
+                                behavior: SnackBarBehavior.floating,
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                              ),
+                            );
+                          }
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: gcalBlue,
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                        ),
+                        child: Text('Save Changes', style: GoogleFonts.dmMono(fontWeight: FontWeight.bold)),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _gcalTextField(TextEditingController ctrl, String hint, {int maxLines = 1}) {
+    return TextField(
+      controller: ctrl,
+      maxLines: maxLines,
+      style: GoogleFonts.dmMono(fontSize: 14, color: AppColors.text(context)),
+      decoration: InputDecoration(
+        hintText: hint,
+        hintStyle: GoogleFonts.dmMono(fontSize: 14, color: AppColors.subtext(context)),
+        filled: true,
+        fillColor: AppColors.input(context),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: AppColors.border(context), width: 2)),
+        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: AppColors.border(context), width: 2)),
+        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: AppColors.border(context), width: 2)),
+        contentPadding: const EdgeInsets.all(16),
+      ),
+    );
+  }
+
   Widget _buildBottomNavigation() {
     return Container(
       decoration: BoxDecoration(color: AppColors.navBg(context)),
@@ -3322,6 +4197,35 @@ class _AnimatedTapButtonState extends State<_AnimatedTapButton> {
   }
 }
 
+// ── DOT DATA ─────────────────────────────────────────────────────────────────
+
+class _DotData {
+  final Color color;
+  final bool filled;
+  const _DotData(this.color, this.filled);
+}
+
+// ── EVENT DOT ─────────────────────────────────────────────────────────────────
+
+class _EventDot extends StatelessWidget {
+  final Color color;
+  final bool filled;
+  const _EventDot({required this.color, required this.filled});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 7,
+      height: 7,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: filled ? color : Colors.transparent,
+        border: filled ? null : Border.all(color: color, width: 1.5),
+      ),
+    );
+  }
+}
+
 // ── TRIANGLE PAINTER ─────────────────────────────────────────────────────────
 
 class TrianglePainter extends CustomPainter {
@@ -3345,4 +4249,64 @@ class TrianglePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+class _WavingHand extends StatefulWidget {
+  const _WavingHand();
+
+  @override
+  State<_WavingHand> createState() => _WavingHandState();
+}
+
+class _WavingHandState extends State<_WavingHand>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+  late final Animation<double> _angle;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1400),
+    );
+    _angle = TweenSequence<double>([
+      TweenSequenceItem(tween: Tween(begin: 0.0, end: -0.35), weight: 1),
+      TweenSequenceItem(tween: Tween(begin: -0.35, end: 0.3),  weight: 2),
+      TweenSequenceItem(tween: Tween(begin: 0.3,  end: -0.3),  weight: 2),
+      TweenSequenceItem(tween: Tween(begin: -0.3, end: 0.2),   weight: 2),
+      TweenSequenceItem(tween: Tween(begin: 0.2,  end: 0.0),   weight: 1),
+    ]).animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut));
+
+    _ctrl.forward();
+    _ctrl.addStatusListener((status) {
+      if (status == AnimationStatus.completed && mounted) {
+        Future.delayed(const Duration(seconds: 4), () {
+          if (mounted) _ctrl.forward(from: 0);
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _angle,
+      builder: (_, __) => Transform.rotate(
+        angle: _angle.value,
+        alignment: Alignment.bottomCenter,
+        child: const Icon(
+          Icons.waving_hand_rounded,
+          color: Color(0xFFFFA726),
+          size: 22,
+        ),
+      ),
+    );
+  }
 }

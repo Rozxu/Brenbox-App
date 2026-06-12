@@ -5,11 +5,14 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
+import 'package:googleapis/calendar/v3.dart' as gcal;
 import '../tasks/edit_class_screen.dart';
 import '../tasks/edit_task_screen.dart';
 import '../tasks/edit_exam_screen.dart';
 import '../tasks/edit_group_event_screen.dart';
 import '../services/notification_service.dart';
+import '../services/google_calendar_service.dart';
+import '../widgets/app_time_picker_dialog.dart';
 import 'subject_detail_screen.dart';
 import '../app_preferences.dart';
 
@@ -35,18 +38,202 @@ class _CalendarScreenState extends State<CalendarScreen> {
   List<Map<String, dynamic>> _cachedGroupEvents = [];
   StreamSubscription<QuerySnapshot>? _groupEventsSub;
 
+  List<Map<String, dynamic>> _cachedTaskDocs = [];
+  List<Map<String, dynamic>> _cachedExamDocs = [];
+  List<Map<String, dynamic>> _cachedTimetableDocs = [];
+  StreamSubscription<QuerySnapshot>? _tasksSub;
+  StreamSubscription<QuerySnapshot>? _examsSub;
+  StreamSubscription<QuerySnapshot>? _timetableSub;
+
+  // Google Calendar
+  List<gcal.Event> _gcalEvents = [];     // events for selected date (filtered locally)
+  List<gcal.Event> _gcalAllEvents = [];  // all events for the loaded year range
+  bool _gcalLoading = false;
+
+  // Event-type dot colors
+  static const Color _kColorClass = Color(0xFFB90000);
+  static const Color _kColorExam  = Color(0xFF9AB900);
+  static const Color _kColorTask  = Color(0xFF008BB9);
+  static const Color _kColorStudy = Color(0xFF7C3AED);
+  static const Color _kColorGCal  = Color(0xFF4285F4);
+
+  // Legend overlay
+  final GlobalKey _legendKey = GlobalKey();
+  OverlayEntry? _legendOverlay;
+
   @override
   void initState() {
     super.initState();
     _selectedDate = DateTime.now();
-    // Don't call _loadAvailableSemesters here anymore
     _listenToGroupEvents();
+    _listenToFirestoreData();
+    GoogleCalendarService.instance.addListener(_onGcalChanged);
+    _loadGcalAllEvents();
   }
 
   @override
   void dispose() {
+    _legendOverlay?.remove();
     _groupEventsSub?.cancel();
+    _tasksSub?.cancel();
+    _examsSub?.cancel();
+    _timetableSub?.cancel();
+    GoogleCalendarService.instance.removeListener(_onGcalChanged);
     super.dispose();
+  }
+
+  void _toggleLegend() {
+    if (_legendOverlay != null) {
+      _legendOverlay!.remove();
+      _legendOverlay = null;
+      return;
+    }
+    final box = _legendKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null) return;
+    final pos = box.localToGlobal(Offset.zero);
+    _legendOverlay = OverlayEntry(
+      builder: (_) => Stack(
+        children: [
+          Positioned.fill(
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () { _legendOverlay?.remove(); _legendOverlay = null; },
+            ),
+          ),
+          Positioned(
+            top: pos.dy + box.size.height + 8,
+            right: MediaQuery.of(context).size.width - pos.dx - box.size.width,
+            child: Material(
+              color: Colors.transparent,
+              child: Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1A1A2E),
+                  borderRadius: BorderRadius.circular(14),
+                  boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.3), blurRadius: 12, offset: const Offset(0, 4))],
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _legendRow(_kColorClass, true, 'Class'),
+                    const SizedBox(height: 8),
+                    _legendRow(_kColorExam, true, 'Exam'),
+                    const SizedBox(height: 8),
+                    _legendRow(_kColorTask, true, 'Task'),
+                    const SizedBox(height: 8),
+                    _legendRow(_kColorStudy, true, 'Study Event'),
+                    const SizedBox(height: 8),
+                    _legendRow(_kColorGCal, true, 'Google Calendar'),
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 8),
+                      child: Divider(color: Colors.white24, height: 1),
+                    ),
+                    _legendRow(_kColorTask, false, 'Pending'),
+                    const SizedBox(height: 8),
+                    _legendRow(_kColorTask, true, 'Completed'),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    Overlay.of(context).insert(_legendOverlay!);
+  }
+
+  Widget _legendRow(Color color, bool filled, String label) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 9, height: 9,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: filled ? color : Colors.transparent,
+            border: filled ? null : Border.all(color: color, width: 1.5),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Text(label, style: GoogleFonts.dmMono(fontSize: 12, color: Colors.white)),
+      ],
+    );
+  }
+
+  void _onGcalChanged() {
+    if (!mounted) return;
+    if (GoogleCalendarService.instance.isConnected) {
+      _loadGcalAllEvents();
+    } else {
+      setState(() { _gcalEvents = []; _gcalAllEvents = []; });
+    }
+  }
+
+  /// Fetches all Google Calendar events for a 3-year window (last year → next year)
+  /// using pagination, then filters locally for dots and selected-date lists.
+  Future<void> _loadGcalAllEvents() async {
+    if (!GoogleCalendarService.instance.isConnected) return;
+    setState(() => _gcalLoading = true);
+    final now = DateTime.now();
+    final start = DateTime(now.year - 1, 1, 1);
+    final end   = DateTime(now.year + 2, 1, 1);
+    final events =
+        await GoogleCalendarService.instance.fetchAllEventsInRange(start, end);
+    if (!mounted) return;
+    final selected = _selectedDate ?? now;
+    setState(() {
+      _gcalAllEvents = events;
+      _gcalEvents = events.where((e) => _gcalEventOnDate(e, selected)).toList();
+      _gcalLoading = false;
+    });
+  }
+
+  void _updateGcalEventsForDate(DateTime date) {
+    setState(() {
+      _gcalEvents = _gcalAllEvents.where((e) => _gcalEventOnDate(e, date)).toList();
+    });
+  }
+
+  void _listenToFirestoreData() {
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) return;
+
+    _timetableSub?.cancel();
+    _timetableSub = _firestore
+        .collection('timetable')
+        .where('userId', isEqualTo: uid)
+        .snapshots()
+        .listen((snap) {
+      if (!mounted) return;
+      setState(() {
+        _cachedTimetableDocs = snap.docs.map((d) => d.data()).toList();
+      });
+    }, onError: (_) {});
+
+    _tasksSub?.cancel();
+    _tasksSub = _firestore
+        .collection('tasks')
+        .where('userId', isEqualTo: uid)
+        .snapshots()
+        .listen((snap) {
+      if (!mounted) return;
+      setState(() {
+        _cachedTaskDocs = snap.docs.map((d) => d.data()).toList();
+      });
+    }, onError: (_) {});
+
+    _examsSub?.cancel();
+    _examsSub = _firestore
+        .collection('exams')
+        .where('userId', isEqualTo: uid)
+        .snapshots()
+        .listen((snap) {
+      if (!mounted) return;
+      setState(() {
+        _cachedExamDocs = snap.docs.map((d) => d.data()).toList();
+      });
+    }, onError: (_) {});
   }
 
   void _listenToGroupEvents() {
@@ -148,108 +335,53 @@ class _CalendarScreenState extends State<CalendarScreen> {
     });
   }
 
-  Stream<Map<String, bool>> _checkEventsOnDateStream(DateTime date) {
-    final user = _auth.currentUser;
-    if (user == null) {
-      return Stream.value({'hasEvents': false, 'isUpcoming': false});
+  List<_DotData> _getDotsForDate(DateTime date) {
+    final checkDate = DateTime(date.year, date.month, date.day);
+    final List<_DotData> dots = [];
+
+    // Classes
+    final hasClass = _cachedTimetableDocs.any((data) {
+      final ts = data['date'] as Timestamp?;
+      if (ts == null) return false;
+      final d = ts.toDate();
+      return d.year == checkDate.year && d.month == checkDate.month && d.day == checkDate.day;
+    });
+    if (hasClass) dots.add(const _DotData(_kColorClass, true));
+
+    // Tasks
+    final taskDocs = _cachedTaskDocs.where((data) {
+      final ts = data['dueDate'] as Timestamp?;
+      if (ts == null) return false;
+      final d = ts.toDate();
+      return d.year == checkDate.year && d.month == checkDate.month && d.day == checkDate.day;
+    }).toList();
+    if (taskDocs.isNotEmpty) {
+      final allDone = taskDocs.every((data) => data['completed'] == true);
+      dots.add(_DotData(_kColorTask, allDone));
     }
 
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final checkDate = DateTime(date.year, date.month, date.day);
+    // Exams
+    final hasExam = _cachedExamDocs.any((data) {
+      final ts = data['examDate'] as Timestamp?;
+      if (ts == null) return false;
+      final d = ts.toDate();
+      return d.year == checkDate.year && d.month == checkDate.month && d.day == checkDate.day;
+    });
+    if (hasExam) dots.add(const _DotData(_kColorExam, true));
 
-    return _firestore
-        .collection('timetable')
-        .where('userId', isEqualTo: user.uid)
-        .snapshots()
-        .asyncMap((timetableSnapshot) async {
-          final tasksSnapshot = await _firestore
-              .collection('tasks')
-              .where('userId', isEqualTo: user.uid)
-              .get();
+    // Group events
+    final geDocs = _cachedGroupEvents.where((ge) {
+      final ts = ge['eventDate'] as Timestamp?;
+      if (ts == null) return false;
+      final d = ts.toDate();
+      return d.year == checkDate.year && d.month == checkDate.month && d.day == checkDate.day;
+    }).toList();
+    if (geDocs.isNotEmpty) {
+      final allDone = geDocs.every((ge) => ge['isCompleted'] == true);
+      dots.add(_DotData(_kColorStudy, allDone));
+    }
 
-          final examsSnapshot = await _firestore
-              .collection('exams')
-              .where('userId', isEqualTo: user.uid)
-              .get();
-
-          List<QueryDocumentSnapshot> matchingDocs = [];
-
-          // Check timetable events
-          for (var doc in timetableSnapshot.docs) {
-            final data = doc.data() as Map<String, dynamic>;
-            final timestamp = data['date'] as Timestamp?;
-            if (timestamp != null) {
-              final docDate = timestamp.toDate();
-              final docDateOnly = DateTime(
-                docDate.year,
-                docDate.month,
-                docDate.day,
-              );
-              if (docDateOnly.year == checkDate.year &&
-                  docDateOnly.month == checkDate.month &&
-                  docDateOnly.day == checkDate.day) {
-                matchingDocs.add(doc);
-              }
-            }
-          }
-
-          // Check tasks
-          for (var doc in tasksSnapshot.docs) {
-            final data = doc.data() as Map<String, dynamic>;
-            final timestamp = data['dueDate'] as Timestamp?;
-            if (timestamp != null) {
-              final docDate = timestamp.toDate();
-              final docDateOnly = DateTime(
-                docDate.year,
-                docDate.month,
-                docDate.day,
-              );
-              if (docDateOnly.year == checkDate.year &&
-                  docDateOnly.month == checkDate.month &&
-                  docDateOnly.day == checkDate.day) {
-                matchingDocs.add(doc);
-              }
-            }
-          }
-
-          // Check exams
-          for (var doc in examsSnapshot.docs) {
-            final data = doc.data() as Map<String, dynamic>;
-            final timestamp = data['examDate'] as Timestamp?;
-            if (timestamp != null) {
-              final docDate = timestamp.toDate();
-              final docDateOnly = DateTime(
-                docDate.year,
-                docDate.month,
-                docDate.day,
-              );
-              if (docDateOnly.year == checkDate.year &&
-                  docDateOnly.month == checkDate.month &&
-                  docDateOnly.day == checkDate.day) {
-                matchingDocs.add(doc);
-              }
-            }
-          }
-
-          bool hasEvents = matchingDocs.isNotEmpty;
-
-          if (!hasEvents) {
-            for (final ge in _cachedGroupEvents) {
-              final ts = ge['eventDate'] as Timestamp?;
-              if (ts != null) {
-                final d = ts.toDate();
-                final dOnly = DateTime(d.year, d.month, d.day);
-                if (dOnly == checkDate) { hasEvents = true; break; }
-              }
-            }
-          }
-
-          bool isUpcoming = hasEvents && checkDate.isAfter(today);
-
-          return {'hasEvents': hasEvents, 'isUpcoming': isUpcoming};
-        })
-        .handleError((_) {});
+    return dots;
   }
 
   List<DateTime> _getDaysInMonth(DateTime month) {
@@ -341,7 +473,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
   Widget _buildCalendar(List<DateTime> days) {
     return Container(
-      padding: const EdgeInsets.all(24),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 2),
       decoration: BoxDecoration(
         color: AppColors.card(context),
         borderRadius: BorderRadius.circular(16),
@@ -353,23 +485,36 @@ class _CalendarScreenState extends State<CalendarScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 8,
-                ),
-                decoration: BoxDecoration(
-                  color: AppColors.chipBg(context),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: Text(
-                  DateFormat('MMMM, yyyy').format(_currentMonth),
-                  style: GoogleFonts.dmMono(
-                    fontSize: 12,
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: AppColors.chipBg(context),
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Text(
+                      DateFormat('MMMM, yyyy').format(_currentMonth),
+                      style: GoogleFonts.dmMono(fontSize: 12, color: Colors.white, fontWeight: FontWeight.bold),
+                    ),
                   ),
-                ),
+                  const SizedBox(width: 8),
+                  GestureDetector(
+                    key: _legendKey,
+                    onTap: _toggleLegend,
+                    child: Container(
+                      width: 32, height: 32,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: const Color(0xFFFFF9C4),
+                        border: Border.all(color: Colors.black, width: 1.5),
+                      ),
+                      child: Center(
+                        child: Text('i', style: GoogleFonts.dmMono(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.black)),
+                      ),
+                    ),
+                  ),
+                ],
               ),
               Row(
                 children: [
@@ -435,10 +580,9 @@ class _CalendarScreenState extends State<CalendarScreen> {
             physics: const NeverScrollableScrollPhysics(),
             gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: 7,
-              childAspectRatio:
-                  0.85, // Reduced from 1 to give more height for triangle
+              childAspectRatio: 0.69,
               crossAxisSpacing: 8,
-              mainAxisSpacing: 12, // Increased spacing between rows
+              mainAxisSpacing: 2,
             ),
             itemCount: days.length,
             itemBuilder: (context, index) {
@@ -447,22 +591,14 @@ class _CalendarScreenState extends State<CalendarScreen> {
               final isToday = _isToday(date);
               final isSelected = _isSelected(date);
 
-              return StreamBuilder<Map<String, bool>>(
-                stream: _checkEventsOnDateStream(date),
-                builder: (context, snapshot) {
-                  bool hasEvents = snapshot.data?['hasEvents'] ?? false;
-                  bool isUpcoming = snapshot.data?['isUpcoming'] ?? false;
-
-                  return _buildDateCell(
-                    date,
-                    isCurrentMonth,
-                    isToday,
-                    isSelected,
-                    hasEvents,
-                    isUpcoming,
-                  );
-                },
-              );
+              final firestoreDots = _getDotsForDate(date);
+              final checkDate = DateTime(date.year, date.month, date.day);
+              final gcalDots = _gcalAllEvents
+                  .where((e) => _gcalEventOnDate(e, checkDate))
+                  .map((_) => const _DotData(_kColorGCal, true))
+                  .toList();
+              final dots = [...firestoreDots, ...gcalDots];
+              return _buildDateCell(date, isCurrentMonth, isToday, isSelected, dots);
             },
           ),
         ],
@@ -475,56 +611,31 @@ class _CalendarScreenState extends State<CalendarScreen> {
     bool isCurrentMonth,
     bool isToday,
     bool isSelected,
-    bool hasEvents,
-    bool isUpcoming,
+    List<_DotData> dots,
   ) {
-    Color? backgroundColor;
-    Color? borderColor;
-    double? borderWidth;
     Color textColor = AppColors.text(context);
-
-    if (isToday) {
-      backgroundColor = const Color(0xFFB90000);
-      textColor = Colors.white;
-    } else {
-      backgroundColor = Colors.transparent;
-
-      if (isUpcoming) {
-        borderColor = const Color(0xFFB90000);
-        borderWidth = 2;
-      } else if (hasEvents) {
-        borderColor = AppColors.border(context);
-        borderWidth = 2;
-      }
-    }
-
-    if (!isCurrentMonth) {
-      textColor = AppColors.subtext(context);
-    }
+    if (isToday) textColor = Colors.white;
+    if (!isCurrentMonth) textColor = AppColors.subtext(context);
 
     return _AnimatedTapButton(
       onTap: () {
-        setState(() {
-          _selectedDate = date;
-        });
+        setState(() => _selectedDate = date);
+        _updateGcalEventsForDate(date);
       },
       child: Column(
         mainAxisSize: MainAxisSize.min,
-        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           Container(
             width: 32,
             height: 32,
             decoration: BoxDecoration(
-              color: backgroundColor,
+              color: isToday ? const Color(0xFFB90000) : Colors.transparent,
               shape: BoxShape.circle,
-              border: borderColor != null && borderWidth != null
-                  ? Border.all(color: borderColor, width: borderWidth)
-                  : null,
             ),
             child: Center(
               child: Text(
-                '${date.day.toString().padLeft(2, '0')}',
+                date.day.toString().padLeft(2, '0'),
                 style: GoogleFonts.dmMono(
                   fontSize: 14,
                   fontWeight: FontWeight.bold,
@@ -533,9 +644,25 @@ class _CalendarScreenState extends State<CalendarScreen> {
               ),
             ),
           ),
-          if (isSelected) ...[
-            const SizedBox(height: 4),
-            CustomPaint(size: const Size(10, 8), painter: TrianglePainter(color: AppColors.text(context))),
+          const SizedBox(height: 3),
+          // Triangle slot — fixed height so all cells align
+          SizedBox(
+            height: 7,
+            child: isSelected
+                ? Center(child: CustomPaint(size: const Size(10, 7), painter: TrianglePainter(color: AppColors.text(context))))
+                : null,
+          ),
+          if (dots.isNotEmpty) ...[
+            const SizedBox(height: 2),
+            SizedBox(
+              width: 36,
+              child: Wrap(
+                alignment: WrapAlignment.center,
+                spacing: 4,
+                runSpacing: 3,
+                children: dots.take(5).map((d) => _EventDot(color: d.color, filled: d.filled)).toList(),
+              ),
+            ),
           ],
         ],
       ),
@@ -583,62 +710,577 @@ class _CalendarScreenState extends State<CalendarScreen> {
               );
             }
 
-            if (snapshot.hasError ||
-                !snapshot.hasData ||
-                snapshot.data!.isEmpty) {
+            final events = snapshot.data ?? [];
+
+            if (events.isEmpty && _gcalEvents.isEmpty) {
               return _buildEmptyState();
             }
 
-            List<Map<String, dynamic>> events = snapshot.data!;
-
-            // Sort events by time
-            events.sort((a, b) {
-              String timeA;
-              String timeB;
-
-              if (a['type'] == 'task') {
-                timeA = a['dueTime'] as String;
-              } else if (a['eventType'] == 'exam') {
-                // startTime is a Timestamp for exams
-                final ts = a['startTime'] as Timestamp;
-                final dt = ts.toDate();
-                timeA =
-                    '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
-              } else {
-                timeA = a['startTime'] as String;
-              }
-
-              if (b['type'] == 'task') {
-                timeB = b['dueTime'] as String;
-              } else if (b['eventType'] == 'exam') {
-                // startTime is a Timestamp for exams
-                final ts = b['startTime'] as Timestamp;
-                final dt = ts.toDate();
-                timeB =
-                    '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
-              } else {
-                timeB = b['startTime'] as String;
-              }
-
-              return timeA.compareTo(timeB);
-            });
+            // Sort Firebase events by time
+            final sorted = List<Map<String, dynamic>>.from(events)
+              ..sort((a, b) {
+                String timeA;
+                String timeB;
+                if (a['type'] == 'task') {
+                  timeA = a['dueTime'] as String;
+                } else if (a['eventType'] == 'exam') {
+                  final ts = a['startTime'] as Timestamp;
+                  final dt = ts.toDate();
+                  timeA = '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+                } else {
+                  timeA = a['startTime'] as String;
+                }
+                if (b['type'] == 'task') {
+                  timeB = b['dueTime'] as String;
+                } else if (b['eventType'] == 'exam') {
+                  final ts = b['startTime'] as Timestamp;
+                  final dt = ts.toDate();
+                  timeB = '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+                } else {
+                  timeB = b['startTime'] as String;
+                }
+                return timeA.compareTo(timeB);
+              });
 
             return Column(
-              children: events.map((event) {
-                if (event['type'] == 'task') {
-                  return _buildTaskCard(event);
-                } else if (event['eventType'] == 'exam') {
-                  return _buildExamCard(event);
-                } else if (event['type'] == 'group_event') {
-                  return _buildGroupEventCard(event);
-                } else {
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                ...sorted.map((event) {
+                  if (event['type'] == 'task') return _buildTaskCard(event);
+                  if (event['eventType'] == 'exam') return _buildExamCard(event);
+                  if (event['type'] == 'group_event') return _buildGroupEventCard(event);
                   return _buildClassCard(event);
-                }
-              }).toList(),
+                }),
+                if (_gcalEvents.isNotEmpty) ...[
+                  if (sorted.isNotEmpty) const SizedBox(height: 6),
+                  ..._gcalEvents.map(_buildGCalEventCard),
+                ] else if (_gcalLoading)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 12),
+                    child: Center(child: CircularProgressIndicator(color: Color(0xFF4285F4), strokeWidth: 2)),
+                  )
+                else if (GoogleCalendarService.instance.isConnected)
+                  const SizedBox(),
+              ],
             );
           },
         ),
+        // Connect-Google-Calendar prompt when not linked
+        if (!GoogleCalendarService.instance.isConnected)
+          _buildGCalConnectBanner(),
       ],
+    );
+  }
+
+  Widget _buildGCalConnectBanner() {
+    const gcalBlue = Color(0xFF4285F4);
+    return GestureDetector(
+      onTap: () async {
+        final result = await GoogleCalendarService.instance.connect();
+        if (result == GCalConnectResult.success && mounted) {
+          _loadGcalAllEvents();
+        }
+      },
+      child: Container(
+        margin: const EdgeInsets.only(top: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: AppColors.card(context),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: AppColors.border(context), width: 2),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 32, height: 32,
+              decoration: BoxDecoration(color: gcalBlue, borderRadius: BorderRadius.circular(8)),
+              child: const Icon(Icons.calendar_month_rounded, color: Colors.white, size: 16),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Connect Google Calendar to see all your events here',
+                style: GoogleFonts.dmMono(fontSize: 12, color: AppColors.subtext(context)),
+              ),
+            ),
+            Icon(Icons.arrow_forward_ios_rounded, size: 12, color: AppColors.subtext(context)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGCalEventCard(gcal.Event event) {
+    const gcalBlue = Color(0xFF4285F4);
+    final startDt = event.start?.dateTime?.toLocal();
+    final endDt = event.end?.dateTime?.toLocal();
+
+    String timeStr = '';
+    if (startDt != null && endDt != null) {
+      timeStr = '${_gcalFmt(startDt)} - ${_gcalFmt(endDt)}';
+    }
+    final location = event.location ?? '';
+
+    return _AnimatedTapButton(
+      onTap: () => _showGCalSheet(event),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: AppColors.card(context),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: gcalBlue, width: 2),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 40, height: 40,
+              decoration: BoxDecoration(color: gcalBlue, borderRadius: BorderRadius.circular(8)),
+              child: const Icon(Icons.calendar_month_rounded, color: Colors.white, size: 20),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(color: gcalBlue, borderRadius: BorderRadius.circular(4)),
+                        child: Text('GCAL', style: GoogleFonts.dmMono(fontSize: 8, fontWeight: FontWeight.bold, color: Colors.white)),
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          event.summary ?? 'No Title',
+                          style: GoogleFonts.dmMono(fontSize: 13, fontWeight: FontWeight.bold),
+                          maxLines: 1, overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    timeStr.isNotEmpty
+                        ? (location.isNotEmpty ? '$timeStr • $location' : timeStr)
+                        : (location.isNotEmpty ? location : ''),
+                    style: GoogleFonts.dmMono(fontSize: 10, color: const Color(0xFF6B7280)),
+                    maxLines: 1, overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  bool _gcalEventOnDate(gcal.Event e, DateTime checkDate) {
+    // Timed event — show only on its start day
+    final dt = e.start?.dateTime?.toLocal();
+    if (dt != null) {
+      return dt.year == checkDate.year &&
+          dt.month == checkDate.month &&
+          dt.day == checkDate.day;
+    }
+    // All-day event — start.date is a DateTime (no time component)
+    final startDate = e.start?.date;
+    if (startDate == null) return false;
+    final startDay =
+        DateTime(startDate.year, startDate.month, startDate.day);
+    final endDate = e.end?.date;
+    if (endDate != null) {
+      // Multi-day: end is exclusive, so event covers [startDay, endDay)
+      final endDay = DateTime(endDate.year, endDate.month, endDate.day);
+      return !checkDate.isBefore(startDay) && checkDate.isBefore(endDay);
+    }
+    return checkDate == startDay;
+  }
+
+  String _gcalFmt(DateTime dt) {
+    final h = dt.hour;
+    final m = dt.minute.toString().padLeft(2, '0');
+    if (h == 0) return '12:$m AM';
+    if (h < 12) return '$h:$m AM';
+    if (h == 12) return '12:$m PM';
+    return '${h - 12}:$m PM';
+  }
+
+  void _showGCalSheet(gcal.Event event) {
+    const gcalBlue = Color(0xFF4285F4);
+    final startDt = event.start?.dateTime?.toLocal();
+    final endDt = event.end?.dateTime?.toLocal();
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        decoration: BoxDecoration(
+          color: AppColors.card(context),
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+          border: Border.all(color: AppColors.border(context), width: 2),
+        ),
+        padding: EdgeInsets.fromLTRB(24, 16, 24, MediaQuery.of(ctx).viewInsets.bottom + 28),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 40, height: 4,
+                decoration: BoxDecoration(color: AppColors.border(context), borderRadius: BorderRadius.circular(2)),
+              ),
+            ),
+            const SizedBox(height: 20),
+            Row(
+              children: [
+                Container(
+                  width: 40, height: 40,
+                  decoration: BoxDecoration(color: gcalBlue, borderRadius: BorderRadius.circular(10)),
+                  child: const Icon(Icons.calendar_month_rounded, color: Colors.white, size: 20),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(event.summary ?? 'No Title', style: GoogleFonts.dmMono(fontSize: 17, fontWeight: FontWeight.bold, color: AppColors.text(context))),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            if (startDt != null) ...[
+              _gcalRow(Icons.access_time_rounded, '${_gcalFmt(startDt)}${endDt != null ? ' – ${_gcalFmt(endDt)}' : ''}'),
+              const SizedBox(height: 8),
+              _gcalRow(Icons.calendar_today_rounded, DateFormat('EEE, dd MMM yyyy').format(startDt)),
+              const SizedBox(height: 8),
+            ],
+            if ((event.location ?? '').isNotEmpty) ...[
+              _gcalRow(Icons.location_on_outlined, event.location!),
+              const SizedBox(height: 8),
+            ],
+            if ((event.description ?? '').isNotEmpty) ...[
+              _gcalRow(Icons.notes_rounded, event.description!),
+              const SizedBox(height: 8),
+            ],
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () { Navigator.pop(ctx); _showGCalEditSheet(event); },
+                    icon: const Icon(Icons.edit_outlined, size: 16),
+                    label: Text('Edit', style: GoogleFonts.dmMono(fontWeight: FontWeight.bold)),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: gcalBlue,
+                      side: const BorderSide(color: gcalBlue),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: () async {
+                      Navigator.pop(ctx);
+                      final id = event.id;
+                      if (id == null) return;
+                      final ok = await GoogleCalendarService.instance.deleteEvent(id);
+                      if (ok && mounted) {
+                        _loadGcalAllEvents();
+                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                          content: Text('Event deleted', style: GoogleFonts.dmMono(fontWeight: FontWeight.bold, color: Colors.white)),
+                          backgroundColor: const Color(0xFFB90000),
+                          behavior: SnackBarBehavior.floating,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        ));
+                      }
+                    },
+                    icon: const Icon(Icons.delete_outline_rounded, size: 16),
+                    label: Text('Delete', style: GoogleFonts.dmMono(fontWeight: FontWeight.bold)),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFFB90000),
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _gcalRow(IconData icon, String text) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 15, color: AppColors.subtext(context)),
+        const SizedBox(width: 8),
+        Expanded(child: Text(text, style: GoogleFonts.dmMono(fontSize: 13, color: AppColors.text(context)))),
+      ],
+    );
+  }
+
+  void _showGCalEditSheet(gcal.Event event) {
+    const gcalBlue = Color(0xFF4285F4);
+    final startDt = event.start?.dateTime?.toLocal() ?? DateTime.now();
+    final endDt = event.end?.dateTime?.toLocal() ?? startDt.add(const Duration(hours: 1));
+    final titleCtrl = TextEditingController(text: event.summary ?? '');
+    final descCtrl = TextEditingController(text: event.description ?? '');
+    final locCtrl = TextEditingController(text: event.location ?? '');
+
+    DateTime editDate = startDt;
+    TimeOfDay editStartTime = TimeOfDay.fromDateTime(startDt);
+    TimeOfDay editEndTime = TimeOfDay.fromDateTime(endDt);
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setS) {
+          String fmtTime(TimeOfDay t) {
+            final h = t.hourOfPeriod == 0 ? 12 : t.hourOfPeriod;
+            final m = t.minute.toString().padLeft(2, '0');
+            return '$h:$m ${t.period == DayPeriod.am ? 'AM' : 'PM'}';
+          }
+
+          Widget dateTile() => GestureDetector(
+            onTap: () async {
+              final isDark = AppColors.isDark(context);
+              final picked = await showDatePicker(
+                context: ctx,
+                initialDate: editDate,
+                firstDate: DateTime(2020),
+                lastDate: DateTime(2030),
+                builder: (_, child) => Theme(
+                  data: isDark
+                      ? ThemeData.dark().copyWith(
+                          colorScheme: const ColorScheme.dark(
+                            primary: Color(0xFF008BB9),
+                            onPrimary: Colors.white,
+                            surface: Color(0xFF252D47),
+                            onSurface: Colors.white,
+                          ),
+                        )
+                      : ThemeData.light().copyWith(
+                          colorScheme: const ColorScheme.light(primary: Color(0xFF008BB9)),
+                        ),
+                  child: child!,
+                ),
+              );
+              if (picked != null) setS(() => editDate = picked);
+            },
+            child: Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: AppColors.input(context),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppColors.border(context), width: 2),
+              ),
+              child: Row(
+                children: [
+                  Expanded(child: Text(DateFormat('EEE, dd MMM yyyy').format(editDate), style: GoogleFonts.dmMono(fontSize: 14, color: AppColors.text(context)))),
+                  Icon(Icons.calendar_today, size: 18, color: AppColors.text(context)),
+                ],
+              ),
+            ),
+          );
+
+          void showTimeError() {
+            showDialog(
+              context: ctx,
+              builder: (_) => AlertDialog(
+                backgroundColor: AppColors.card(context),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  side: BorderSide(color: AppColors.border(context), width: 2),
+                ),
+                title: Row(children: [
+                  const Icon(Icons.error_outline, color: Color(0xFFB90000), size: 24),
+                  const SizedBox(width: 12),
+                  Expanded(child: Text('Invalid Time', style: GoogleFonts.dmMono(fontWeight: FontWeight.bold, fontSize: 14))),
+                ]),
+                content: Text('End time must be after start time.', style: GoogleFonts.dmMono(fontSize: 12)),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    child: Text('OK', style: GoogleFonts.dmMono(fontWeight: FontWeight.bold, color: AppColors.text(context))),
+                  ),
+                ],
+              ),
+            );
+          }
+
+          Widget timeTile(TimeOfDay t, void Function(TimeOfDay) onPick, {bool isStart = false}) => GestureDetector(
+            onTap: () async {
+              final picked = await showDialog<TimeOfDay>(context: ctx, builder: (_) => AppTimePickerDialog(initialTime: t));
+              if (picked == null) return;
+              if (isStart) {
+                final startMins = picked.hour * 60 + picked.minute;
+                final endMins = editEndTime.hour * 60 + editEndTime.minute;
+                setS(() {
+                  editStartTime = picked;
+                  if (endMins <= startMins) {
+                    editEndTime = TimeOfDay(hour: (picked.hour + 1) % 24, minute: picked.minute);
+                  }
+                });
+              } else {
+                final startMins = editStartTime.hour * 60 + editStartTime.minute;
+                final endMins = picked.hour * 60 + picked.minute;
+                if (endMins <= startMins) { showTimeError(); return; }
+                setS(() => editEndTime = picked);
+              }
+            },
+            child: Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: AppColors.input(context),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppColors.border(context), width: 2),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(fmtTime(t), style: GoogleFonts.dmMono(fontSize: 14, color: AppColors.text(context))),
+                  Icon(Icons.access_time, size: 18, color: AppColors.text(context)),
+                ],
+              ),
+            ),
+          );
+
+          return Padding(
+            padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+            child: Container(
+              decoration: BoxDecoration(
+                color: AppColors.card(context),
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+                border: Border.all(color: AppColors.border(context), width: 2),
+              ),
+              padding: const EdgeInsets.fromLTRB(24, 16, 24, 28),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 40, height: 4,
+                        decoration: BoxDecoration(color: AppColors.border(context), borderRadius: BorderRadius.circular(2)),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    Text('Edit Event', style: GoogleFonts.dmMono(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.text(context))),
+                    const SizedBox(height: 16),
+                    Text('Title', style: GoogleFonts.dmMono(fontSize: 13, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 8),
+                    _gcalField(titleCtrl, 'Event title'),
+                    const SizedBox(height: 14),
+                    Text('Location (Optional)', style: GoogleFonts.dmMono(fontSize: 13, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 8),
+                    _gcalField(locCtrl, 'Location'),
+                    const SizedBox(height: 14),
+                    Text('Description (Optional)', style: GoogleFonts.dmMono(fontSize: 13, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 8),
+                    _gcalField(descCtrl, 'Description', maxLines: 3),
+                    const SizedBox(height: 14),
+                    Text('Date', style: GoogleFonts.dmMono(fontSize: 13, fontWeight: FontWeight.bold, color: AppColors.subtext(context))),
+                    const SizedBox(height: 8),
+                    dateTile(),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('Start Time', style: GoogleFonts.dmMono(fontSize: 13, fontWeight: FontWeight.bold, color: AppColors.subtext(context))),
+                              const SizedBox(height: 8),
+                              timeTile(editStartTime, (t) => editStartTime = t, isStart: true),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('End Time', style: GoogleFonts.dmMono(fontSize: 13, fontWeight: FontWeight.bold, color: AppColors.subtext(context))),
+                              const SizedBox(height: 8),
+                              timeTile(editEndTime, (t) => editEndTime = t),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 20),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        onPressed: () async {
+                          final id = event.id;
+                          if (id == null || titleCtrl.text.trim().isEmpty) return;
+                          final newStart = DateTime(editDate.year, editDate.month, editDate.day, editStartTime.hour, editStartTime.minute);
+                          final newEnd = DateTime(editDate.year, editDate.month, editDate.day, editEndTime.hour, editEndTime.minute);
+                          if (!newEnd.isAfter(newStart)) { showTimeError(); return; }
+                          Navigator.pop(ctx);
+                          final updated = await GoogleCalendarService.instance.updateEvent(
+                            eventId: id,
+                            title: titleCtrl.text.trim(),
+                            description: descCtrl.text.trim().isEmpty ? null : descCtrl.text.trim(),
+                            location: locCtrl.text.trim().isEmpty ? null : locCtrl.text.trim(),
+                            start: newStart,
+                            end: newEnd,
+                          );
+                          if (updated != null && mounted) {
+                            _loadGcalAllEvents();
+                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                              content: Text('Event updated', style: GoogleFonts.dmMono(fontWeight: FontWeight.bold, color: Colors.white)),
+                              backgroundColor: gcalBlue,
+                              behavior: SnackBarBehavior.floating,
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                            ));
+                          }
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: gcalBlue,
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                        ),
+                        child: Text('Save Changes', style: GoogleFonts.dmMono(fontWeight: FontWeight.bold)),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _gcalField(TextEditingController ctrl, String hint, {int maxLines = 1}) {
+    return TextField(
+      controller: ctrl,
+      maxLines: maxLines,
+      style: GoogleFonts.dmMono(fontSize: 14, color: AppColors.text(context)),
+      decoration: InputDecoration(
+        hintText: hint,
+        hintStyle: GoogleFonts.dmMono(fontSize: 14, color: AppColors.subtext(context)),
+        filled: true,
+        fillColor: AppColors.input(context),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: AppColors.border(context), width: 2)),
+        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: AppColors.border(context), width: 2)),
+        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: AppColors.border(context), width: 2)),
+        contentPadding: const EdgeInsets.all(16),
+      ),
     );
   }
 
@@ -5269,6 +5911,31 @@ class _AnimatedTapButtonState extends State<_AnimatedTapButton> {
         scale: _isTapped ? 0.95 : 1.0,
         duration: const Duration(milliseconds: 100),
         child: widget.child,
+      ),
+    );
+  }
+}
+
+class _DotData {
+  final Color color;
+  final bool filled;
+  const _DotData(this.color, this.filled);
+}
+
+class _EventDot extends StatelessWidget {
+  final Color color;
+  final bool filled;
+  const _EventDot({required this.color, required this.filled});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 7,
+      height: 7,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: filled ? color : Colors.transparent,
+        border: filled ? null : Border.all(color: color, width: 1.5),
       ),
     );
   }
