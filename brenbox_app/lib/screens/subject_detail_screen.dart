@@ -2391,13 +2391,23 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
                 ),
               );
             }
+            final myUid = _auth.currentUser?.uid ?? '';
             return Column(
               children: groups.map((doc) {
                 final data = doc.data() as Map<String, dynamic>;
                 final groupId = doc.id;
                 final groupName = data['name'] ?? 'Unnamed Group';
                 final memberCount = (data['memberIds'] as List?)?.length ?? 0;
-                return GestureDetector(
+
+                final lastMessageAt = data['lastMessageAt'] as Timestamp?;
+                final lastReadAt = (data['lastReadAt'] as Map<String, dynamic>?)?[myUid] as Timestamp?;
+                final hasUnread = lastMessageAt != null &&
+                    (lastReadAt == null || lastMessageAt.compareTo(lastReadAt) > 0);
+
+                return Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                GestureDetector(
                   onTap: () => Navigator.push(
                     context,
                     MaterialPageRoute(
@@ -2514,6 +2524,29 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
                       ],
                     ),
                   ),
+                ),
+                Positioned(
+                  top: -7,
+                  right: -7,
+                  child: AnimatedScale(
+                    scale: hasUnread ? 1.0 : 0.0,
+                    duration: const Duration(milliseconds: 400),
+                    curve: Curves.elasticOut,
+                    child: AnimatedOpacity(
+                      opacity: hasUnread ? 1.0 : 0.0,
+                      duration: const Duration(milliseconds: 200),
+                      child: Container(
+                        width: 22,
+                        height: 22,
+                        decoration: const BoxDecoration(
+                          color: Color(0xFFFF7043),
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                  ],
                 );
               }).toList(),
             );

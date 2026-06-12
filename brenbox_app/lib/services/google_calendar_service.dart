@@ -20,6 +20,11 @@ class GoogleCalendarService extends ChangeNotifier {
 
   // Attempt silent sign-in on app start — reconnects if the user connected before
   Future<void> tryRestoreSession() async {
+    // If already connected (e.g. connected during sign-up in the same session),
+    // don't overwrite with signInSilently — it may return null due to a race
+    // condition where the token hasn't fully persisted yet.
+    if (_account != null) return;
+
     _account = await _signIn.signInSilently();
     if (_account == null) return;
 
@@ -37,6 +42,12 @@ class GoogleCalendarService extends ChangeNotifier {
 
   Future<GCalConnectResult> connect() async {
     try {
+      // Sign out first so signIn() always presents a fresh account-picker +
+      // consent screen. Unlike disconnect(), signOut() does NOT revoke OAuth
+      // tokens (so Firebase Auth is unaffected) but it clears the cached
+      // account, preventing Android from silently reusing a session that may
+      // not yet have the calendar scope granted.
+      try { await _signIn.signOut(); } catch (_) {}
       _account = await _signIn.signIn();
       if (_account == null) return GCalConnectResult.cancelled;
 

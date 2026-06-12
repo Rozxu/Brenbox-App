@@ -3133,21 +3133,36 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   Future<void> _initGoogleCalendar() async {
     final svc = GoogleCalendarService.instance;
     svc.addListener(_onGcalChanged);
-    await svc.tryRestoreSession();
-    if (svc.isConnected) {
-      _loadGcalUpcoming();
-      _loadGcalForSelectedDate(_selectedDate);
-    }
-    // Load whether the user granted calendar permission during sign-up
+
+    // Load permission flag FIRST — determines whether auto-restore is allowed.
     final uid = _auth.currentUser?.uid;
     if (uid != null) {
-      final doc = await _firestore.collection('users').doc(uid).get();
-      if (mounted) {
+      try {
+        final doc = await _firestore.collection('users').doc(uid).get();
+        if (!mounted) return;
         setState(() {
           _calendarPermissionGranted =
               doc.data()?['calendarPermissionGranted'] as bool?;
         });
+      } catch (_) {
+        // Can't read the flag — don't auto-restore (safe default).
+        return;
       }
+    }
+
+    // calendarPermissionGranted == false  → user chose "Skip for now" / back
+    // calendarPermissionGranted == true   → user enabled during sign-up
+    // calendarPermissionGranted == null   → legacy account, no preference stored
+    if (_calendarPermissionGranted == false) {
+      // Clear any stale account that may linger from a previous user's session.
+      await svc.disconnect();
+      return;
+    }
+
+    await svc.tryRestoreSession();
+    if (svc.isConnected) {
+      _loadGcalUpcoming();
+      _loadGcalForSelectedDate(_selectedDate);
     }
   }
 
@@ -3234,7 +3249,14 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               TextButton.icon(
                 onPressed: () async {
                   await GoogleCalendarService.instance.disconnect();
-                  if (mounted) setState(() {});
+                  if (!mounted) return;
+                  setState(() => _calendarPermissionGranted = false);
+                  try {
+                    await _firestore
+                        .collection('users')
+                        .doc(_auth.currentUser?.uid)
+                        .update({'calendarPermissionGranted': false});
+                  } catch (_) {}
                 },
                 icon: const Icon(Icons.link_off_rounded, size: 14, color: Color(0xFF6B7280)),
                 label: Text(

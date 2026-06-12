@@ -97,6 +97,27 @@ Widget _emptyState(BuildContext context, IconData icon, String title, String sub
   ]));
 }
 
+Widget _newMsgSepRow(BuildContext context) {
+  return Padding(
+    padding: const EdgeInsets.symmetric(vertical: 12),
+    child: Row(children: [
+      const Expanded(child: Divider(color: Color(0xFFFF7043), thickness: 1)),
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        child: Text(
+          'New Messages',
+          style: GoogleFonts.dmMono(
+            fontSize: 11,
+            fontWeight: FontWeight.bold,
+            color: const Color(0xFFFF7043),
+          ),
+        ),
+      ),
+      const Expanded(child: Divider(color: Color(0xFFFF7043), thickness: 1)),
+    ]),
+  );
+}
+
 Widget _dateSepRow(BuildContext context, String label) {
   return Padding(
     padding: const EdgeInsets.symmetric(vertical: 14),
@@ -652,73 +673,46 @@ class _StudyGroupScreenState extends State<StudyGroupScreen>
                       final isMe    = uid == myUid;
 
                       Widget? trailing;
-                      if (!isMe && !isHost) {
-                        if (myIsHost) {
-                          // Host: popup with Make/Remove Admin + Kick
-                          trailing = PopupMenuButton<String>(
-                            icon: Icon(Icons.more_vert_rounded,
-                                color: AppColors.subtext(ctx), size: 20),
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                side: BorderSide(color: AppColors.border(ctx))),
-                            color: AppColors.card(ctx),
-                            itemBuilder: (_) => [
-                              PopupMenuItem(
-                                value: 'admin',
-                                child: Row(children: [
-                                  Icon(
-                                    isAdmin ? Icons.shield_outlined : Icons.shield_rounded,
-                                    size: 18, color: _kBlue,
-                                  ),
-                                  const SizedBox(width: 10),
-                                  Text(isAdmin ? 'Remove Admin' : 'Make Admin',
-                                      style: GoogleFonts.dmMono(fontSize: 13)),
-                                ]),
-                              ),
-                              PopupMenuItem(
-                                value: 'kick',
-                                child: Row(children: [
-                                  const Icon(Icons.person_remove_outlined,
-                                      size: 18, color: Color(0xFFB90000)),
-                                  const SizedBox(width: 10),
-                                  Text('Kick', style: GoogleFonts.dmMono(
-                                      fontSize: 13, color: const Color(0xFFB90000))),
-                                ]),
-                              ),
-                            ],
-                            onSelected: (val) {
-                              if (val == 'admin') {
-                                _toggleAdmin(uid, adminIds);
-                              } else if (val == 'kick') {
-                                _kickMember(ctx, uid, uname, data);
-                              }
-                            },
-                          );
-                        } else if (myIsAdmin && !isAdmin) {
-                          // Admin: kick button for regular members only
-                          trailing = GestureDetector(
-                            onTap: () => _kickMember(ctx, uid, uname, data),
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 12, vertical: 6),
-                              decoration: BoxDecoration(
-                                color: _kRed.withOpacity(0.18),
-                                borderRadius: BorderRadius.circular(20),
-                                border: Border.all(color: _kRed),
-                              ),
-                              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                                Icon(Icons.person_remove_outlined, size: 16,
-                                    color: AppColors.isDark(context)
-                                        ? const Color(0xFFFF6B6B) : _kRed),
-                                const SizedBox(width: 5),
-                                Text('Kick', style: GoogleFonts.dmMono(
-                                    fontSize: 13, fontWeight: FontWeight.bold,
-                                    color: AppColors.isDark(context)
-                                        ? const Color(0xFFFF6B6B) : _kRed)),
+                      if (!isMe && (myIsHost || myIsAdmin)) {
+                        trailing = PopupMenuButton<String>(
+                          icon: Icon(Icons.more_vert_rounded,
+                              color: AppColors.subtext(ctx), size: 20),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              side: BorderSide(color: AppColors.border(ctx))),
+                          color: AppColors.card(ctx),
+                          itemBuilder: (_) => [
+                            PopupMenuItem(
+                              value: 'admin',
+                              child: Row(children: [
+                                Icon(
+                                  isAdmin ? Icons.shield_outlined : Icons.shield_rounded,
+                                  size: 18, color: _kBlue,
+                                ),
+                                const SizedBox(width: 10),
+                                Text(isAdmin ? 'Remove Admin' : 'Make Admin',
+                                    style: GoogleFonts.dmMono(fontSize: 13)),
                               ]),
                             ),
-                          );
-                        }
+                            PopupMenuItem(
+                              value: 'kick',
+                              child: Row(children: [
+                                const Icon(Icons.person_remove_outlined,
+                                    size: 18, color: Color(0xFFB90000)),
+                                const SizedBox(width: 10),
+                                Text('Kick', style: GoogleFonts.dmMono(
+                                    fontSize: 13, color: const Color(0xFFB90000))),
+                              ]),
+                            ),
+                          ],
+                          onSelected: (val) {
+                            if (val == 'admin') {
+                              _toggleAdmin(uid, adminIds);
+                            } else if (val == 'kick') {
+                              _kickMember(ctx, uid, uname);
+                            }
+                          },
+                        );
                       }
 
                       String? roleLabel;
@@ -854,8 +848,7 @@ class _StudyGroupScreenState extends State<StudyGroupScreen>
         .update({'adminIds': updatedAdminIds});
   }
 
-  Future<void> _kickMember(
-      BuildContext ctx, String uid, String uname, Map<String, dynamic> data) async {
+  Future<void> _kickMember(BuildContext ctx, String uid, String uname) async {
     final confirm = await showDialog<bool>(
       context: ctx,
       builder: (_) => AlertDialog(
@@ -885,23 +878,29 @@ class _StudyGroupScreenState extends State<StudyGroupScreen>
     );
     if (confirm != true) return;
 
-    final updIds = List<String>.from(data['memberIds'] ?? [])..remove(uid);
-    final updMem = List<Map<String, dynamic>>.from(data['members'] ?? [])
+    final snap = await _firestore.collection('study_groups').doc(widget.groupId).get();
+    if (!snap.exists) return;
+    final d = snap.data() as Map<String, dynamic>;
+    final updIds = List<String>.from(d['memberIds'] ?? [])..remove(uid);
+    final updMem = List<Map<String, dynamic>>.from(d['members'] ?? [])
       ..removeWhere((x) => x['uid'] == uid);
-    final updAdminIds = List<String>.from(data['adminIds'] ?? [])..remove(uid);
+    final updAdminIds = List<String>.from(d['adminIds'] ?? [])..remove(uid);
     await _firestore
         .collection('study_groups')
         .doc(widget.groupId)
         .update({'memberIds': updIds, 'members': updMem, 'adminIds': updAdminIds});
     // Cancel any pending invitations so the kicked user cannot re-enter via an old invite.
-    final pending = await _firestore
-        .collection('group_invitations')
-        .where('groupId', isEqualTo: widget.groupId)
-        .where('inviteeId', isEqualTo: uid)
-        .where('status', isEqualTo: 'pending')
-        .get();
-    await Future.wait(
-        pending.docs.map((d) => d.reference.update({'status': 'cancelled'})));
+    // Wrapped in try-catch: a permission failure here must not abort the kick itself.
+    try {
+      final pending = await _firestore
+          .collection('group_invitations')
+          .where('groupId', isEqualTo: widget.groupId)
+          .where('inviteeId', isEqualTo: uid)
+          .where('status', isEqualTo: 'pending')
+          .get();
+      await Future.wait(
+          pending.docs.map((d) => d.reference.update({'status': 'cancelled'})));
+    } catch (_) {}
   }
 
   Future<void> _leaveGroup() async {
@@ -1095,6 +1094,8 @@ class _ChatTabState extends State<_ChatTab> {
   String? _cachedUsername;
   String  _groupCreatedBy = '';
   List<Map<String, dynamic>> _cachedMembers = [];
+  List<String> _cachedAdminIds = [];
+  Timestamp? _unreadSeparatorAt;
 
   @override
   void initState() {
@@ -1110,13 +1111,63 @@ class _ChatTabState extends State<_ChatTab> {
       _db.collection('study_groups').doc(widget.groupId).get(),
     ]);
     if (!mounted) return;
+    final groupData = results[1].data();
     setState(() {
       _cachedUsername = results[0].data()?['username'] as String?
           ?? user.email ?? 'Unknown';
-      final groupData = results[1].data();
       _groupCreatedBy = groupData?['createdBy'] as String? ?? '';
       _cachedMembers  = List<Map<String, dynamic>>.from(
           (groupData?['members'] as List? ?? []).map((m) => Map<String, dynamic>.from(m as Map)));
+      _cachedAdminIds = List<String>.from(groupData?['adminIds'] ?? []);
+    });
+    // Capture unread separator BEFORE marking as read so the divider shows
+    // messages the user hasn't seen yet. Cleared when they leave and return.
+    final lastReadAtMap = groupData?['lastReadAt'] as Map<String, dynamic>?;
+    final myLastReadAt = lastReadAtMap?[user.uid] as Timestamp?;
+    final lastMsgAt = groupData?['lastMessageAt'] as Timestamp?;
+    if (lastMsgAt != null &&
+        (myLastReadAt == null || lastMsgAt.compareTo(myLastReadAt) > 0)) {
+      setState(() => _unreadSeparatorAt =
+          myLastReadAt ?? Timestamp.fromMillisecondsSinceEpoch(0));
+    } else {
+      setState(() => _unreadSeparatorAt = null);
+    }
+
+    // Backfill lastMessageAt for groups that existed before this feature was added.
+    // This ensures dots appear for members who haven't opened the chat yet.
+    if (groupData?['lastMessageAt'] == null) {
+      final latest = await _msgs
+          .orderBy('createdAt', descending: true)
+          .limit(1)
+          .get();
+      if (latest.docs.isNotEmpty) {
+        final msgData = latest.docs.first.data() as Map<String, dynamic>?;
+        final ts = msgData?['createdAt'] as Timestamp?;
+        if (ts != null) {
+          await _db
+              .collection('study_groups')
+              .doc(widget.groupId)
+              .update({'lastMessageAt': ts});
+        }
+      }
+    }
+    _markReadByMe();
+  }
+
+  void _markLastMessage() {
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) return;
+    _db.collection('study_groups').doc(widget.groupId).update({
+      'lastMessageAt': FieldValue.serverTimestamp(),
+      'lastReadAt.$uid': FieldValue.serverTimestamp(),
+    });
+  }
+
+  void _markReadByMe() {
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) return;
+    _db.collection('study_groups').doc(widget.groupId).update({
+      'lastReadAt.$uid': FieldValue.serverTimestamp(),
     });
   }
 
@@ -1165,6 +1216,7 @@ class _ChatTabState extends State<_ChatTab> {
       'senderUsername': await _uname,
       'createdAt':      FieldValue.serverTimestamp(),
     });
+    _markLastMessage();
     _scrollToBottom();
   }
 
@@ -1196,6 +1248,7 @@ class _ChatTabState extends State<_ChatTab> {
         'senderUsername': await _uname,
         'createdAt':      FieldValue.serverTimestamp(),
       });
+      _markLastMessage();
       _scrollToBottom();
     } finally {
       if (mounted) ScaffoldMessenger.of(context).clearSnackBars();
@@ -1250,6 +1303,7 @@ class _ChatTabState extends State<_ChatTab> {
         'senderUsername': await _uname,
         'createdAt':      FieldValue.serverTimestamp(),
       });
+      _markLastMessage();
       _scrollToBottom();
     } finally {
       if (mounted) ScaffoldMessenger.of(context).clearSnackBars();
@@ -1421,6 +1475,7 @@ class _ChatTabState extends State<_ChatTab> {
                             'declined':       [],
                             'createdAt':      FieldValue.serverTimestamp(),
                           });
+                          _markLastMessage();
                           if (ctx.mounted) Navigator.pop(ctx);
                           _scrollToBottom();
                         },
@@ -1547,6 +1602,7 @@ class _ChatTabState extends State<_ChatTab> {
                             'senderUsername': await _uname,
                             'createdAt':      FieldValue.serverTimestamp(),
                           });
+                          _markLastMessage();
                           if (ctx.mounted) Navigator.pop(ctx);
                           _scrollToBottom();
                         },
@@ -1607,6 +1663,123 @@ class _ChatTabState extends State<_ChatTab> {
                 );
               },
             ),
+            const SizedBox(height: 8),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _kickMember(BuildContext ctx, String uid, String uname) async {
+    final confirm = await showDialog<bool>(
+      context: ctx,
+      builder: (_) => AlertDialog(
+        backgroundColor: AppColors.card(ctx),
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+            side: BorderSide(color: AppColors.border(ctx), width: 2)),
+        title: Text('Kick $uname?',
+            style: GoogleFonts.dmMono(fontWeight: FontWeight.bold)),
+        content: Text('Remove $uname from the group?',
+            style: GoogleFonts.dmMono(
+                fontSize: 13, color: AppColors.subtext(ctx))),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text('Cancel',
+                  style: GoogleFonts.dmMono(color: AppColors.subtext(ctx)))),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(backgroundColor: _kRed),
+            child: Text('Kick',
+                style: GoogleFonts.dmMono(
+                    color: Colors.white, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+
+    final snap = await _db.collection('study_groups').doc(widget.groupId).get();
+    if (!snap.exists) return;
+    final d = snap.data() as Map<String, dynamic>;
+    final updIds = List<String>.from(d['memberIds'] ?? [])..remove(uid);
+    final updMem = List<Map<String, dynamic>>.from(d['members'] ?? [])
+      ..removeWhere((x) => x['uid'] == uid);
+    final updAdminIds = List<String>.from(d['adminIds'] ?? [])..remove(uid);
+    await _db
+        .collection('study_groups')
+        .doc(widget.groupId)
+        .update({'memberIds': updIds, 'members': updMem, 'adminIds': updAdminIds});
+    try {
+      final pending = await _db
+          .collection('group_invitations')
+          .where('groupId', isEqualTo: widget.groupId)
+          .where('inviteeId', isEqualTo: uid)
+          .where('status', isEqualTo: 'pending')
+          .get();
+      await Future.wait(
+          pending.docs.map((doc) => doc.reference.update({'status': 'cancelled'})));
+    } catch (_) {}
+  }
+
+  void _showOtherMsgOptions(
+      DocumentSnapshot doc, String senderUid, String senderUsername) {
+    final myUid = _auth.currentUser?.uid ?? '';
+    final amHost = myUid == _groupCreatedBy;
+    final amAdmin = _cachedAdminIds.contains(myUid);
+    final senderIsHost = senderUid == _groupCreatedBy;
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (_) => Container(
+        decoration: BoxDecoration(
+          color: AppColors.card(context),
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+          border: Border(
+            top:   BorderSide(color: AppColors.border(context), width: 2),
+            left:  BorderSide(color: AppColors.border(context), width: 2),
+            right: BorderSide(color: AppColors.border(context), width: 2),
+          ),
+        ),
+        child: SafeArea(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            const SizedBox(height: 12),
+            Container(
+              width: 40, height: 4,
+              decoration: BoxDecoration(
+                  color: AppColors.border(context),
+                  borderRadius: BorderRadius.circular(2)),
+            ),
+            const SizedBox(height: 8),
+            // Both host and admin can delete any message
+            if (amHost || amAdmin)
+              ListTile(
+                leading: const Icon(Icons.delete_outline, color: _kRed),
+                title: Text('Delete Message',
+                    style: GoogleFonts.dmMono(fontSize: 14, color: _kRed)),
+                onTap: () async {
+                  Navigator.pop(context);
+                  await confirmAndDeleteDialog(
+                    context,
+                    title: 'Delete Message',
+                    message: 'Are you sure you want to delete this message? This cannot be undone.',
+                    onDelete: () => doc.reference.delete(),
+                  );
+                },
+              ),
+            // Can kick anyone except the group creator
+            if ((amHost || amAdmin) && !senderIsHost)
+              ListTile(
+                leading: const Icon(Icons.person_remove_outlined, color: _kRed),
+                title: Text('Kick $senderUsername',
+                    style: GoogleFonts.dmMono(fontSize: 14, color: _kRed)),
+                onTap: () {
+                  Navigator.pop(context);
+                  _kickMember(context, senderUid, senderUsername);
+                },
+              ),
             const SizedBox(height: 8),
           ]),
         ),
@@ -1742,12 +1915,23 @@ class _ChatTabState extends State<_ChatTab> {
 
             final List<Widget> items = [];
             String? lastLabel;
+            bool sepInserted = false;
             for (final doc in docs) {
               final data    = doc.data() as Map<String, dynamic>;
               final ts      = (data['createdAt'] as Timestamp?)?.toDate();
               final label   = ts != null ? _dateLabel(ts) : null;
               final msgType = data['type'] as String? ?? 'text';
               final isMe    = data['senderId'] == myUid;
+              final createdAtTs = data['createdAt'] as Timestamp?;
+
+              // Insert "New Messages" divider before the first unread message.
+              if (!sepInserted &&
+                  _unreadSeparatorAt != null &&
+                  createdAtTs != null &&
+                  createdAtTs.compareTo(_unreadSeparatorAt!) > 0) {
+                sepInserted = true;
+                items.add(_newMsgSepRow(ctx));
+              }
 
               if (label != null && label != lastLabel) {
                 lastLabel = label;
@@ -1858,19 +2042,26 @@ class _ChatTabState extends State<_ChatTab> {
 
   Widget _buildTextBubble(
       DocumentSnapshot doc, Map<String, dynamic> data, bool isMe) {
-    final text   = data['text'] as String? ?? '';
-    final uname  = data['senderUsername'] as String? ?? 'Unknown';
-    final ts     = (data['createdAt'] as Timestamp?)?.toDate();
-    final edited = data['edited'] == true;
+    final text       = data['text'] as String? ?? '';
+    final uname      = data['senderUsername'] as String? ?? 'Unknown';
+    final senderUid  = data['senderId'] as String? ?? '';
+    final ts         = (data['createdAt'] as Timestamp?)?.toDate();
+    final edited     = data['edited'] == true;
 
-    final myUid = _auth.currentUser?.uid ?? '';
-    final canAct = isMe || myUid == _groupCreatedBy;
+    final myUid  = _auth.currentUser?.uid ?? '';
+    final amHost  = myUid == _groupCreatedBy;
+    final amAdmin = _cachedAdminIds.contains(myUid);
+    final canAct  = isMe || amHost || amAdmin;
 
     return GestureDetector(
       onLongPress: canAct
           ? () {
               HapticFeedback.mediumImpact();
-              isMe ? _showMsgOptions(doc, text) : _showDeleteSheet(doc);
+              if (isMe) {
+                _showMsgOptions(doc, text);
+              } else {
+                _showOtherMsgOptions(doc, senderUid, uname);
+              }
             }
           : null,
       child: Align(
@@ -1942,9 +2133,12 @@ class _ChatTabState extends State<_ChatTab> {
   // ── File message — tap to PREVIEW, no inline download button ───────────────
   Widget _buildFileMsg(
       DocumentSnapshot doc, Map<String, dynamic> data, bool isMe) {
-    final myUid    = _auth.currentUser?.uid ?? '';
-    final canAct   = isMe || myUid == _groupCreatedBy;
-    final uname    = data['senderUsername'] as String? ?? 'Unknown';
+    final myUid     = _auth.currentUser?.uid ?? '';
+    final amHost    = myUid == _groupCreatedBy;
+    final amAdmin   = _cachedAdminIds.contains(myUid);
+    final canAct    = isMe || amHost || amAdmin;
+    final senderUid = data['senderId'] as String? ?? '';
+    final uname     = data['senderUsername'] as String? ?? 'Unknown';
     final fileName = data['fileName'] as String? ?? 'File';
     final sizeKB   = data['fileSizeKB']?.toString() ?? '';
     final ts       = (data['createdAt'] as Timestamp?)?.toDate();
@@ -1977,7 +2171,16 @@ class _ChatTabState extends State<_ChatTab> {
                   ),
                 ));
               },
-              onLongPress: canAct ? () { HapticFeedback.mediumImpact(); _showDeleteSheet(doc); } : null,
+              onLongPress: canAct
+                  ? () {
+                      HapticFeedback.mediumImpact();
+                      if (isMe) {
+                        _showDeleteSheet(doc);
+                      } else {
+                        _showOtherMsgOptions(doc, senderUid, uname);
+                      }
+                    }
+                  : null,
               child: Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
@@ -2047,9 +2250,12 @@ class _ChatTabState extends State<_ChatTab> {
 
   Widget _buildImageMsg(
       DocumentSnapshot doc, Map<String, dynamic> data, bool isMe) {
-    final myUid    = _auth.currentUser?.uid ?? '';
-    final canAct   = isMe || myUid == _groupCreatedBy;
-    final uname    = data['senderUsername'] as String? ?? 'Unknown';
+    final myUid     = _auth.currentUser?.uid ?? '';
+    final amHost    = myUid == _groupCreatedBy;
+    final amAdmin   = _cachedAdminIds.contains(myUid);
+    final canAct    = isMe || amHost || amAdmin;
+    final senderUid = data['senderId'] as String? ?? '';
+    final uname     = data['senderUsername'] as String? ?? 'Unknown';
     final fileName = data['fileName'] as String? ?? 'image.jpg';
     final imageUrl = data['imageUrl'] as String? ?? '';
     final sp       = data['storagePath'] as String? ?? '';
@@ -2092,7 +2298,11 @@ class _ChatTabState extends State<_ChatTab> {
               onLongPress: canAct
                   ? () {
                       HapticFeedback.mediumImpact();
-                      _showDeleteSheet(doc);
+                      if (isMe) {
+                        _showDeleteSheet(doc);
+                      } else {
+                        _showOtherMsgOptions(doc, senderUid, uname);
+                      }
                     }
                   : null,
               child: ClipRRect(
@@ -2154,13 +2364,16 @@ class _ChatTabState extends State<_ChatTab> {
     final title    = data['title'] as String? ?? 'Event';
     final eType    = data['eventType'] as String? ?? 'Meeting';
     final details  = data['details'] as String? ?? '';
-    final sender   = data['senderUsername'] as String? ?? 'Someone';
-    final evTs     = (data['eventDate'] as Timestamp?)?.toDate();
-    final msgTs    = (data['createdAt'] as Timestamp?)?.toDate();
-    final accepted = List<String>.from(data['accepted'] ?? []);
-    final myAcc    = accepted.contains(myUid);
-    final isMe     = data['senderId'] == myUid;
-    final canAct   = isMe || myUid == _groupCreatedBy;
+    final sender    = data['senderUsername'] as String? ?? 'Someone';
+    final senderUid = data['senderId'] as String? ?? '';
+    final evTs      = (data['eventDate'] as Timestamp?)?.toDate();
+    final msgTs     = (data['createdAt'] as Timestamp?)?.toDate();
+    final accepted  = List<String>.from(data['accepted'] ?? []);
+    final myAcc     = accepted.contains(myUid);
+    final isMe      = data['senderId'] == myUid;
+    final amHost    = myUid == _groupCreatedBy;
+    final amAdmin   = _cachedAdminIds.contains(myUid);
+    final canAct    = isMe || amHost || amAdmin;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -2173,7 +2386,16 @@ class _ChatTabState extends State<_ChatTab> {
                 color: AppColors.isDark(context) ? const Color(0xFF82B4FF) : _kBlue)),
           ),
         GestureDetector(
-          onLongPress: canAct ? () => _showDeleteSheet(doc) : null,
+          onLongPress: canAct
+              ? () {
+                  HapticFeedback.mediumImpact();
+                  if (isMe) {
+                    _showDeleteSheet(doc);
+                  } else {
+                    _showOtherMsgOptions(doc, senderUid, sender);
+                  }
+                }
+              : null,
           child: Container(
           margin: const EdgeInsets.only(bottom: 12),
           decoration: BoxDecoration(
@@ -2359,18 +2581,21 @@ class _ChatTabState extends State<_ChatTab> {
       DocumentSnapshot doc, Map<String, dynamic> data, String myUid) {
     final question = data['question'] as String? ?? 'Poll';
     final options  = List<String>.from(data['options'] ?? []);
-    final sender   = data['senderUsername'] as String? ?? 'Someone';
-    final ts       = (data['createdAt'] as Timestamp?)?.toDate();
-    final rawVotes = data['votes'] as Map<String, dynamic>? ?? {};
-    final votes    = rawVotes.map(
+    final sender    = data['senderUsername'] as String? ?? 'Someone';
+    final senderUid = data['senderId'] as String? ?? '';
+    final ts        = (data['createdAt'] as Timestamp?)?.toDate();
+    final rawVotes  = data['votes'] as Map<String, dynamic>? ?? {};
+    final votes     = rawVotes.map(
         (k, v) => MapEntry(k, List<String>.from(v as List)));
-    final total    = votes.values.fold(0, (s, l) => s + l.length);
-    final myVote   = votes.entries
+    final total     = votes.values.fold(0, (s, l) => s + l.length);
+    final myVote    = votes.entries
         .where((e) => e.value.contains(myUid))
         .map((e) => e.key)
         .firstOrNull;
-    final isMe     = data['senderId'] == myUid;
-    final canAct   = isMe || myUid == _groupCreatedBy;
+    final isMe      = data['senderId'] == myUid;
+    final amHost    = myUid == _groupCreatedBy;
+    final amAdmin   = _cachedAdminIds.contains(myUid);
+    final canAct    = isMe || amHost || amAdmin;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -2383,7 +2608,16 @@ class _ChatTabState extends State<_ChatTab> {
                 color: AppColors.isDark(context) ? const Color(0xFF82B4FF) : _kBlue)),
           ),
         GestureDetector(
-          onLongPress: canAct ? () => _showDeleteSheet(doc) : null,
+          onLongPress: canAct
+              ? () {
+                  HapticFeedback.mediumImpact();
+                  if (isMe) {
+                    _showDeleteSheet(doc);
+                  } else {
+                    _showOtherMsgOptions(doc, senderUid, sender);
+                  }
+                }
+              : null,
           child: Container(
           margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(

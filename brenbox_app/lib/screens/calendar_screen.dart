@@ -38,6 +38,10 @@ class _CalendarScreenState extends State<CalendarScreen> {
   List<Map<String, dynamic>> _cachedGroupEvents = [];
   StreamSubscription<QuerySnapshot>? _groupEventsSub;
 
+  Map<String, bool> _subjectHasUnread = {};
+  StreamSubscription<QuerySnapshot>? _groupsUnreadSub;
+  Stream<List<Map<String, dynamic>>>? _subjectsStream;
+
   List<Map<String, dynamic>> _cachedTaskDocs = [];
   List<Map<String, dynamic>> _cachedExamDocs = [];
   List<Map<String, dynamic>> _cachedTimetableDocs = [];
@@ -67,6 +71,9 @@ class _CalendarScreenState extends State<CalendarScreen> {
     _selectedDate = DateTime.now();
     _listenToGroupEvents();
     _listenToFirestoreData();
+    _listenToGroupsUnread();
+    final uid = _auth.currentUser?.uid;
+    if (uid != null) _subjectsStream = _getSubjectsStream(uid);
     GoogleCalendarService.instance.addListener(_onGcalChanged);
     _loadGcalAllEvents();
   }
@@ -78,6 +85,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
     _tasksSub?.cancel();
     _examsSub?.cancel();
     _timetableSub?.cancel();
+    _groupsUnreadSub?.cancel();
     GoogleCalendarService.instance.removeListener(_onGcalChanged);
     super.dispose();
   }
@@ -193,6 +201,34 @@ class _CalendarScreenState extends State<CalendarScreen> {
     setState(() {
       _gcalEvents = _gcalAllEvents.where((e) => _gcalEventOnDate(e, date)).toList();
     });
+  }
+
+  void _listenToGroupsUnread() {
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) return;
+    _groupsUnreadSub?.cancel();
+    _groupsUnreadSub = _firestore
+        .collection('study_groups')
+        .where('memberIds', arrayContains: uid)
+        .snapshots()
+        .listen((snap) {
+      if (!mounted) return;
+      final Map<String, bool> unread = {};
+      for (final doc in snap.docs) {
+        final data = doc.data();
+        final subject = data['subject'] as String? ?? '';
+        if (subject.isEmpty) continue;
+        final lastMessageAt = data['lastMessageAt'] as Timestamp?;
+        final lastReadAt =
+            (data['lastReadAt'] as Map<String, dynamic>?)?[uid] as Timestamp?;
+        if (lastMessageAt != null &&
+            (lastReadAt == null ||
+                lastMessageAt.compareTo(lastReadAt) > 0)) {
+          unread[subject] = true;
+        }
+      }
+      setState(() => _subjectHasUnread = unread);
+    }, onError: (_) {});
   }
 
   void _listenToFirestoreData() {
@@ -2261,7 +2297,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
         const SizedBox(height: 16),
         // Subjects Grid
         StreamBuilder<List<Map<String, dynamic>>>(
-          stream: _getSubjectsStream(user.uid),
+          stream: _subjectsStream ?? _getSubjectsStream(user.uid),
           builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) {
               return const Center(
@@ -2539,45 +2575,72 @@ class _CalendarScreenState extends State<CalendarScreen> {
   DateTime _dateOnly(DateTime dt) => DateTime(dt.year, dt.month, dt.day);
 
   Widget _buildSubjectCard(Map<String, dynamic> subject) {
-    return GestureDetector(
-      onLongPress: () {
-        HapticFeedback.mediumImpact();
-        _confirmDeleteSubject(subject);
-      },
-      child: _AnimatedTapButton(
-        onTap: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => SubjectDetailScreen(
-                subjectName: subject['className'],
-                semester: subject['semester'],
-                academicYear: subject['academicYear'],
+    final hasUnread = _subjectHasUnread[subject['className']] == true;
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        GestureDetector(
+          onLongPress: () {
+            HapticFeedback.mediumImpact();
+            _confirmDeleteSubject(subject);
+          },
+          child: _AnimatedTapButton(
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => SubjectDetailScreen(
+                    subjectName: subject['className'],
+                    semester: subject['semester'],
+                    academicYear: subject['academicYear'],
+                  ),
+                ),
+              );
+            },
+            child: Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: AppColors.card(context),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppColors.border(context), width: 2),
               ),
-            ),
-          );
-        },
-        child: Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: AppColors.card(context),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: AppColors.border(context), width: 2),
-          ),
-          child: Center(
-            child: Text(
-              subject['className'],
-              style: GoogleFonts.dmMono(
-                fontSize: 13,
-                fontWeight: FontWeight.bold,
+              child: Center(
+                child: Text(
+                  subject['className'],
+                  style: GoogleFonts.dmMono(
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                  ),
+                  textAlign: TextAlign.center,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
-              textAlign: TextAlign.center,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
             ),
           ),
         ),
-      ),
+        Positioned(
+          top: -7,
+          right: -7,
+          child: AnimatedScale(
+            scale: hasUnread ? 1.0 : 0.0,
+            duration: const Duration(milliseconds: 400),
+            curve: Curves.elasticOut,
+            child: AnimatedOpacity(
+              opacity: hasUnread ? 1.0 : 0.0,
+              duration: const Duration(milliseconds: 200),
+              child: Container(
+                width: 22,
+                height: 22,
+                decoration: const BoxDecoration(
+                  color: Color(0xFFFF7043),
+                  shape: BoxShape.circle,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
