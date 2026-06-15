@@ -125,7 +125,8 @@ service cloud.firestore {
         // Sender can always delete their own message; group creator can delete any.
         allow delete: if request.auth != null
           && (resource.data.senderId == request.auth.uid
-              || get(/databases/$(database)/documents/study_groups/$(groupId)).data.createdBy == request.auth.uid);
+              || get(/databases/$(database)/documents/study_groups/$(groupId)).data.createdBy == request.auth.uid
+              || request.auth.uid in get(/databases/$(database)/documents/study_groups/$(groupId)).data.adminIds);
       }
       match /milestones/{milestoneId} {
         allow read, write: if request.auth != null;
@@ -142,13 +143,16 @@ service cloud.firestore {
     // Read is open to any signed-in user so collection queries (e.g. duplicate
     // invite checks that filter by inviteeId) aren't blocked by the rule engine
     // being unable to verify inviterId == uid on the entire result set.
-    // Writes are still restricted: only the invitee or inviter can mutate.
+    // Writes are restricted: invitee, inviter, group creator, or group admins
+    // can mutate (admins need this to cancel invitations when kicking a member).
     match /group_invitations/{inviteId} {
       allow read: if request.auth != null;
       allow create: if request.auth != null;
       allow update, delete: if request.auth != null
         && (resource.data.inviteeId == request.auth.uid
-            || resource.data.inviterId == request.auth.uid);
+            || resource.data.inviterId == request.auth.uid
+            || get(/databases/$(database)/documents/study_groups/$(resource.data.groupId)).data.createdBy == request.auth.uid
+            || request.auth.uid in get(/databases/$(database)/documents/study_groups/$(resource.data.groupId)).data.adminIds);
     }
 
     // Timetable shares

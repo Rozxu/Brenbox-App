@@ -3181,7 +3181,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     if (!GoogleCalendarService.instance.isConnected) return;
     if (!mounted) return;
     setState(() => _selectedDateGcalLoading = true);
-    final events = await GoogleCalendarService.instance.fetchEventsForDate(date);
+    final start = DateTime(date.year, date.month, date.day);
+    final end = start.add(const Duration(days: 1));
+    final events = await GoogleCalendarService.instance.fetchAllEventsInRange(start, end);
     if (!mounted) return;
     setState(() {
       _selectedDateGcalEvents = events;
@@ -3195,7 +3197,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     final today = DateTime(now.year, now.month, now.day);
     final startOfWeek = today.subtract(Duration(days: today.weekday - 1));
     final endOfRange = today.add(const Duration(days: 8));
-    final events = await GoogleCalendarService.instance.fetchEventsForRange(startOfWeek, endOfRange);
+    final events = await GoogleCalendarService.instance.fetchAllEventsInRange(startOfWeek, endOfRange);
     if (!mounted) return;
     setState(() => _gcalUpcoming = events);
   }

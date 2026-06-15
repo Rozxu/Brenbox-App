@@ -3977,14 +3977,17 @@ class _CalendarScreenState extends State<CalendarScreen> {
       );
     } else {
       // Has clashes — show resolution dialog first
-      final chosen = await _showClashDialog(
+      final result = await _showClashDialog(
         inviterUsername: inviterUsername,
         groupName: groupName,
         noClashClasses: noClash,
         clashGroups: clashGroups,
       );
-      if (chosen != null && mounted) {
-        await _joinGroupAndMarkAccepted(doc, user, groupId, groupName, chosen);
+      if (result != null && mounted) {
+        await _joinGroupAndMarkAccepted(
+          doc, user, groupId, groupName, result.toInsert,
+          idsToDelete: result.toDelete,
+        );
       }
     }
   }
@@ -4099,7 +4102,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
     );
   }
 
-  Future<List<Map<String, dynamic>>?> _showClashDialog({
+  Future<({List<Map<String, dynamic>> toInsert, List<String> toDelete})?> _showClashDialog({
     required String inviterUsername,
     required String groupName,
     required List<Map<String, dynamic>> noClashClasses,
@@ -4114,7 +4117,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
       for (int i = 0; i < clashGroups.length; i++) i: 'incoming',
     };
 
-    return showDialog<List<Map<String, dynamic>>>(
+    return showDialog<({List<Map<String, dynamic>> toInsert, List<String> toDelete})>(
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setS) {
@@ -4408,18 +4411,17 @@ class _CalendarScreenState extends State<CalendarScreen> {
               ),
               ElevatedButton(
                 onPressed: () {
-                  final List<Map<String, dynamic>> finalList = [
-                    ...noClashClasses,
-                  ];
+                  final List<Map<String, dynamic>> toInsert = [...noClashClasses];
+                  final List<String> toDelete = [];
                   for (int i = 0; i < clashGroups.length; i++) {
                     if (selections[i] == 'incoming') {
-                      finalList.add(
-                        clashGroups[i]['incoming'] as Map<String, dynamic>,
-                      );
+                      toInsert.add(clashGroups[i]['incoming'] as Map<String, dynamic>);
+                      final ex = clashGroups[i]['existing'] as List<Map<String, dynamic>>;
+                      toDelete.addAll(ex.map((e) => e['id'] as String));
                     }
-                    // If 'existing_*' chosen — skip the incoming class
+                    // If 'existing_*' chosen — keep existing, don't insert incoming
                   }
-                  Navigator.pop(ctx, finalList);
+                  Navigator.pop(ctx, (toInsert: toInsert, toDelete: toDelete));
                 },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFF34A853),
@@ -4447,8 +4449,9 @@ class _CalendarScreenState extends State<CalendarScreen> {
     User user,
     String groupId,
     String groupName,
-    List<Map<String, dynamic>> classesToInsert,
-  ) async {
+    List<Map<String, dynamic>> classesToInsert, {
+    List<String> idsToDelete = const [],
+  }) async {
     final userDoc = await _firestore.collection('users').doc(user.uid).get();
     final username = userDoc.data()?['username'] ?? 'Unknown';
 
@@ -4605,6 +4608,11 @@ class _CalendarScreenState extends State<CalendarScreen> {
         'startTime': exam['startTime'],
         'endTime': exam['endTime'],
       });
+    }
+
+    // ── Delete clashing existing classes the user chose to replace ────────────
+    for (final id in idsToDelete) {
+      batch.delete(_firestore.collection('timetable').doc(id));
     }
 
     await batch.commit();
@@ -5783,7 +5791,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
       }
     } else {
       // Has clashes — show clash resolution dialog with task/exam summary
-      final chosen = await _showClashDialog(
+      final result = await _showClashDialog(
         inviterUsername: sender,
         groupName: subject,
         noClashClasses: noClash,
@@ -5794,14 +5802,15 @@ class _CalendarScreenState extends State<CalendarScreen> {
         newExams: newExams,
         alreadyHasExams: alreadyHasExams,
       );
-      if (chosen != null) {
+      if (result != null) {
         await _insertClassesAndMarkAccepted(
           doc,
           user,
-          chosen,
+          result.toInsert,
           newTasks,
           newExams,
           sender,
+          idsToDelete: result.toDelete,
         );
       }
     }
@@ -5814,8 +5823,9 @@ class _CalendarScreenState extends State<CalendarScreen> {
     List<Map<String, dynamic>> classes,
     List<Map<String, dynamic>> tasks,
     List<Map<String, dynamic>> exams,
-    String sender,
-  ) async {
+    String sender, {
+    List<String> idsToDelete = const [],
+  }) async {
     final batch = _firestore.batch();
 
     // Insert timetable classes
@@ -5888,6 +5898,11 @@ class _CalendarScreenState extends State<CalendarScreen> {
         'startTime': exam['startTime'],
         'endTime': exam['endTime'],
       });
+    }
+
+    // Delete clashing existing classes the user chose to replace
+    for (final id in idsToDelete) {
+      batch.delete(_firestore.collection('timetable').doc(id));
     }
 
     await batch.commit();
