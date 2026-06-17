@@ -796,11 +796,6 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
     } catch (_) { return t; }
   }
 
-  int _parseStartYear(String? academicYear) {
-    if (academicYear == null) return DateTime.now().year;
-    return int.tryParse(academicYear.split('/').first) ?? DateTime.now().year;
-  }
-
   // ADD EXTRA CLASS DIALOG
   // ══════════════════════════════════════════════════════════════════════
 
@@ -819,8 +814,6 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
     TimeOfDay? startTime;
     TimeOfDay? endTime;
     Set<int>  selectedDays    = {};
-    int       selectedSemester = widget.semester ?? 1;
-    int       selectedYear     = _parseStartYear(widget.academicYear);
     bool      isSaving         = false;
     String?   errorMsg;
 
@@ -988,121 +981,6 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
             );
           }
 
-          Widget semesterYearSelector() {
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          _addClassLabel('Semester'),
-                          const SizedBox(height: 8),
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                            decoration: BoxDecoration(
-                              color: AppColors.input(context),
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(color: AppColors.border(context), width: 2),
-                            ),
-                            child: Theme(
-                              data: Theme.of(context).copyWith(
-                                canvasColor: AppColors.card(context),
-                                colorScheme: ColorScheme.light(
-                                  primary: const Color(0xFF6B7280),
-                                  onPrimary: Colors.white,
-                                  surface: AppColors.card(context),
-                                  onSurface: AppColors.text(context),
-                                ),
-                              ),
-                              child: DropdownButton<int>(
-                                value: selectedSemester,
-                                isExpanded: true,
-                                underline: const SizedBox(),
-                                style: GoogleFonts.dmMono(fontSize: 14, color: AppColors.text(context)),
-                                dropdownColor: AppColors.card(context),
-                                icon: Icon(Icons.arrow_drop_down, color: AppColors.text(context)),
-                                items: List.generate(10, (i) => i + 1).map((i) => DropdownMenuItem(
-                                  value: i,
-                                  child: Text('Semester $i',
-                                      style: GoogleFonts.dmMono(fontSize: 14, color: AppColors.text(context))),
-                                )).toList(),
-                                onChanged: (v) { if (v != null) setS(() => selectedSemester = v); },
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          _addClassLabel('Year'),
-                          const SizedBox(height: 8),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                                  decoration: BoxDecoration(
-                                    color: AppColors.input(context),
-                                    borderRadius: BorderRadius.circular(12),
-                                    border: Border.all(color: AppColors.border(context), width: 2),
-                                  ),
-                                  child: TextField(
-                                    keyboardType: TextInputType.number,
-                                    style: GoogleFonts.dmMono(fontSize: 14),
-                                    textAlign: TextAlign.center,
-                                    decoration: InputDecoration(
-                                      hintText: (selectedYear % 100).toString().padLeft(2, '0'),
-                                      hintStyle: GoogleFonts.dmMono(fontSize: 14, color: AppColors.subtext(context)),
-                                      border: InputBorder.none,
-                                    ),
-                                    maxLength: 2,
-                                    buildCounter: (_, {required currentLength, required isFocused, maxLength}) => null,
-                                    onChanged: (v) {
-                                      if (v.length == 2) {
-                                        final y = int.tryParse('20$v');
-                                        if (y != null) setS(() => selectedYear = y);
-                                      }
-                                    },
-                                  ),
-                                ),
-                              ),
-                              Padding(
-                                padding: const EdgeInsets.symmetric(horizontal: 4),
-                                child: Text('/', style: GoogleFonts.dmMono(fontSize: 18, fontWeight: FontWeight.bold)),
-                              ),
-                              Expanded(
-                                child: Container(
-                                  padding: const EdgeInsets.all(16),
-                                  decoration: BoxDecoration(
-                                    color: AppColors.card(context),
-                                    borderRadius: BorderRadius.circular(12),
-                                    border: Border.all(color: AppColors.border(context), width: 2),
-                                  ),
-                                  child: Text(
-                                    (selectedYear + 1).toString().substring(2),
-                                    textAlign: TextAlign.center,
-                                    style: GoogleFonts.dmMono(fontSize: 14, color: AppColors.subtext(context)),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 14),
-              ],
-            );
-          }
 
           // ── main sheet content ──────────────────────────────────────────
 
@@ -1164,7 +1042,7 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
                       const SizedBox(height: 20),
 
                       // Date mode buttons
-                      _addClassLabel('Start/End Dates'),
+                      _addClassLabel('Occurrence'),
                       const SizedBox(height: 8),
                       Row(children: [
                         optionBtn('None'),
@@ -1196,9 +1074,8 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
                         daySelector(),
                       ],
 
-                      // Academic Year/Term — semester/year + start + end + occurrence + days
+                      // Academic Year/Term — start + end + occurrence + days
                       if (dateOption == 'Academic Year/Term') ...[
-                        semesterYearSelector(),
                         _addClassLabel('Start Date *'),
                         const SizedBox(height: 6),
                         dateTile('Select start date', startDate, true),
@@ -1368,18 +1245,12 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
                       if (dateOption == 'None') {
                         tryAdd(startDate!, sem: widget.semester, acYear: widget.academicYear);
                       } else if (dateOption == 'Academic Year/Term' && occurrence == 'Once') {
-                        tryAdd(startDate!,
-                            sem: selectedSemester,
-                            acYear: '$selectedYear/${selectedYear + 1}');
+                        tryAdd(startDate!, sem: widget.semester, acYear: widget.academicYear);
                       } else {
-                        final acYear = dateOption == 'Academic Year/Term'
-                            ? '$selectedYear/${selectedYear + 1}' : null;
-                        final sem    = dateOption == 'Academic Year/Term'
-                            ? selectedSemester : null;
                         DateTime cur = startDate!;
                         while (!cur.isAfter(endDate!)) {
                           if (selectedDays.contains(cur.weekday)) {
-                            tryAdd(cur, sem: sem, acYear: acYear);
+                            tryAdd(cur, sem: widget.semester, acYear: widget.academicYear);
                           }
                           cur = cur.add(const Duration(days: 1));
                         }
@@ -2598,21 +2469,37 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
       return;
     }
 
-    if (exams.length == 1) {
+    // Check which exams already have a study plan
+    final plansSnap = await _firestore
+        .collection('study_plans')
+        .where('userId', isEqualTo: user.uid)
+        .where('examId', whereIn: exams.map((e) => e.id).toList())
+        .get();
+    final examsWithPlan = plansSnap.docs.map((d) => d.data()['examId'] as String).toSet();
+    final examsWithoutPlan = exams.where((e) => !examsWithPlan.contains(e.id)).toList();
+
+    if (!mounted) return;
+
+    if (examsWithoutPlan.isEmpty) {
+      _showSnack('All exams already have a study plan.', isError: true);
+      return;
+    }
+
+    if (examsWithoutPlan.length == 1) {
       Navigator.push(
         context,
         MaterialPageRoute(
           builder: (_) => AddStudyPlanScreen(
             subjectName: widget.subjectName,
-            exam: exams.first.data(),
-            examId: exams.first.id,
+            exam: examsWithoutPlan.first.data(),
+            examId: examsWithoutPlan.first.id,
           ),
         ),
       );
       return;
     }
 
-    // Multiple exams — let user pick
+    // Multiple exams without a plan — let user pick
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
@@ -2645,7 +2532,7 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
               style: GoogleFonts.dmMono(fontSize: 12, color: AppColors.subtext(context)),
             ),
             const SizedBox(height: 16),
-            ...exams.map((doc) {
+            ...examsWithoutPlan.map((doc) {
               final data = doc.data();
               final examDate = (data['examDate'] as Timestamp).toDate();
               final examType = (data['type'] ?? 'EXAM').toString().toUpperCase();
@@ -3125,7 +3012,7 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
                       width: 32, height: 32,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        color: const Color(0xFFFFF9C4),
+                        color: const Color(0xFFE0FE9C),
                         border: Border.all(color: Colors.black, width: 1.5),
                       ),
                       child: Center(
@@ -3766,7 +3653,7 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
                           _buildDetailRow('Date',
                               DateFormat('EEE, dd MMM yyyy').format(eventDate)),
                           _buildDetailRow(
-                              'Time', event['startTime'] as String? ?? ''),
+                              'Time', _formatTime(event['startTime'] as String? ?? '')),
                           if ((event['senderUsername'] as String? ?? '')
                               .isNotEmpty)
                             _buildDetailRow('Organizer',
@@ -3833,10 +3720,12 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
                                       Expanded(
                                         child: _AnimatedTapButton(
                                           onTap: () async {
+                                            final geId = event['id'] as String;
                                             await _firestore
                                                 .collection('user_group_events')
-                                                .doc(event['id'] as String)
+                                                .doc(geId)
                                                 .update({'isCompleted': true});
+                                            NotificationService().cancelNotificationsForEvent(geId);
                                             setModalState(() {
                                               event['isCompleted'] = true;
                                             });
@@ -4651,6 +4540,7 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
                           .collection('tasks')
                           .doc(task['id'])
                           .update({'completed': true});
+                      NotificationService().cancelNotificationsForEvent(task['id'] as String);
                       setModal(() => task['completed'] = true);
                       setState(() {});
                     },

@@ -41,7 +41,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   int _selectedNavIndex = 0;
   List<Map<String, dynamic>> _cachedGroupEvents = [];
   StreamSubscription<QuerySnapshot>? _groupEventsSub;
-  final ScrollController _homeScrollController = ScrollController();
+  final DraggableScrollableController _sheetController = DraggableScrollableController();
   Stream<List<Map<String, dynamic>>>? _timetableStream;
   DateTime? _timetableStreamDate;
   Stream<List<Map<String, dynamic>>>? _examsStream;
@@ -97,19 +97,21 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   StreamSubscription<RemoteMessage>? _fcmForegroundSub;
+  StreamSubscription<DocumentSnapshot>? _userSub;
   Timer? _studyPlanExpiry;
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _fcmForegroundSub?.cancel();
+    _userSub?.cancel();
     _studyPlanExpiry?.cancel();
     _groupEventsSub?.cancel();
     _taskChangeSub?.cancel();
     _timetableChangeSub?.cancel();
     _examChangeSub?.cancel();
     _notifRescheduleDebounce?.cancel();
-    _homeScrollController.dispose();
+    _sheetController.dispose();
     GoogleCalendarService.instance.removeListener(_onGcalChanged);
     _legendOverlay?.remove();
     super.dispose();
@@ -121,6 +123,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed && mounted) {
       NotificationScheduler().onAppOpen();
+      if (GoogleCalendarService.instance.isConnected) {
+        _loadGcalUpcoming();
+        _loadGcalForSelectedDate(_selectedDate);
+      }
     }
   }
 
@@ -304,17 +310,15 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       return;
     }
 
-    final doc = await _firestore.collection('users').doc(user.uid).get();
-
-    if (!mounted) return;
-
-    setState(() {
-      _username = doc.data()?['username'] ?? 'User';
-      _isLoading = false;
+    _userSub = _firestore.collection('users').doc(user.uid).snapshots().listen((doc) {
+      if (!mounted) return;
+      setState(() {
+        _username = doc.data()?['username'] ?? 'User';
+        _isLoading = false;
+      });
+      fontScaleNotifier.value = (doc.data()?['fontScale'] as num?)?.toDouble() ?? kDefaultFontScale;
+      darkModeNotifier.value  = doc.data()?['darkMode']  as bool? ?? false;
     });
-
-    fontScaleNotifier.value = (doc.data()?['fontScale'] as num?)?.toDouble() ?? kDefaultFontScale;
-    darkModeNotifier.value  = doc.data()?['darkMode']  as bool? ?? false;
 
     // Save FCM token so Cloud Functions can push to this device
     NotificationService().saveFcmToken(user.uid);
@@ -553,36 +557,76 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     List<DateTime> weekDates,
     DateTime today,
   ) {
-    return SafeArea(
-      bottom: false,
-      child: SingleChildScrollView(
-        controller: _homeScrollController,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const SizedBox(height: 16),
-              _buildHeader(),
-              const SizedBox(height: 24),
-              _buildGreeting(),
-              const SizedBox(height: 16),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final availableH = constraints.maxHeight;
+        final statusBarH = MediaQuery.of(context).padding.top;
+        // Approximate header height from SafeArea + padding + content rows
+        final headerH = statusBarH + 16.0 + 28.0 + 32.0 + 16.0 + 20.0 + 4.0 + 28.0;
+        final initSize = ((availableH - headerH - 16.0) / availableH).clamp(0.35, 0.85);
 
-              const SizedBox(height: 24),
-              _buildScheduleSection(currentMonth, weekDates, today),
-              const SizedBox(height: 24),
-              _buildTodayTimetable(),
-              const SizedBox(height: 24),
-              _buildGoogleCalendarSection(),
-              const SizedBox(height: 24),
-              _buildAssessmentsSection(),
-              const SizedBox(height: 24),
-              _buildStudyPlanSection(),
-              const SizedBox(height: 32),
-            ],
-          ),
-        ),
-      ),
+        return Stack(
+          children: [
+            _buildHeader(),
+            DraggableScrollableSheet(
+              controller: _sheetController,
+              initialChildSize: initSize,
+              minChildSize: initSize,
+              maxChildSize: 1.0,
+              snap: true,
+              builder: (context, scrollController) {
+                return Container(
+                  decoration: BoxDecoration(
+                    color: AppColors.bg(context),
+                    borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+                    border: Border(
+                      top: BorderSide(
+                        color: AppColors.isDark(context) ? Colors.white12 : Colors.black12,
+                        width: 1.0,
+                      ),
+                      left: BorderSide(
+                        color: AppColors.isDark(context) ? Colors.white12 : Colors.black12,
+                        width: 1.0,
+                      ),
+                      right: BorderSide(
+                        color: AppColors.isDark(context) ? Colors.white12 : Colors.black12,
+                        width: 1.0,
+                      ),
+                    ),
+                  ),
+                  child: Column(
+                    children: [
+                      const SizedBox(height: 4),
+                      Expanded(
+                        child: SingleChildScrollView(
+                          controller: scrollController,
+                          padding: const EdgeInsets.symmetric(horizontal: 24),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const SizedBox(height: 12),
+                              _buildScheduleSection(currentMonth, weekDates, today),
+                              const SizedBox(height: 24),
+                              _buildTodayTimetable(),
+                              const SizedBox(height: 24),
+                              _buildGoogleCalendarSection(),
+                              const SizedBox(height: 24),
+                              _buildAssessmentsSection(),
+                              const SizedBox(height: 24),
+                              _buildStudyPlanSection(),
+                              const SizedBox(height: 32),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ],
+        );
+      },
     );
   }
 
@@ -593,80 +637,99 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   // ════════════════════════════════════════════════════════════════════════════
 
   Widget _buildHeader() {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Text(
-          'HOME',
-          style: GoogleFonts.dmMono(
-            fontSize: 24,
-            fontWeight: FontWeight.bold,
-            color: AppColors.text(context),
-          ),
+    final firstName = _isLoading ? '' : _username.split(' ').first;
+    final dateStr = DateFormat('EEEE, d MMMM').format(DateTime.now());
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: AppColors.isDark(context) ? const Color(0xFF252D47) : const Color(0xFF2C2C2C),
+        borderRadius: const BorderRadius.vertical(bottom: Radius.circular(18)),
+        border: Border(
+          bottom: BorderSide(color: AppColors.isDark(context) ? Colors.white.withValues(alpha: 0.15) : Colors.black, width: 3.0),
+          left: BorderSide(color: AppColors.isDark(context) ? Colors.white.withValues(alpha: 0.15) : Colors.black, width: 3.0),
+          right: BorderSide(color: AppColors.isDark(context) ? Colors.white.withValues(alpha: 0.15) : Colors.black, width: 3.0),
         ),
-        Row(
-          children: [
-            _BellDot(
-              userId: _auth.currentUser?.uid ?? '',
-              firestore: _firestore,
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => NotificationHistoryScreen(
-                      onGoToCalendar: () {
-                        setState(() => _selectedNavIndex = 1);
-                      },
+      ),
+      child: SafeArea(
+        bottom: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(24, 16, 24, 28),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'HOME',
+                    style: GoogleFonts.dmMono(
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
                     ),
                   ),
-                );
-              },
-            ),
-            const SizedBox(width: 16),
-            _AnimatedTapButton(
-              onTap: () => setState(() => _selectedNavIndex = 4),
-              child: Icon(
-                Icons.person_outline,
-                color: AppColors.text(context),
-                size: 28,
+                  Row(
+                    children: [
+                      _BellDot(
+                        userId: _auth.currentUser?.uid ?? '',
+                        firestore: _firestore,
+                        color: Colors.white,
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => NotificationHistoryScreen(
+                                onGoToCalendar: () {
+                                  setState(() => _selectedNavIndex = 1);
+                                },
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                      const SizedBox(width: 16),
+                      _AnimatedTapButton(
+                        onTap: () => setState(() => _selectedNavIndex = 4),
+                        child: const Icon(
+                          Icons.account_circle,
+                          color: Colors.white,
+                          size: 36,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
               ),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-
-  Widget _buildGreeting() {
-    if (_isLoading) return const SizedBox();
-    final dateStr = DateFormat('EEEE, d MMMM').format(DateTime.now());
-    final firstName = _username.split(' ').first;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          dateStr,
-          style: GoogleFonts.dmMono(
-            fontSize: 13,
-            color: AppColors.subtext(context),
+              if (!_isLoading) ...[
+                const SizedBox(height: 16),
+                Text(
+                  dateStr,
+                  style: GoogleFonts.dmMono(
+                    fontSize: 13,
+                    color: Colors.white60,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Text(
+                      'Hi, $firstName',
+                      style: GoogleFonts.dmMono(
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    const _WavingHand(),
+                  ],
+                ),
+              ],
+            ],
           ),
         ),
-        const SizedBox(height: 4),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            Text(
-              'Hi, $firstName',
-              style: GoogleFonts.dmMono(
-                fontSize: 22,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(width: 8),
-            const _WavingHand(),
-          ],
-        ),
-      ],
+      ),
     );
   }
 
@@ -717,7 +780,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                           width: 32, height: 32,
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
-                            color: const Color(0xFFFFF9C4),
+                            color: const Color(0xFFE0FE9C),
                             border: Border.all(color: Colors.black, width: 1.5),
                           ),
                           child: Center(
@@ -778,8 +841,14 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                       final firestoreDots = snapshot.data ?? [];
                       final gcalDots = _gcalUpcoming.where((e) {
                         final dt = e.start?.dateTime?.toLocal();
-                        if (dt == null) return false;
-                        return dt.year == date.year && dt.month == date.month && dt.day == date.day;
+                        if (dt != null) {
+                          return dt.year == date.year && dt.month == date.month && dt.day == date.day;
+                        }
+                        final d = e.start?.date;
+                        if (d != null) {
+                          return d.year == date.year && d.month == date.month && d.day == date.day;
+                        }
+                        return false;
                       }).map((_) => _DotData(_kColorGCal, true)).toList();
                       final dots = [...firestoreDots, ...gcalDots];
                       return _dateCircle(
@@ -905,6 +974,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     final daysUntil = examDay.difference(today).inDays;
 
     final bool isToday = daysUntil == 0;
+    final bool isNow   = now.isAfter(startTime) && now.isBefore(endTime);
 
     String durationLabel;
     Color  labelBg;
@@ -915,6 +985,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       durationLabel   = 'DONE';
       labelBg         = AppColors.fieldBg(context);
       labelFg         = AppColors.subtext(context);
+      cardBorderColor = AppColors.border(context);
+    } else if (isNow) {
+      durationLabel   = 'NOW';
+      labelBg         = const Color(0xFF9AB900);
+      labelFg         = Colors.white;
       cardBorderColor = AppColors.border(context);
     } else if (isToday) {
       durationLabel   = 'TODAY';
@@ -1014,15 +1089,24 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                       ),
                     ),
                     const SizedBox(height: 4),
-                    Text(
-                      exam['examName'],
-                      style: GoogleFonts.dmMono(
-                        fontSize: 13,
-                        fontWeight: FontWeight.bold,
-                        color: AppColors.text(context),
-                      ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            exam['examName'],
+                            style: GoogleFonts.dmMono(
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold,
+                              color: AppColors.text(context),
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        const Icon(Icons.arrow_forward,
+                            color: Color(0xFF9AB900), size: 14),
+                      ],
                     ),
                     if (exam['subject'].isNotEmpty) ...[
                       const SizedBox(height: 2),
@@ -1207,6 +1291,14 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                                     .collection('exams')
                                     .doc(exam['id'])
                                     .delete();
+                                final linkedPlans = await _firestore
+                                    .collection('study_plans')
+                                    .where('userId', isEqualTo: _auth.currentUser?.uid)
+                                    .where('examId', isEqualTo: exam['id'])
+                                    .get();
+                                for (final plan in linkedPlans.docs) {
+                                  await plan.reference.delete();
+                                }
                                 messenger.showSnackBar(SnackBar(
                                   content: Text('Exam deleted',
                                       style: GoogleFonts.dmMono(fontWeight: FontWeight.bold, color: Colors.white)),
@@ -1273,6 +1365,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           _examsStream = null;
         });
         _loadGcalForSelectedDate(dateTime);
+        _loadGcalUpcoming();
       },
       child: SizedBox(
         width: 38,
@@ -1667,6 +1760,12 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                             const SizedBox(width: 8),
                             if (!isCompleted)
                               _CountdownTimer(dueDate: dueDate),
+                            const SizedBox(width: 4),
+                            Icon(Icons.arrow_forward,
+                                color: isCompleted
+                                    ? const Color(0xFF34A853)
+                                    : const Color(0xFF008BB9),
+                                size: 16),
                           ],
                         ),
                         const SizedBox(height: 4),
@@ -1866,6 +1965,12 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                               const SizedBox(width: 8),
                               _CountdownTimer(dueDate: eventDate),
                             ],
+                            const SizedBox(width: 4),
+                            Icon(Icons.arrow_forward,
+                                color: isCompleted
+                                    ? const Color(0xFF34A853)
+                                    : kGroup,
+                                size: 16),
                           ],
                         ),
                         const SizedBox(height: 4),
@@ -1933,7 +2038,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                       Expanded(
                         child: _buildDetailItem(
                             Icons.access_time,
-                            event['startTime'] as String? ?? ''),
+                            _formatTime(event['startTime'] as String? ?? '')),
                       ),
                     ],
                   ),
@@ -2033,7 +2138,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                                 DateFormat('EEE, dd MMM yyyy')
                                     .format(eventDate)),
                             _buildDetailRow('Time',
-                                event['startTime'] as String? ?? ''),
+                                _formatTime(event['startTime'] as String? ?? '')),
                             if ((event['senderUsername'] as String? ?? '')
                                 .isNotEmpty)
                               _buildDetailRow('Organizer',
@@ -2106,10 +2211,12 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                                         Expanded(
                                           child: _AnimatedTapButton(
                                             onTap: () async {
+                                              final geId = event['id'] as String;
                                               await _firestore
                                                   .collection('user_group_events')
-                                                  .doc(event['id'] as String)
+                                                  .doc(geId)
                                                   .update({'isCompleted': true});
+                                              NotificationService().cancelNotificationsForEvent(geId);
                                               setModalState(() => event['isCompleted'] = true);
                                               setState(() {});
                                             },
@@ -2329,15 +2436,23 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          event['className'],
-                          style: GoogleFonts.dmMono(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                            color: AppColors.text(context),
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                event['className'],
+                                style: GoogleFonts.dmMono(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                  color: AppColors.text(context),
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            Icon(Icons.arrow_forward, color: labelColor, size: 16),
+                          ],
                         ),
                         const SizedBox(height: 4),
                         Container(
@@ -2830,6 +2945,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                           .collection('tasks')
                           .doc(task['id'])
                           .update({'completed': true});
+                      NotificationService().cancelNotificationsForEvent(task['id'] as String);
                       setModalState(() => task['completed'] = true);
                       setState(() {});
                     },
@@ -3231,25 +3347,39 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               ),
             ),
             const SizedBox(width: 8),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-              decoration: BoxDecoration(
-                color: gcalBlue,
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Text(
-                'SYNC',
-                style: GoogleFonts.dmMono(
-                  fontSize: 9,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
+            if (svc.isConnected)
+              GestureDetector(
+                onTap: () {
+                  _loadGcalUpcoming();
+                  _loadGcalForSelectedDate(_selectedDate);
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: gcalBlue,
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.sync_rounded, size: 13, color: Colors.white),
+                      const SizedBox(width: 4),
+                      Text(
+                        'SYNC',
+                        style: GoogleFonts.dmMono(
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
-            ),
             const Spacer(),
             if (svc.isConnected)
-              TextButton.icon(
-                onPressed: () async {
+              GestureDetector(
+                onTap: () async {
                   await GoogleCalendarService.instance.disconnect();
                   if (!mounted) return;
                   setState(() => _calendarPermissionGranted = false);
@@ -3260,12 +3390,17 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                         .update({'calendarPermissionGranted': false});
                   } catch (_) {}
                 },
-                icon: const Icon(Icons.link_off_rounded, size: 14, color: Color(0xFF6B7280)),
-                label: Text(
-                  'Disconnect',
-                  style: GoogleFonts.dmMono(fontSize: 11, color: const Color(0xFF6B7280)),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.power_settings_new_rounded, size: 14, color: Color(0xFF6B7280)),
+                    const SizedBox(width: 4),
+                    Text(
+                      'Disconnect',
+                      style: GoogleFonts.dmMono(fontSize: 11, color: const Color(0xFF6B7280)),
+                    ),
+                  ],
                 ),
-                style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8)),
               ),
           ],
         ),
@@ -3466,10 +3601,18 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          event.summary ?? 'No Title',
-                          style: GoogleFonts.dmMono(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.text(context)),
-                          maxLines: 1, overflow: TextOverflow.ellipsis,
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                event.summary ?? 'No Title',
+                                style: GoogleFonts.dmMono(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.text(context)),
+                                maxLines: 1, overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            const Icon(Icons.arrow_forward, color: gcalBlue, size: 16),
+                          ],
                         ),
                         const SizedBox(height: 4),
                         Container(
@@ -3900,13 +4043,21 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   Widget _buildBottomNavigation() {
-    return Container(
-      decoration: BoxDecoration(color: AppColors.navBg(context)),
-      child: SafeArea(
-        top: false,
-        child: Padding(
-          padding:
-              const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+    final isDark = AppColors.isDark(context);
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(24, 4, 24, 12),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+          decoration: BoxDecoration(
+            color: isDark ? const Color(0xFF252D47) : Colors.white,
+            borderRadius: BorderRadius.circular(50),
+            border: Border.all(
+              color: isDark ? Colors.white24 : Colors.black,
+              width: 1.5,
+            ),
+          ),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
@@ -3923,26 +4074,27 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   Widget _buildNavIcon(IconData icon, int index) {
-    bool isActive = _selectedNavIndex == index;
+    final isDark = AppColors.isDark(context);
+    final isActive = _selectedNavIndex == index;
     return _AnimatedTapButton(
-      onTap: () {
-        setState(() {
-          _selectedNavIndex = index;
-        });
-      },
+      onTap: () => setState(() => _selectedNavIndex = index),
       child: Container(
         width: 48,
         height: 48,
         decoration: BoxDecoration(
           color: isActive
-              ? const Color(0xFF6B7280)
+              ? (isDark ? Colors.white12 : const Color(0xFFE5E7EB))
               : Colors.transparent,
           shape: BoxShape.circle,
         ),
-        child: Icon(
-          icon,
-          color: isActive ? Colors.white : AppColors.text(context),
-          size: 24,
+        child: Center(
+          child: Icon(
+            icon,
+            color: isActive
+                ? (isDark ? Colors.white : Colors.black)
+                : (isDark ? Colors.white38 : Colors.black38),
+            size: 24,
+          ),
         ),
       ),
     );
@@ -3957,13 +4109,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         ).then((_) => setState(() {}));
       },
       child: Container(
-        width: 56,
-        height: 56,
-        decoration: BoxDecoration(
-          color: AppColors.chipBg(context),
+        width: 52,
+        height: 52,
+        decoration: const BoxDecoration(
+          color: Color(0xFF1C1C1C),
           shape: BoxShape.circle,
         ),
-        child: const Icon(Icons.add, color: Colors.white, size: 32),
+        child: const Icon(Icons.add, color: Colors.white, size: 28),
       ),
     );
   }
@@ -3979,11 +4131,13 @@ class _BellDot extends StatefulWidget {
   final String userId;
   final FirebaseFirestore firestore;
   final VoidCallback onTap;
+  final Color? color;
 
   const _BellDot({
     required this.userId,
     required this.firestore,
     required this.onTap,
+    this.color,
   });
 
   @override
@@ -4068,7 +4222,7 @@ class _BellDotState extends State<_BellDot> with WidgetsBindingObserver {
             hasUnread
                 ? Icons.notifications
                 : Icons.notifications_outlined,
-            color: AppColors.text(context),
+            color: widget.color ?? AppColors.text(context),
             size: 28,
           ),
           if (hasUnread)
@@ -4082,7 +4236,9 @@ class _BellDotState extends State<_BellDot> with WidgetsBindingObserver {
                   color: const Color(0xFFB90000),
                   shape: BoxShape.circle,
                   border: Border.all(
-                    color: AppColors.bg(context),
+                    color: widget.color != null
+                        ? const Color(0xFF2C2C2C)
+                        : AppColors.bg(context),
                     width: 1.5,
                   ),
                 ),

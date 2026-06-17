@@ -53,6 +53,7 @@ class _GradeCalculatorScreenState extends State<GradeCalculatorScreen> {
 
   String _searchQuery = '';
   bool _isSaving = false;
+  Stream<QuerySnapshot>? _savedResultsStream;
 
   // ── Colours ──────────────────────────────────────────────────────
   static const _tan      = Color(0xFFD4B896);
@@ -89,6 +90,13 @@ class _GradeCalculatorScreenState extends State<GradeCalculatorScreen> {
     for (int i = 0; i < 5; i++) _addAssessmentRow();
     _loadGradeSettings();
     _subscribeSubjectMeta();
+    final uid = _auth.currentUser?.uid;
+    if (uid != null) {
+      _savedResultsStream = _firestore
+          .collection('grade_results')
+          .where('userId', isEqualTo: uid)
+          .snapshots();
+    }
   }
 
   @override
@@ -801,56 +809,77 @@ class _GradeCalculatorScreenState extends State<GradeCalculatorScreen> {
         _percentSumValid &&
         _nearestGrade != null;
 
-    return Scaffold(
-      backgroundColor: AppColors.bg(context),
-      body: SafeArea(
-        bottom: false,
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // ── Header — matches CalendarScreen title style ──────
-              const SizedBox(height: 16),
-              Text(
-                'GRADE TRACKER',
-                style: GoogleFonts.dmMono(
-                  fontSize: 24,
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.text(context),
-                ),
-              ),
-              const SizedBox(height: 12),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final availableH = constraints.maxHeight;
+        final statusBarH = MediaQuery.of(context).padding.top;
+        final headerH = statusBarH + 16.0 + 32.0 + 12.0 + 44.0 + 16.0;
+        final initSize = ((availableH - headerH) / availableH).clamp(0.35, 0.85);
+        final darkColor = AppColors.isDark(context) ? const Color(0xFF252D47) : const Color(0xFF2C2C2C);
 
-              // Disclaimer note
-              RichText(
-                textAlign: TextAlign.justify,
-                text: TextSpan(
-                  style: GoogleFonts.dmMono(
-                    fontSize: 10,
-                    color: AppColors.text(context),
-                  ),
-                  children: [
-                    TextSpan(
-                      text: 'NOTE: ',
-                      style: GoogleFonts.dmMono(
-                        fontSize: 10,
-                        fontWeight: FontWeight.bold,
-                        color: AppColors.text(context),
+        return Stack(
+          children: [
+            Positioned.fill(child: ColoredBox(color: darkColor)),
+            Container(
+              width: double.infinity,
+              decoration: BoxDecoration(
+                color: darkColor,
+                borderRadius: const BorderRadius.vertical(bottom: Radius.circular(18)),
+              ),
+              child: SafeArea(
+                bottom: false,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 16, 24, 16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'GRADE TRACKER',
+                        style: GoogleFonts.dmMono(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white),
                       ),
-                    ),
-                    const TextSpan(
-                      text:
-                          'The Grade Tracker result is an estimation only and should not be '
-                          'regarded as an official academic record. Refer to your institution\'s '
-                          'official transcript for authoritative results.',
-                    ),
-                  ],
+                      const SizedBox(height: 12),
+                      RichText(
+                        textAlign: TextAlign.justify,
+                        text: TextSpan(
+                          style: GoogleFonts.dmMono(fontSize: 10, color: Colors.white70),
+                          children: [
+                            TextSpan(
+                              text: 'NOTE: ',
+                              style: GoogleFonts.dmMono(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.white),
+                            ),
+                            const TextSpan(
+                              text: 'The Grade Tracker result is an estimation only and should not be '
+                                  'regarded as an official academic record. Refer to your institution\'s '
+                                  'official transcript for authoritative results.',
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
-              const SizedBox(height: 16),
+            ),
+            DraggableScrollableSheet(
+              initialChildSize: initSize,
+              minChildSize: initSize,
+              maxChildSize: 1.0,
+              snap: true,
+              builder: (context, scrollController) {
+                return Container(
+                  decoration: BoxDecoration(
+                    color: AppColors.bg(context),
+                    borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+                  ),
+                  child: SingleChildScrollView(
+                    controller: scrollController,
+                    padding: const EdgeInsets.symmetric(horizontal: 24),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const SizedBox(height: 16),
 
-              // Grade-settings warning banner
+                        // Grade-settings warning banner
               if (!_gradeSettingsLoaded)
                 GestureDetector(
                   onTap: _openSetGrade,
@@ -1546,10 +1575,7 @@ class _GradeCalculatorScreenState extends State<GradeCalculatorScreen> {
 
               // Saved results stream
               StreamBuilder<QuerySnapshot>(
-                stream: _firestore
-                    .collection('grade_results')
-                    .where('userId', isEqualTo: _auth.currentUser?.uid)
-                    .snapshots(),
+                stream: _savedResultsStream,
                 builder: (context, snapshot) {
                   if (snapshot.connectionState == ConnectionState.waiting) {
                     return const Center(
@@ -1589,6 +1615,7 @@ class _GradeCalculatorScreenState extends State<GradeCalculatorScreen> {
                     children: docs
                         .map(
                           (doc) => _SavedCard(
+                            key: ValueKey(doc.id),
                             docId: doc.id,
                             data: doc.data() as Map<String, dynamic>,
                             gradeRanges: _gradeRanges,
@@ -1604,10 +1631,15 @@ class _GradeCalculatorScreenState extends State<GradeCalculatorScreen> {
               ),
 
               const SizedBox(height: 36),
-            ],
-          ),
-        ),
-      ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ],
+        );
+      },
     );
   }
 
@@ -1836,6 +1868,7 @@ class _GradeCalculatorScreenState extends State<GradeCalculatorScreen> {
 
 class _SavedCard extends StatefulWidget {
   const _SavedCard({
+    super.key,
     required this.docId,
     required this.data,
     required this.gradeRanges,

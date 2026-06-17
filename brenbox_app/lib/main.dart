@@ -27,6 +27,9 @@ Future<void> main() async {
     options: DefaultFirebaseOptions.currentPlatform,
   );
 
+  // Keep more decoded images in memory so re-entering screens is instant
+  PaintingBinding.instance.imageCache.maximumSizeBytes = 150 * 1024 * 1024; // 150 MB
+
   FirebaseMessaging.onBackgroundMessage(_fcmBackgroundHandler);
 
   // Initialize notification service and register navigator key for tap navigation

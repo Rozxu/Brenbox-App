@@ -162,38 +162,65 @@ class _CertificateRepositoryScreenState
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.bg(context),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const SizedBox(height: 16),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final availableH = constraints.maxHeight;
+        final statusBarH = MediaQuery.of(context).padding.top;
+        final headerH = statusBarH + 16.0 + 32.0 + 6.0 + 16.0 + 16.0;
+        final initSize = ((availableH - headerH) / availableH).clamp(0.35, 0.85);
+        final darkColor = AppColors.isDark(context) ? const Color(0xFF252D47) : const Color(0xFF2C2C2C);
 
-                // ── Header — mirrors CalendarScreen ─────────────────
-                Text(
-                  'CERTIFICATES',
-                  style: GoogleFonts.dmMono(
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold,
+        return Stack(
+          children: [
+            Positioned.fill(child: ColoredBox(color: darkColor)),
+            Container(
+              width: double.infinity,
+              decoration: BoxDecoration(
+                color: darkColor,
+                borderRadius: const BorderRadius.vertical(bottom: Radius.circular(18)),
+              ),
+              child: SafeArea(
+                bottom: false,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 16, 24, 16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'CERTIFICATES',
+                        style: GoogleFonts.dmMono(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        'Store and manage your achievement certificates',
+                        style: GoogleFonts.dmMono(fontSize: 11, color: Colors.white70),
+                      ),
+                    ],
                   ),
                 ),
-
-                const SizedBox(height: 6),
-                Text(
-                  'Store and manage your achievement certificates',
-                  style: GoogleFonts.dmMono(
-                    fontSize: 11,
-                    color: AppColors.subtext(context),
+              ),
+            ),
+            DraggableScrollableSheet(
+              initialChildSize: initSize,
+              minChildSize: initSize,
+              maxChildSize: 1.0,
+              snap: true,
+              builder: (context, scrollController) {
+                return Container(
+                  decoration: BoxDecoration(
+                    color: AppColors.bg(context),
+                    borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
                   ),
-                ),
+                  child: SingleChildScrollView(
+                    controller: scrollController,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 24),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const SizedBox(height: 20),
 
-                const SizedBox(height: 20),
-
-                // ── Search bar ───────────────────────────────────────
+                          // ── Search bar ───────────────────────────────────────
                 Container(
                   decoration: BoxDecoration(
                     color: AppColors.card(context),
@@ -264,11 +291,16 @@ class _CertificateRepositoryScreenState
                     );
                   },
                 ),
-              ],
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              },
             ),
-          ),
-        ),
-      ),
+          ],
+        );
+      },
     );
   }
 

@@ -494,7 +494,10 @@ class _GroupImageViewerScreenState extends State<_GroupImageViewerScreen> {
         child: Center(
           child: CachedNetworkImage(
             imageUrl: widget.imageUrl,
+            cacheKey: widget.storagePath.isNotEmpty ? widget.storagePath : widget.imageUrl,
             fit: BoxFit.contain,
+            fadeInDuration: Duration.zero,
+            fadeOutDuration: Duration.zero,
             placeholder: (_, __) => const Center(
               child: CircularProgressIndicator(color: Colors.white),
             ),
@@ -1084,7 +1087,10 @@ class _ChatTab extends StatefulWidget {
   State<_ChatTab> createState() => _ChatTabState();
 }
 
-class _ChatTabState extends State<_ChatTab> {
+class _ChatTabState extends State<_ChatTab> with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
   final _ctrl    = TextEditingController();
   final _scroll  = ScrollController();
   final _auth    = FirebaseAuth.instance;
@@ -1096,10 +1102,17 @@ class _ChatTabState extends State<_ChatTab> {
   List<Map<String, dynamic>> _cachedMembers = [];
   List<String> _cachedAdminIds = [];
   Timestamp? _unreadSeparatorAt;
+  late final Stream<QuerySnapshot> _msgsStream;
 
   @override
   void initState() {
     super.initState();
+    _msgsStream = _db
+        .collection('study_groups')
+        .doc(widget.groupId)
+        .collection('messages')
+        .orderBy('createdAt')
+        .snapshots();
     _fetchInitialData();
   }
 
@@ -1670,65 +1683,11 @@ class _ChatTabState extends State<_ChatTab> {
     );
   }
 
-  Future<void> _kickMember(BuildContext ctx, String uid, String uname) async {
-    final confirm = await showDialog<bool>(
-      context: ctx,
-      builder: (_) => AlertDialog(
-        backgroundColor: AppColors.card(ctx),
-        shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
-            side: BorderSide(color: AppColors.border(ctx), width: 2)),
-        title: Text('Kick $uname?',
-            style: GoogleFonts.dmMono(fontWeight: FontWeight.bold)),
-        content: Text('Remove $uname from the group?',
-            style: GoogleFonts.dmMono(
-                fontSize: 13, color: AppColors.subtext(ctx))),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: Text('Cancel',
-                  style: GoogleFonts.dmMono(color: AppColors.subtext(ctx)))),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: ElevatedButton.styleFrom(backgroundColor: _kRed),
-            child: Text('Kick',
-                style: GoogleFonts.dmMono(
-                    color: Colors.white, fontWeight: FontWeight.bold)),
-          ),
-        ],
-      ),
-    );
-    if (confirm != true) return;
-
-    final snap = await _db.collection('study_groups').doc(widget.groupId).get();
-    if (!snap.exists) return;
-    final d = snap.data() as Map<String, dynamic>;
-    final updIds = List<String>.from(d['memberIds'] ?? [])..remove(uid);
-    final updMem = List<Map<String, dynamic>>.from(d['members'] ?? [])
-      ..removeWhere((x) => x['uid'] == uid);
-    final updAdminIds = List<String>.from(d['adminIds'] ?? [])..remove(uid);
-    await _db
-        .collection('study_groups')
-        .doc(widget.groupId)
-        .update({'memberIds': updIds, 'members': updMem, 'adminIds': updAdminIds});
-    try {
-      final pending = await _db
-          .collection('group_invitations')
-          .where('groupId', isEqualTo: widget.groupId)
-          .where('inviteeId', isEqualTo: uid)
-          .where('status', isEqualTo: 'pending')
-          .get();
-      await Future.wait(
-          pending.docs.map((doc) => doc.reference.update({'status': 'cancelled'})));
-    } catch (_) {}
-  }
-
   void _showOtherMsgOptions(
       DocumentSnapshot doc, String senderUid, String senderUsername) {
     final myUid = _auth.currentUser?.uid ?? '';
     final amHost = myUid == _groupCreatedBy;
     final amAdmin = _cachedAdminIds.contains(myUid);
-    final senderIsHost = senderUid == _groupCreatedBy;
 
     showModalBottomSheet(
       context: context,
@@ -1767,17 +1726,6 @@ class _ChatTabState extends State<_ChatTab> {
                     message: 'Are you sure you want to delete this message? This cannot be undone.',
                     onDelete: () => doc.reference.delete(),
                   );
-                },
-              ),
-            // Can kick anyone except the group creator
-            if ((amHost || amAdmin) && !senderIsHost)
-              ListTile(
-                leading: const Icon(Icons.person_remove_outlined, color: _kRed),
-                title: Text('Kick $senderUsername',
-                    style: GoogleFonts.dmMono(fontSize: 14, color: _kRed)),
-                onTap: () {
-                  Navigator.pop(context);
-                  _kickMember(context, senderUid, senderUsername);
                 },
               ),
             const SizedBox(height: 8),
@@ -1896,12 +1844,13 @@ class _ChatTabState extends State<_ChatTab> {
   // ── Build ───────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     final myUid = _auth.currentUser?.uid ?? '';
 
     return Column(children: [
       Expanded(
         child: StreamBuilder<QuerySnapshot>(
-          stream: _msgs.orderBy('createdAt').snapshots(),
+          stream: _msgsStream,
           builder: (ctx, snap) {
             if (snap.connectionState == ConnectionState.waiting) {
               return const Center(
@@ -1911,6 +1860,21 @@ class _ChatTabState extends State<_ChatTab> {
             if (docs.isEmpty) {
               return _emptyState(ctx, Icons.chat_bubble_outline,
                   'No messages yet', 'Say hello to your group!');
+            }
+
+            // Pre-warm Flutter's memory image cache for all image messages
+            for (final doc in docs) {
+              final d = doc.data() as Map<String, dynamic>;
+              if ((d['type'] as String?) == 'image') {
+                final url = d['imageUrl'] as String? ?? '';
+                final sp  = d['storagePath'] as String? ?? '';
+                if (url.isNotEmpty) {
+                  precacheImage(
+                    CachedNetworkImageProvider(url, cacheKey: sp.isNotEmpty ? sp : url),
+                    ctx,
+                  );
+                }
+              }
             }
 
             final List<Widget> items = [];
@@ -1955,6 +1919,7 @@ class _ChatTabState extends State<_ChatTab> {
             return ListView.builder(
               controller: _scroll,
               reverse: true,
+              cacheExtent: 1500,
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
               itemCount: reversed.length,
               itemBuilder: (_, i) => reversed[i],
@@ -2317,8 +2282,11 @@ class _ChatTabState extends State<_ChatTab> {
                       )
                     : CachedNetworkImage(
                         imageUrl: imageUrl,
+                        cacheKey: sp.isNotEmpty ? sp : imageUrl,
                         width: 220,
                         fit: BoxFit.cover,
+                        fadeInDuration: Duration.zero,
+                        fadeOutDuration: Duration.zero,
                         placeholder: (_, __) => Container(
                           width: 220,
                           height: 150,
@@ -2755,7 +2723,9 @@ class _MilestonesTab extends StatefulWidget {
   State<_MilestonesTab> createState() => _MilestonesTabState();
 }
 
-class _MilestonesTabState extends State<_MilestonesTab> {
+class _MilestonesTabState extends State<_MilestonesTab> with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
   final _auth = FirebaseAuth.instance;
   final _db   = FirebaseFirestore.instance;
 
@@ -2887,6 +2857,7 @@ class _MilestonesTabState extends State<_MilestonesTab> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     return Scaffold(
       backgroundColor: AppColors.bg(context),
       floatingActionButton: FloatingActionButton.extended(
@@ -3074,7 +3045,9 @@ class _UpdatesTab extends StatefulWidget {
   State<_UpdatesTab> createState() => _UpdatesTabState();
 }
 
-class _UpdatesTabState extends State<_UpdatesTab> {
+class _UpdatesTabState extends State<_UpdatesTab> with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
   final _auth    = FirebaseAuth.instance;
   final _db      = FirebaseFirestore.instance;
   final _certSvc = CertificateService();
@@ -3242,6 +3215,7 @@ class _UpdatesTabState extends State<_UpdatesTab> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     final myUid = _auth.currentUser?.uid ?? '';
 
     return Scaffold(
